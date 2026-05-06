@@ -1,279 +1,71 @@
-# Mutation testing configuration for shiplog
+# Mutation testing tier plan for shiplog
 #
-# Goal: verify the "coverage manifest" + redaction invariants aren't paper-thin.
+# This is a planning document that maps the current module-first workspace to
+# mutation-testing tiers. The actual cargo-mutants runtime configuration lives
+# in `.cargo/mutants.toml`; the CI workflow invokes `cargo mutants -p <crate>`
+# according to these tiers.
 #
-# Run:
+# Run examples:
 #   cargo mutants --workspace
 #   cargo mutants -p shiplog-schema
 #   cargo mutants -p shiplog-schema -- test_name
+
+# ============================================================================
+# Tier 1: Stable contracts and trust surfaces - target score >= 90%
+# Deterministic logic, privacy, completeness, and canonical data contracts.
+# ============================================================================
 #
-# Configuration follows the comprehensive testing implementation plan:
-# https://github.com/EffortlessMetrics/shiplog/blob/main/plans/mutation-testing-strategy.md
-
-[mutants]
-# Global timeout per mutation test run
-timeout = "120s"
-
-# Maximum number of concurrent mutation jobs
-jobs = 4
-
-# Output directory for mutation results
-output = "target/mutants"
-
-# Generate HTML report
-generate_html = true
-
-# Exclude patterns
-exclude = [
-  "target/**",
-  "out/**",
-  "examples/**",
-  "fuzz/**",
-  # Test utilities don't need mutation testing
-  "crates/shiplog-testkit/**",
-]
+# shiplog-schema        - canonical event model, coverage types, bundle metadata
+# shiplog-ids           - SHA-256 deterministic ID generation
+# shiplog-ports         - trait definitions (Ingestor, Renderer, Redactor, Clusterer)
+# shiplog-redact        - HMAC-SHA-256 redaction orchestrator
+# shiplog-coverage      - slicing, completeness, time-window logic
+# shiplog-bundle        - zip export and bundle manifests
 
 # ============================================================================
-# Tier 1: Critical Core (Highest Priority)
-# Target Mutation Score: ≥ 90%
+# Tier 2: Product pipeline - target score >= 80%
+# Orchestration, curation, output, and supported reusable product behavior.
 # ============================================================================
-
-[crates.shiplog-schema]
-# Canonical event model, coverage tracking, bundle metadata
-minimum_score = 85
-timeout = "180s"
-
-[crates.shiplog-schema.mutants]
-# Enable all mutation operators for schema
-replace_bool = true
-replace_int = true
-replace_match = true
-replace_pattern = true
-replace_operator = true
-
-[crates.shiplog-redact]
-# Security-critical - highest priority
-minimum_score = 90
-timeout = "180s"
-
-[crates.shiplog-redact.mutants]
-# Focus on boolean mutations for redaction logic
-replace_bool = true
-replace_match = true
-replace_pattern = true
-
-[crates.shiplog-coverage]
-# Core utilities - high priority
-minimum_score = 85
-timeout = "120s"
-
-[crates.shiplog-coverage.mutants]
-# Date boundary mutations are critical
-replace_bool = true
-replace_int = true
-replace_match = true
-replace_pattern = true
-replace_operator = true
-
-[crates.shiplog-ids]
-# ID generation - must be deterministic
-minimum_score = 85
-timeout = "120s"
-
-[crates.shiplog-ids.mutants]
-# Focus on hash generation and string representation
-replace_bool = true
-replace_int = true
-replace_match = true
-replace_pattern = true
+#
+# shiplog-engine        - orchestration (ingest -> cluster -> render)
+# shiplog-workstreams   - workstream facade (curated + suggested)
+# shiplog-render-md     - Markdown renderer (insta snapshot-tested)
+# shiplog-render-json   - JSON renderer
+# shiplog-cache         - API cache facade
+# shiplog-merge         - multi-source event merge and deduplication
 
 # ============================================================================
-# Tier 2: Pipeline Core (High Priority)
-# Target Mutation Score: ≥ 80%
+# Tier 3: Real adapters and optional boundaries - target score >= 70%
+# External-system adapters and feature-gated integration surfaces.
 # ============================================================================
-
-[crates.shiplog-engine]
-# Orchestration engine
-minimum_score = 75
-timeout = "150s"
-
-[crates.shiplog-engine.mutants]
-replace_bool = true
-replace_match = true
-replace_pattern = true
-
-[crates.shiplog-bundle]
-# Bundle writing and manifest generation
-minimum_score = 75
-timeout = "150s"
-
-[crates.shiplog-bundle.mutants]
-replace_bool = true
-replace_match = true
-replace_pattern = true
-
-[crates.shiplog-workstreams]
-# Workstream management
-minimum_score = 75
-timeout = "150s"
-
-[crates.shiplog-workstreams.mutants]
-replace_bool = true
-replace_match = true
-replace_pattern = true
-
-[crates.shiplog-ports]
-# Trait definitions
-minimum_score = 70
-timeout = "120s"
-
-[crates.shiplog-ports.mutants]
-replace_bool = true
-replace_match = true
+#
+# shiplog-ingest-github - GitHub API adapter
+# shiplog-ingest-json   - JSONL import adapter
+# shiplog-ingest-manual - manual YAML ingest adapter
+# shiplog-ingest-git    - local git-log ingest adapter
+# shiplog-ingest-gitlab - GitLab API adapter
+# shiplog-ingest-jira   - Jira API adapter
+# shiplog-ingest-linear - Linear API adapter
+# shiplog-cluster-llm   - optional LLM-assisted workstream clustering
+# shiplog-team          - optional team aggregation facade
+# apps/shiplog          - CLI entrypoint
 
 # ============================================================================
-# Tier 3: Adapters and Renderers (Medium Priority)
-# Target Mutation Score: ≥ 70%
+# Transitional internal carriers
 # ============================================================================
-
-[crates.shiplog-ingest-github]
-# GitHub API ingestor
-minimum_score = 65
-timeout = "120s"
-
-[crates.shiplog-ingest-github.mutants]
-replace_bool = true
-replace_match = true
-
-[crates.shiplog-ingest-json]
-# JSON ingestor
-minimum_score = 65
-timeout = "120s"
-
-[crates.shiplog-ingest-json.mutants]
-replace_bool = true
-replace_match = true
-
-[crates.shiplog-ingest-manual]
-# Manual event ingestor
-minimum_score = 65
-timeout = "120s"
-
-[crates.shiplog-ingest-manual.mutants]
-replace_bool = true
-replace_match = true
-
-[crates.shiplog-render-md]
-# Markdown renderer
-minimum_score = 65
-timeout = "120s"
-
-[crates.shiplog-render-md.mutants]
-replace_bool = true
-replace_match = true
-replace_pattern = true
-
-[crates.shiplog-render-json]
-# JSON renderer
-minimum_score = 65
-timeout = "120s"
-
-[crates.shiplog-render-json.mutants]
-replace_bool = true
-replace_match = true
-
-[crates.shiplog-cache]
-# API cache
-minimum_score = 65
-timeout = "120s"
-
-[crates.shiplog-cache.mutants]
-replace_bool = true
-replace_match = true
-replace_pattern = true
+#
+# These packages still exist as implementation carriers while the repository
+# preserves behavior. They are not the target public doctrine; fold them into
+# owner modules over time unless API_SURFACE.md deliberately promotes them.
+#
+# shiplog-template
 
 # ============================================================================
-# Tier 4: Supporting and Experimental (Lower Priority)
-# Target Mutation Score: ≥ 60%
+# Excluded from mutation testing
 # ============================================================================
-
-[crates.shiplog-cluster-llm]
-# LLM clustering (feature-gated)
-minimum_score = 60
-timeout = "120s"
-
-[crates.shiplog-cluster-llm.mutants]
-replace_bool = true
-replace_match = true
-
-[apps.shiplog]
-# CLI application
-minimum_score = 60
-timeout = "120s"
-
-[apps.shiplog.mutants]
-replace_bool = true
-replace_match = true
-
-# ============================================================================
-# ROADMAP Feature Crates (Tier 2: High Priority)
-# Target Mutation Score: ≥ 80%
-# ============================================================================
-
-[crates.shiplog-ingest-gitlab]
-# GitLab API ingestor (ROADMAP v0.3.x)
-minimum_score = 80
-timeout = "120s"
-
-[crates.shiplog-ingest-gitlab.mutants]
-replace_bool = true
-replace_match = true
-replace_pattern = true
-
-[crates.shiplog-ingest-jira]
-# Jira API ingestor (ROADMAP v0.3.x)
-minimum_score = 80
-timeout = "120s"
-
-[crates.shiplog-ingest-jira.mutants]
-replace_bool = true
-replace_match = true
-replace_pattern = true
-
-[crates.shiplog-ingest-linear]
-# Linear API ingestor (ROADMAP v0.3.x)
-minimum_score = 80
-timeout = "120s"
-
-[crates.shiplog-ingest-linear.mutants]
-replace_bool = true
-replace_match = true
-replace_pattern = true
-
-[crates.shiplog-template]
-# Template rendering (ROADMAP v0.3.x)
-minimum_score = 80
-timeout = "120s"
-
-[crates.shiplog-template.mutants]
-replace_bool = true
-replace_match = true
-replace_pattern = true
-
-[crates.shiplog-plugin]
-# Plugin system (ROADMAP Later)
-minimum_score = 70
-timeout = "120s"
-
-[crates.shiplog-plugin.mutants]
-replace_bool = true
-replace_match = true
-replace_pattern = true
-
-# ============================================================================
-# Test filtering strategies
-# ============================================================================
-
-[tests]
-# Run specific test suites for mutation testing
-test_filter = "mutants"
+#
+# shiplog-testkit - test fixtures / utilities (not production code)
+#
+# Generic utility, data-structure, planned app-shell, and planned feature
+# packages were removed from the workspace surface. New seams should be modules
+# first, not new crates.

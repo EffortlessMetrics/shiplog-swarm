@@ -1,9 +1,9 @@
-//! Integration tests for shiplog-cache <-> shiplog-cache-expiry wiring.
+//! Integration tests for shiplog-cache expiry wiring.
 
 use chrono::Duration;
 use rusqlite::Connection;
 use shiplog_cache::ApiCache;
-use shiplog_cache_expiry::{is_expired, is_valid, parse_rfc3339_utc};
+use shiplog_cache::expiry::{is_expired, is_valid, parse_rfc3339_utc};
 
 #[test]
 fn stored_timestamps_follow_expiry_window_contract() {
@@ -25,7 +25,7 @@ fn stored_timestamps_follow_expiry_window_contract() {
         .query_row(
             "SELECT cached_at, expires_at FROM cache_entries WHERE key = ?1",
             ["contract-key"],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
         )
         .unwrap();
 
@@ -60,7 +60,7 @@ fn negative_ttl_entries_are_expired_immediately() {
         .query_row(
             "SELECT cached_at, expires_at FROM cache_entries WHERE key = ?1",
             ["expired-key"],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
         )
         .unwrap();
 

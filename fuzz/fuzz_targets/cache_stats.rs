@@ -1,7 +1,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use shiplog_cache_stats::{BYTES_PER_MEGABYTE, CacheStats};
+use shiplog_cache::{BYTES_PER_MEGABYTE, CacheStats};
 
 fuzz_target!(|data: &[u8]| {
     let mut padded = [0u8; 24];
@@ -15,7 +15,10 @@ fuzz_target!(|data: &[u8]| {
     let stats = CacheStats::from_raw_counts(total_entries, expired_entries, cache_size_bytes);
 
     assert!(stats.expired_entries <= stats.total_entries);
-    assert_eq!(stats.valid_entries, stats.total_entries - stats.expired_entries);
+    assert_eq!(
+        stats.valid_entries,
+        stats.total_entries - stats.expired_entries
+    );
 
     if cache_size_bytes < 0 {
         assert_eq!(stats.cache_size_mb, 0);

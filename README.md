@@ -26,6 +26,15 @@ shiplog is not an analytics dashboard. It is not AI-generated narrative. It prod
 - **Tech leads** compiling structured proof of what their team shipped during a review cycle.
 - **Anyone** who wants a repeatable, auditable record of their GitHub activity over a time window.
 
+## Features
+
+- 🔍 **Multi-source ingestion** — GitHub API, canonical JSONL, and manual YAML events
+- 📊 **Automatic workstream clustering** — repo-based by default, optional LLM-assisted semantic grouping
+- 🔒 **Deterministic HMAC-SHA256 redaction** — three profiles (internal / manager / public) with stable aliases
+- ✅ **Coverage-first design** — every claim backed by receipts; gaps explicitly flagged in the coverage manifest
+- 📦 **Zip bundling with checksums** — SHA256 manifest for integrity verification
+- 🏗️ **Module-first clean architecture** — public crates for contracts, trust surfaces, adapters, and optional dependency boundaries
+
 ## Installation
 
 ### From crates.io (recommended)
@@ -61,6 +70,8 @@ cargo run -p shiplog -- <subcommand>
 
 ## Quick start
 
+shiplog follows a **collect → curate → render** workflow. You fetch raw events once, organize them into workstreams, then re-render as many times as you like without hitting the API again.
+
 ### 1. Collect events from GitHub
 
 ```bash
@@ -88,7 +99,7 @@ cp out/<run_id>/workstreams.suggested.yaml out/<run_id>/workstreams.yaml
 ### 3. Re-render the packet
 
 ```bash
-shiplog render --run-dir out/<run_id>
+shiplog render --run <run_id>
 ```
 
 This regenerates `packet.md` using your curated workstreams while preserving the original ledger and coverage data. Add `--redact-key <KEY>` to also generate manager and public profile packets.
@@ -157,7 +168,7 @@ shiplog collect manual \
 Generate redacted packets by providing a key:
 
 ```bash
-shiplog render --run-dir out/<run_id> --redact-key my-stable-secret
+shiplog render --run <run_id> --redact-key my-stable-secret
 ```
 
 The key drives deterministic HMAC-SHA256 aliasing. Same key + same input = same aliases across runs.
@@ -174,12 +185,29 @@ The key drives deterministic HMAC-SHA256 aliasing. Same key + same input = same 
 Bundle a specific profile as a zip:
 
 ```bash
-shiplog render --run-dir out/<run_id> --redact-key my-stable-secret --zip --bundle-profile manager
+shiplog render --run <run_id> --redact-key my-stable-secret --zip --bundle-profile manager
 ```
 
 ## Architecture
 
-shiplog is a microcrated Rust workspace following clean architecture (ports and adapters).
+shiplog is a module-first Rust workspace following clean architecture (ports and adapters).
+Public crates represent contracts, trust surfaces, real adapters, and optional dependency
+boundaries; internal implementation seams live under their owning crates. See
+[API_SURFACE.md](API_SURFACE.md) for the package boundary doctrine.
+
+### Data flow
+
+```text
+GitHub API ─→ Ingestor ─→ Normalizer ─→ Clusterer ─→ Renderer ─→ Output
+    │              │            │             │            │
+    └── Cache      └── Schema   └── Workstreams └── Redact  └── Bundle
+```
+
+Events flow left-to-right through well-defined ports. Product boundaries are tested at the
+crate level; smaller implementation seams stay as owner modules unless they earn an
+external contract. Adapters depend on ports and schema, never the reverse.
+
+### Crate map
 
 ```text
                     +------------------+
@@ -210,7 +238,7 @@ shiplog is a microcrated Rust workspace following clean architecture (ports and 
                     +------------------+
 ```
 
-### Workspace crates
+### Public Surface
 
 | Crate | Role |
 |-------|------|
@@ -231,6 +259,9 @@ shiplog is a microcrated Rust workspace following clean architecture (ports and 
 | `shiplog-render-json` | JSON output renderer |
 | `shiplog-bundle` | Zip archives with SHA256 checksum manifests |
 | `shiplog-testkit` | Shared test fixtures (not published) |
+
+The workspace may contain temporary internal implementation carriers during migration.
+Those are not promoted public APIs; new boundaries should start as modules first.
 
 ## LLM clustering
 
@@ -255,9 +286,19 @@ LLM clustering is feature-gated and off by default. It falls back to repository-
 ## Documentation
 
 - [CHANGELOG](CHANGELOG.md) -- Release history and migration notes.
+- [API_SURFACE](API_SURFACE.md) -- Public crate boundary doctrine.
 - [ROADMAP](ROADMAP.md) -- What is planned, what is next, and what is out of scope.
 - [CONTRIBUTING](CONTRIBUTING.md) -- Setup, conventions, and how to submit changes.
 - [docs.rs/shiplog](https://docs.rs/shiplog) -- API documentation for all published crates.
+
+## For contributors
+
+We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for setup instructions, coding conventions, and how to submit changes.
+
+```bash
+# Quick dev loop
+cargo fmt --all && cargo clippy --workspace --all-targets --all-features -- -D warnings && cargo test --workspace
+```
 
 ## License
 

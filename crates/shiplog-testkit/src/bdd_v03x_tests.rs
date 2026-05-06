@@ -218,96 +218,6 @@ mod v03x_tests {
         scenario.run().expect("Scenario 7.10 should pass");
     }
 
-    #[cfg(feature = "microcrate_export")]
-    #[test]
-    fn microcrate_contracts_scenario_export_paths() {
-        let scenario = microcrate_export_contract();
-        scenario
-            .run()
-            .expect("Scenario should lock export microcrate contract");
-    }
-
-    #[cfg(feature = "microcrate_output_layout")]
-    #[test]
-    fn microcrate_contracts_scenario_output_layout() {
-        let scenario = microcrate_output_layout_contract();
-        scenario
-            .run()
-            .expect("Scenario should lock output layout microcrate contract");
-    }
-
-    #[cfg(feature = "microcrate_validate")]
-    #[test]
-    fn microcrate_contracts_scenario_validate() {
-        let scenario = microcrate_validate_contract();
-        scenario
-            .run()
-            .expect("Scenario should lock validate microcrate contract");
-    }
-
-    #[cfg(feature = "microcrate_storage")]
-    #[test]
-    fn microcrate_contracts_scenario_storage() {
-        let scenario = microcrate_storage_contract();
-        scenario
-            .run()
-            .expect("Scenario should lock storage microcrate contract");
-    }
-
-    #[cfg(feature = "microcrate_notify")]
-    #[test]
-    fn microcrate_contracts_scenario_notify() {
-        let scenario = microcrate_notify_contract();
-        scenario
-            .run()
-            .expect("Scenario should lock notify microcrate contract");
-    }
-
-    #[cfg(feature = "microcrate_cache_key")]
-    #[test]
-    fn microcrate_contracts_scenario_cache_key() {
-        let scenario = microcrate_cache_key_contract();
-        scenario
-            .run()
-            .expect("Scenario should lock cache-key microcrate contract");
-    }
-
-    #[cfg(feature = "microcrate_cache_stats")]
-    #[test]
-    fn microcrate_contracts_scenario_cache_stats() {
-        let scenario = microcrate_cache_stats_contract();
-        scenario
-            .run()
-            .expect("Scenario should lock cache-stats microcrate contract");
-    }
-
-    #[cfg(feature = "microcrate_cache_expiry")]
-    #[test]
-    fn microcrate_contracts_scenario_cache_expiry() {
-        let scenario = microcrate_cache_expiry_contract();
-        scenario
-            .run()
-            .expect("Scenario should lock cache-expiry microcrate contract");
-    }
-
-    #[cfg(feature = "microcrate_date_windows")]
-    #[test]
-    fn microcrate_contracts_scenario_date_windows() {
-        let scenario = microcrate_date_windows_contract();
-        scenario
-            .run()
-            .expect("Scenario should lock date-windows microcrate contract");
-    }
-
-    #[cfg(feature = "microcrate_redaction_repo")]
-    #[test]
-    fn microcrate_contracts_scenario_redaction_repo() {
-        let scenario = microcrate_redaction_repo_contract();
-        scenario
-            .run()
-            .expect("Scenario should lock redaction-repo microcrate contract");
-    }
-
     // ===========================================================================
     // Feature 8: Configurable Packet Templates (Scenarios 8.1 - 8.10)
     // ===========================================================================
@@ -373,7 +283,7 @@ mod v03x_tests {
     }
 
     // ===========================================================================
-    // Feature 9: LLM Clustering as Default (Scenarios 9.1 - 9.9)
+    // Feature 9: LLM Clustering as Opt-in (Scenarios 9.1 - 9.9)
     // ===========================================================================
 
     #[test]

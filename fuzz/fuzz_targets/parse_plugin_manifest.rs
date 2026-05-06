@@ -5,6 +5,7 @@
 //! Target: Plugin manifest YAML/JSON format
 
 #![no_main]
+#![allow(dead_code)]
 
 use libfuzzer_sys::fuzz_target;
 use serde::Deserialize;
@@ -51,13 +52,13 @@ fuzz_target!(|data: &[u8]| {
     if let Ok(text) = std::str::from_utf8(data) {
         // Try to parse as YAML plugin manifest
         let _ = serde_yaml::from_str::<PluginManifest>(text);
-        
+
         // Try to parse as JSON plugin manifest
         let _ = serde_json::from_str::<PluginManifest>(text);
-        
+
         // Try to parse as YAML plugin config
         let _ = serde_yaml::from_str::<PluginConfig>(text);
-        
+
         // Try to parse as JSON plugin config
         let _ = serde_json::from_str::<PluginConfig>(text);
     }

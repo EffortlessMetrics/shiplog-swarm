@@ -13,8 +13,8 @@ use shiplog_schema::event::{
     Actor, EventEnvelope, EventKind, EventPayload, PullRequestEvent, PullRequestState, RepoRef,
     RepoVisibility, SourceRef, SourceSystem,
 };
-use shiplog_team_aggregate::TeamAggregator;
-use shiplog_team_core::{TeamConfig, parse_alias_list, parse_csv_list, resolve_team_config};
+use shiplog_team::TeamAggregator;
+use shiplog_team::{TeamConfig, parse_alias_list, parse_csv_list, resolve_team_config};
 use std::collections::HashMap;
 use std::io::Write;
 use std::path::Path;
@@ -114,7 +114,7 @@ fn write_member_ledger(
 fn aggregate_and_render(
     cfg: TeamConfig,
     root: &Path,
-) -> Result<(shiplog_team_aggregate::TeamAggregateResult, String), String> {
+) -> Result<(shiplog_team::TeamAggregateResult, String), String> {
     let aggregator = TeamAggregator::new(cfg);
     let result = aggregator
         .aggregate(root)
@@ -278,7 +278,7 @@ pub fn team_aggregate_runtime_constructor_contract() -> Scenario {
             Ok(())
         })
         .then(
-            "constructor should be available from the microcrate",
+            "constructor should be available from the team feature surface",
             |ctx| {
                 assert_true(
                     ctx.flag("runtime_constructed").unwrap_or(false),

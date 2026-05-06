@@ -20,9 +20,12 @@ This is what users "buy" (even when it is OSS):
 - one artifact set: **packet + ledger + coverage + bundles**
 - one mental model: **narrative is human; receipts are machine**
 
-### The substrate: a public crate ecosystem
+### The substrate: a module-first crate boundary
 
-Publishing the crates is useful for integrations, but you must be explicit about contracts:
+Public crates are useful for integrations, but only when they are real product
+contracts. The rule is:
+
+> Public crates for true product/API contracts; SRP module folders for internal implementation seams.
 
 #### Stable integration surface (treat as public API)
 
@@ -32,18 +35,29 @@ Publishing the crates is useful for integrations, but you must be explicit about
 
 These are what third parties should build against.
 
-#### Supported modules (published, but not a promise)
+#### Supported public surfaces
 
-Everything else can be published for composability/transparency, but you reserve the right to reshape internals between minor versions:
+These can be public because they map to user-visible product behavior, trust
+surfaces, real adapter boundaries, or heavy optional boundaries:
 
-- `shiplog-engine`, `shiplog-bundle`, `shiplog-redact`, `shiplog-workstreams`, `shiplog-cache`
-- `shiplog-ingest-*`, `shiplog-render-*`, `shiplog-cluster-llm`
+- `shiplog-engine`, `shiplog-coverage`, `shiplog-workstreams`, `shiplog-redact`, `shiplog-bundle`, `shiplog-cache`
+- `shiplog-ingest-*`, `shiplog-render-*`
+- `shiplog-cluster-llm`, `shiplog-team`, `shiplog-merge`, `shiplog-template` only while those feature boundaries remain real
 
 #### Dev-only
 
 - `shiplog-testkit` (recommended: **unpublished** or explicitly unstable)
 
+#### Internal module families
+
+Cache internals, redaction internals, date windows, output layout, team phases,
+workstream phases, LLM prompt/parse helpers, manual event parsing, receipt
+formatting, and generic utility/data-structure code should live under their
+owning crate as modules unless deliberately promoted.
+
 **Rule:** Do not let publishable crates depend on unpublished crates (even dev-deps) unless you have proven packaging/publish works.
+
+See `API_SURFACE.md` for the full boundary doctrine.
 
 ---
 
@@ -103,13 +117,13 @@ Notes:
 ### 3.3 Render (no re-fetch)
 
 ```bash
-shiplog render --run-dir out/<run_id>
+shiplog render --run <run_id>
 ```
 
 Add safe sharing variants:
 
 ```bash
-shiplog render --run-dir out/<run_id> --redact-key <KEY>
+shiplog render --run <run_id> --redact-key <KEY>
 ```
 
 ### 3.4 Refresh (re-fetch receipts; keep curation)
@@ -200,6 +214,7 @@ Three render profiles:
 - Adapters depend on foundation and ports.
 - Engine wires adapters through ports.
 - CLI wires the concrete graph; it is the "composition root."
+- New internal boundaries start as owner modules, not new workspace crates.
 
 ### Key crates
 
@@ -208,12 +223,17 @@ Three render profiles:
 - `shiplog-ids`: stable deterministic IDs
 - `shiplog-engine`: orchestration (collect/render/refresh/import)
 - `shiplog-ingest-github`: GitHub adapter (window slicing, caching, GHES)
+- `shiplog-ingest-git`: local git repository adapter
+- `shiplog-ingest-gitlab`: GitLab adapter (MR/review events, self-hosted)
+- `shiplog-ingest-jira`: Jira adapter (issue search, status filtering)
+- `shiplog-ingest-linear`: Linear adapter (GraphQL, issue ingestion)
 - `shiplog-cache`: SQLite TTL cache for API responses
 - `shiplog-workstreams`: clustering + curated/suggested semantics
 - `shiplog-redact`: deterministic redaction profiles + alias cache persistence
 - `shiplog-bundle`: manifests + zip bundles (profile-scoped)
 - `shiplog-render-md`: Markdown packet renderer (snapshot-tested)
 - `shiplog-render-json`: JSON/JSONL render outputs
+- `shiplog-template`: configurable packet templates
 - `shiplog-cluster-llm`: optional semantic clustering via OpenAI-compatible endpoint
 - `shiplog-testkit`: scenario helpers (BDD) - dev-only by default
 
@@ -326,13 +346,15 @@ Goal: reduce onboarding friction:
 **Now (v0.2.x)**
 
 - Binary releases (CI)
-- Local git ingest adapter
-- GitLab + Jira adapters (at least basic PR/issue ingestion)
+- ✅ Local git ingest adapter
+- ✅ GitLab adapter
+- ✅ Jira + Linear adapters
+- ✅ Configurable packet templates
+- Cache improvements (TTL config, size limits)
 
 **Next (v0.3.x)**
 
 - Multi-source merging with identity resolution
-- Templateable packet rendering
 - Better non-code work capture (manual lane ergonomics)
 
 **Non-goals**

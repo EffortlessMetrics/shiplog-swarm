@@ -12,35 +12,24 @@ env:
 jobs:
   mutation-test:
     name: Mutation Testing
+    # The current mutation suite is a long-running baseline signal with known
+    # surviving mutants. Keep it off the PR gate until score baselines are
+    # established and enforced deliberately.
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 120
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: "1.92"
           components: rustfmt, clippy
 
-      - name: Cache cargo registry
-        uses: actions/cache@v4
-        with:
-          path: ~/.cargo/registry
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Cache cargo index
-        uses: actions/cache@v4
-        with:
-          path: ~/.cargo/git
-          key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Cache cargo build
-        uses: actions/cache@v4
-        with:
-          path: target
-          key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
+      - uses: Swatinem/rust-cache@v2
 
       - name: Install cargo-mutants
         run: cargo install cargo-mutants --locked
@@ -51,7 +40,7 @@ jobs:
         run: |
           set +e
           fail=0
-          echo "Testing Tier 1: Critical Core crates..."
+          echo "Testing Tier 1: stable contracts and trust surfaces..."
           run_mutants_keepalive () {
             local crate="$1"
             local timeout="$2"
@@ -60,7 +49,6 @@ jobs:
             cargo mutants -p "${crate}" --timeout "${timeout}" --copy-target=false &
             local pid=$!
 
-            # GitHub Actions kills steps that produce no output for ~10 minutes.
             while kill -0 "${pid}" 2>/dev/null; do
               echo "...still running: cargo mutants -p ${crate}"
               sleep 60
@@ -72,6 +60,8 @@ jobs:
           cargo mutants -p shiplog-redact --timeout 180 --copy-target=false || fail=1
           run_mutants_keepalive shiplog-coverage 600 || fail=1
           cargo mutants -p shiplog-ids --timeout 120 --copy-target=false || fail=1
+          cargo mutants -p shiplog-ports --timeout 120 --copy-target=false || fail=1
+          cargo mutants -p shiplog-bundle --timeout 150 --copy-target=false || fail=1
           exit $fail
 
       - name: Run mutation tests for Tier 2 crates
@@ -80,11 +70,13 @@ jobs:
         run: |
           set +e
           fail=0
-          echo "Testing Tier 2: Pipeline Core crates..."
+          echo "Testing Tier 2: pipeline and output crates..."
           cargo mutants -p shiplog-engine --timeout 150 --copy-target=false || fail=1
-          cargo mutants -p shiplog-bundle --timeout 150 --copy-target=false || fail=1
           cargo mutants -p shiplog-workstreams --timeout 150 --copy-target=false || fail=1
-          cargo mutants -p shiplog-ports --timeout 120 --copy-target=false || fail=1
+          cargo mutants -p shiplog-render-md --timeout 120 --copy-target=false || fail=1
+          cargo mutants -p shiplog-render-json --timeout 120 --copy-target=false || fail=1
+          cargo mutants -p shiplog-cache --timeout 120 --copy-target=false || fail=1
+          cargo mutants -p shiplog-merge --timeout 120 --copy-target=false || fail=1
           exit $fail
 
       - name: Run mutation tests for Tier 3 crates
@@ -93,46 +85,17 @@ jobs:
         run: |
           set +e
           fail=0
-          echo "Testing Tier 3: Adapters and Renderers crates..."
+          echo "Testing Tier 3: adapters and optional boundaries..."
           cargo mutants -p shiplog-ingest-github --timeout 120 --copy-target=false || fail=1
           cargo mutants -p shiplog-ingest-json --timeout 120 --copy-target=false || fail=1
           cargo mutants -p shiplog-ingest-manual --timeout 120 --copy-target=false || fail=1
-          cargo mutants -p shiplog-render-md --timeout 120 --copy-target=false || fail=1
-          cargo mutants -p shiplog-render-json --timeout 120 --copy-target=false || fail=1
-          cargo mutants -p shiplog-cache --timeout 120 --copy-target=false || fail=1
-          exit $fail
-
-      - name: Run mutation tests for Tier 4 crates
-        id: tier4
-        continue-on-error: true
-        run: |
-          set +e
-          fail=0
-          echo "Testing Tier 4: LLM Clustering and App crates..."
-          cargo mutants -p shiplog-cluster-llm --timeout 120 --copy-target=false || fail=1
-          exit $fail
-
-      - name: Run mutation tests for v0.2.x (Now) crates
-        id: v02x
-        continue-on-error: true
-        run: |
-          set +e
-          fail=0
-          echo "Testing v0.2.x Now: Local git ingest adapter..."
           cargo mutants -p shiplog-ingest-git --timeout 120 --copy-target=false || fail=1
-          exit $fail
-
-      - name: Run mutation tests for v0.3.x (Next) roadmap crates
-        id: v03x
-        continue-on-error: true
-        run: |
-          set +e
-          fail=0
-          echo "Testing v0.3.x Roadmap: GitLab, Jira, Linear, Template..."
           cargo mutants -p shiplog-ingest-gitlab --timeout 120 --copy-target=false || fail=1
           cargo mutants -p shiplog-ingest-jira --timeout 120 --copy-target=false || fail=1
           cargo mutants -p shiplog-ingest-linear --timeout 120 --copy-target=false || fail=1
-          cargo mutants -p shiplog-template --timeout 120 --copy-target=false || fail=1
+          cargo mutants -p shiplog-cluster-llm --timeout 120 --copy-target=false || fail=1
+          cargo mutants -p shiplog-team --timeout 120 --copy-target=false || fail=1
+          cargo mutants -p shiplog --timeout 120 --copy-target=false || fail=1
           exit $fail
 
       - name: Check mutation results
@@ -140,10 +103,7 @@ jobs:
         run: |
           if [ "${{ steps.tier1.outcome }}" = "failure" ] || \
              [ "${{ steps.tier2.outcome }}" = "failure" ] || \
-             [ "${{ steps.tier3.outcome }}" = "failure" ] || \
-             [ "${{ steps.tier4.outcome }}" = "failure" ] || \
-             [ "${{ steps.v02x.outcome }}" = "failure" ] || \
-             [ "${{ steps.v03x.outcome }}" = "failure" ]; then
+             [ "${{ steps.tier3.outcome }}" = "failure" ]; then
             echo "Mutation testing failed for one or more tiers"
             exit 1
           fi
@@ -163,13 +123,4 @@ jobs:
         run: |
           echo "# Mutation Test Results" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Mutation testing completed. Check the uploaded artifacts for detailed results." >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "## Minimum Scores by Tier" >> $GITHUB_STEP_SUMMARY
-          echo "- Tier 1 (Critical Core): ≥ 85%" >> $GITHUB_STEP_SUMMARY
-          echo "- Tier 2 (Pipeline Core): ≥ 75%" >> $GITHUB_STEP_SUMMARY
-          echo "- Tier 3 (Adapters/Renderers): ≥ 65%" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "## Roadmap Crate Coverage" >> $GITHUB_STEP_SUMMARY
-          echo "- v0.2.x (Now): shiplog-ingest-git" >> $GITHUB_STEP_SUMMARY
-          echo "- v0.3.x (Next): shiplog-ingest-gitlab, shiplog-ingest-jira, shiplog-ingest-linear, shiplog-template" >> $GITHUB_STEP_SUMMARY
+          echo "Mutation testing completed. Check the uploaded artifacts for details." >> $GITHUB_STEP_SUMMARY

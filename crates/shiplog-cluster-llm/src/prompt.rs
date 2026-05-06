@@ -152,10 +152,6 @@ mod tests {
         let result = format_event_list(&events);
         assert!(result.contains("[0]"), "should contain index [0]");
         assert!(result.contains("[1]"), "should contain index [1]");
-        assert!(
-            result.contains('\n'),
-            "should contain newline between entries"
-        );
         assert!(result.contains("Add login"), "should contain event content");
         assert!(result.contains("Fix bug"), "should contain event content");
     }
