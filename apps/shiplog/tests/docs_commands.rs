@@ -1,5 +1,6 @@
 //! Fixture-safe command tests for documented review-cycle workflows.
 
+use anyhow::Context;
 use assert_cmd::Command;
 use predicates::prelude::*;
 use std::path::{Path, PathBuf};
@@ -2952,6 +2953,75 @@ fn github_activity_harvest_adr_records_actor_first_owner_filtered_decision() {
             "GitHub activity harvest ADR should mention {needle:?}"
         );
     }
+}
+
+#[test]
+fn github_activity_harvest_completion_audit_records_landed_scope() -> anyhow::Result<()> {
+    let root = repo_root();
+    let audit_path = root.join("docs/product/github-activity-harvest-completion-audit.md");
+    let readiness_path = root.join("docs/release/0.9.0-readiness.md");
+    let guide_path = root.join("docs/guides/github-activity-harvest.md");
+    let readme_path = root.join("README.md");
+
+    let audit = std::fs::read_to_string(&audit_path)
+        .with_context(|| format!("failed to read {}", audit_path.display()))?;
+    let readiness = std::fs::read_to_string(&readiness_path)
+        .with_context(|| format!("failed to read {}", readiness_path.display()))?;
+    let guide = std::fs::read_to_string(&guide_path)
+        .with_context(|| format!("failed to read {}", guide_path.display()))?;
+    let readme = std::fs::read_to_string(&readme_path)
+        .with_context(|| format!("failed to read {}", readme_path.display()))?;
+
+    for needle in [
+        "GitHub activity harvest completion audit",
+        "Release Proof Map",
+        "plan writes a static scope receipt before spending provider API budget",
+        "#444",
+        "#445",
+        "#446",
+        "#447",
+        "#448",
+        "#449",
+        "#450",
+        "#451",
+        "#452",
+        "#453",
+        "#454",
+        "#455",
+        "github.activity.plan.json",
+        "github.activity.progress.json",
+        "github.activity.api-ledger.json",
+        "github.activity.report.json",
+        "github.activity.windows/<profile>/<window_id>/ledger.events.jsonl",
+        "search/core request counts",
+        "owner filtering is actor-first",
+        "status reads plan/progress/API-ledger receipts without writing",
+        "activity report writes explicit JSON/Markdown report artifacts",
+        "merge writes final activity outputs from a completed run",
+        "do not call GitHub",
+        "does not approve tagging",
+        "does not lift",
+    ] {
+        assert!(
+            audit.contains(needle),
+            "GitHub activity completion audit should mention {needle:?}"
+        );
+    }
+
+    assert!(
+        guide.contains("github-activity-harvest-completion-audit.md"),
+        "guide should link the GitHub activity completion audit"
+    );
+    assert!(
+        readme.contains("github-activity-harvest-completion-audit.md"),
+        "README should link the GitHub activity completion audit"
+    );
+    assert!(
+        readiness.contains("GitHub activity completion audit"),
+        "readiness doc should link the GitHub activity completion audit"
+    );
+
+    Ok(())
 }
 
 #[test]
