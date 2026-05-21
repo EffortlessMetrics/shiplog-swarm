@@ -74,7 +74,7 @@ impl LocalGitIngestor {
     fn get_repo_name(&self, repo: &Repository) -> Result<String> {
         // Try to get the remote URL and extract the repo name
         if let Ok(remote) = repo.find_remote("origin")
-            && let Some(url) = remote.url()
+            && let Ok(url) = remote.url()
         {
             // Extract repo name from URL like:
             // https://github.com/owner/repo.git
@@ -151,7 +151,12 @@ impl LocalGitIngestor {
         let commit_hash = commit.id().to_string();
 
         // Extract first line of commit message as title
-        let title = commit.summary().unwrap_or("<no message>").to_string();
+        let title = commit
+            .summary()
+            .ok()
+            .flatten()
+            .unwrap_or("<no message>")
+            .to_string();
 
         let author = commit.author();
         let author_name = author.name().unwrap_or("Unknown").to_string();
