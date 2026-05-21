@@ -109,7 +109,7 @@ Blocks: support-tier-map
 Blocked by: doc-artifact-checker
 Branch: infra/check-goals
 Issue:
-PR:
+PR: EffortlessMetrics/shiplog-swarm#30
 
 ### Goal
 
