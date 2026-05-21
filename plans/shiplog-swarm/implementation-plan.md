@@ -546,7 +546,7 @@ Blocks: promotion-cadence
 Blocked by: branch-protection-enable
 Branch: docs/swarm-machine-cutover
 Issue:
-PR:
+PR: EffortlessMetrics/shiplog-swarm#27
 
 ### Goal
 
