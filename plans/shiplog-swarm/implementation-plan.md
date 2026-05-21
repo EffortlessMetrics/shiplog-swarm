@@ -337,6 +337,18 @@ result: Shiplog Rust Small on CX43 remained queued and was cancelled
 normalized result: cancelled/failure after cancellation
 ```
 
+Forced CX43 proof later reached the runner but failed the scratch preflight
+before Rust/toolchain work:
+
+```text
+workflow: EM CI Routed Shiplog Rust
+run: 26234698892
+route: cx43
+reason: forced_cx43
+result: blocked; /mnt/ci-scratch had 97GB free and the CX43 guard required 100GB
+normalized result: failed because selected cx43 job failed
+```
+
 Same-repo dependabot PR #16 gave a second normal `pull_request` proof after
 the workflow fix and dependency compatibility patch:
 
@@ -386,10 +398,10 @@ HTTP 403: runners and runner groups permission required
 ```
 
 Same-repo PR and push fallback proof now have multiple green receipts.
-Self-hosted CX53 proof passed. Fork-admission proof passed. CX43 proof still
-needs an eligible runner. Branch protection must remain disabled until CX43
-proof is complete, or until the cutover contract is amended to make CX43
-advisory.
+Self-hosted CX53 proof passed. Fork-admission proof passed. CX43 is reachable,
+but its first completed runner attempt failed the scratch guard before Rust
+work. Branch protection must remain disabled until CX43 proof is complete, or
+until the cutover contract is amended to make CX43 advisory.
 
 ### Proof commands
 
