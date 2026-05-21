@@ -1,0 +1,8 @@
+[package]
+name = "shiplog-swarm"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "shiplog_swarm"
+path = "src/lib.rs"
