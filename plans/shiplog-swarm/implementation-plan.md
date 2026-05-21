@@ -2,7 +2,7 @@
 
 ## Current Preflight
 
-Status: shared history repaired; routed CI workflow landed; proof in progress
+Status: shared history repaired; routed CI proof complete; branch protection next
 Linked proposal: SHIPLOG-PROP-0010
 Linked spec: SHIPLOG-SPEC-0011
 Linked ADR: SHIPLOG-ADR-0011
@@ -44,7 +44,7 @@ diff:        empty
 merge policy: squash=true, merge=false, rebase=false, auto_merge=true, delete_branch_on_merge=true
 ```
 
-Cutover still must not proceed until routed CI is added and proven.
+Cutover still must not proceed until branch protection is enabled and proven.
 
 ## Work item: repair-shared-history
 
@@ -253,15 +253,15 @@ This proves workflow shape, not final cutover or branch protection.
 
 ## Work item: routed-ci-proof
 
-Status: active
+Status: done
 Linked proposal: SHIPLOG-PROP-0010
 Linked spec: SHIPLOG-SPEC-0011
 Linked ADR: SHIPLOG-ADR-0011
 Blocks: branch-protection-enable
 Blocked by: routed-rust-small-workflow
-Branch: docs/swarm-routed-ci-proof
+Branch: docs/swarm-routed-ci-proof-complete
 Issue:
-PR: EffortlessMetrics/shiplog-swarm#18, EffortlessMetrics/shiplog-swarm#16, EffortlessMetrics/shiplog-swarm#20
+PR: EffortlessMetrics/shiplog-swarm#18, EffortlessMetrics/shiplog-swarm#16, EffortlessMetrics/shiplog-swarm#20, EffortlessMetrics/shiplog-swarm#22
 
 ### Goal
 
@@ -390,6 +390,48 @@ normalized result: passed
 disposition: closed without merge after proof capture
 ```
 
+The #21 squash merge naturally selected CX53 on the `shiplog-swarm/main` push
+path and passed:
+
+```text
+workflow: EM CI Routed Shiplog Rust
+run: 26233051508
+swarm/main: c48e459cbe916288d91758fa9eeb60ce567ed637
+route: cx53
+reason: cx53_idle
+trusted: true
+result: Shiplog Rust Small on CX53 passed
+normalized result: passed
+```
+
+Same-repo PR #22 lowered only the CX43 scratch guard from 100GB to 90GB after
+the forced CX43 failure found 97GB free. The normal pull request route then
+selected CX43 and passed:
+
+```text
+workflow: EM CI Routed Shiplog Rust
+run: 26234886542
+route: cx43
+reason: cx43_idle
+trusted: true
+result: Shiplog Rust Small on CX43 passed
+normalized result: passed
+```
+
+The #22 squash merge also refreshed the `shiplog-swarm/main` push fallback
+proof:
+
+```text
+workflow: EM CI Routed Shiplog Rust
+run: 26235704712
+swarm/main: ad2776b403fe694ee165a86c6b629559e33617fc
+route: github
+reason: no_idle_runner
+trusted: true
+result: Shiplog Rust Small on GitHub Hosted passed
+normalized result: passed
+```
+
 The local GitHub CLI token cannot inspect org self-hosted runner state:
 
 ```text
@@ -397,11 +439,9 @@ gh api orgs/EffortlessMetrics/actions/runners?per_page=100
 HTTP 403: runners and runner groups permission required
 ```
 
-Same-repo PR and push fallback proof now have multiple green receipts.
-Self-hosted CX53 proof passed. Fork-admission proof passed. CX43 is reachable,
-but its first completed runner attempt failed the scratch guard before Rust
-work. Branch protection must remain disabled until CX43 proof is complete, or
-until the cutover contract is amended to make CX43 advisory.
+Same-repo PR, push fallback, CX43, CX53, and fork-admission proof now have green
+receipts. Branch protection may proceed with only `Shiplog Rust Small Result`
+as the required status check.
 
 ### Proof commands
 
@@ -413,8 +453,8 @@ git diff --check
 
 ### Rollback
 
-Leave branch protection disabled and keep normal development on
-`EffortlessMetrics/shiplog` until proof is complete.
+If routed proof regresses, leave branch protection disabled and keep normal
+development on `EffortlessMetrics/shiplog` until the failed route is repaired.
 
 ### Claim boundary
 
@@ -422,7 +462,7 @@ This proves routed CI behavior only. It does not move release authority.
 
 ## Work item: branch-protection-enable
 
-Status: ready
+Status: active
 Linked proposal: SHIPLOG-PROP-0010
 Linked spec: SHIPLOG-SPEC-0011
 Linked ADR: SHIPLOG-ADR-0011
