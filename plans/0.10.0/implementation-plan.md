@@ -219,7 +219,7 @@ Blocks: repo-contract-report
 Blocked by: support-tier-map
 Branch: infra/policy-ci-source-truth
 Issue:
-PR:
+PR: EffortlessMetrics/shiplog-swarm#32
 
 ### Goal
 
