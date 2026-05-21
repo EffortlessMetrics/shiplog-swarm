@@ -12,7 +12,7 @@ Blocks: policy-doc-artifact-ledger
 Blocked by: none
 Branch: docs/source-of-truth-stack
 Issue:
-PR:
+PR: EffortlessMetrics/shiplog-swarm#29
 
 ### Goal
 
