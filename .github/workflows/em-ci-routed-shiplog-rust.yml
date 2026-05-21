@@ -228,6 +228,10 @@ jobs:
       - name: Run Shiplog Rust Small checks
         run: |
           set -euo pipefail
+          export HOME="$TMPDIR/home"
+          export CARGO_HOME="${CARGO_HOME:-/home/gha/.cargo}"
+          export RUSTUP_HOME="${RUSTUP_HOME:-/home/gha/.rustup}"
+          mkdir -p "$HOME"
           cargo fmt --all -- --check
           cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
           cargo test --workspace --all-features --locked -- --test-threads=4
