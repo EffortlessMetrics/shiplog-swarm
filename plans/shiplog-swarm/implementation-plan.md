@@ -620,7 +620,7 @@ Blocks: none
 Blocked by: none
 Branch: promote/swarm-YYYYMMDD-SHA
 Issue:
-PR:
+PR: EffortlessMetrics/shiplog-swarm#28
 
 ### Goal
 
