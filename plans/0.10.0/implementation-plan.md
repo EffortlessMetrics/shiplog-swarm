@@ -166,7 +166,7 @@ Blocks: policy-ci-wiring
 Blocked by: active-goal-checker
 Branch: infra/check-support-tiers
 Issue:
-PR:
+PR: EffortlessMetrics/shiplog-swarm#31
 
 ### Goal
 
