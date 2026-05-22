@@ -278,7 +278,7 @@ Blocks: source-of-truth-closeout
 Blocked by: policy-ci-wiring
 Branch: infra/repo-contract-report
 Issue:
-PR:
+PR: EffortlessMetrics/shiplog-swarm#33
 
 ### Goal
 
