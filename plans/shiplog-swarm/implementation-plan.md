@@ -435,6 +435,17 @@ normalized result: failed because selected cx43 job failed
 The CX43 scratch guard was lowered to 80GB to keep the route usable while still
 requiring a large clean scratch budget before Rust work starts.
 
+Forced CX43 proof on the PR branch then passed end to end with the lower guard:
+
+```text
+workflow: EM CI Routed Shiplog Rust
+run: 26283549809
+route: cx43
+reason: forced_cx43
+result: Shiplog Rust Small on CX43 passed
+normalized result: passed
+```
+
 The #22 squash merge also refreshed the `shiplog-swarm/main` push fallback
 proof:
 
