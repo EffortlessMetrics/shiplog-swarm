@@ -127,6 +127,9 @@ struct GitTopologyReport {
     merge_base: Option<String>,
     trees_aligned: Option<bool>,
     source_ahead: Vec<String>,
+    source_ahead_classification: String,
+    source_ahead_promotion_merges: Vec<String>,
+    source_ahead_other_commits: Vec<String>,
     swarm_ahead: Vec<String>,
     status: String,
     notes: Vec<String>,
@@ -288,6 +291,7 @@ fn inspect_git_topology(workspace_root: &Path) -> GitTopologyReport {
         ],
         &mut notes,
     );
+    let source_ahead_summary = classify_source_ahead(&source_ahead);
     let trees_aligned = git_trees_aligned(workspace_root, SOURCE_REF, SWARM_REF, &mut notes);
     let status = match (
         source_head.as_ref(),
@@ -316,10 +320,55 @@ fn inspect_git_topology(workspace_root: &Path) -> GitTopologyReport {
         merge_base,
         trees_aligned,
         source_ahead,
+        source_ahead_classification: source_ahead_summary.classification,
+        source_ahead_promotion_merges: source_ahead_summary.promotion_merges,
+        source_ahead_other_commits: source_ahead_summary.other_commits,
         swarm_ahead,
         status,
         notes,
     }
+}
+
+struct SourceAheadSummary {
+    classification: String,
+    promotion_merges: Vec<String>,
+    other_commits: Vec<String>,
+}
+
+fn classify_source_ahead(commits: &[String]) -> SourceAheadSummary {
+    let mut promotion_merges = Vec::new();
+    let mut other_commits = Vec::new();
+
+    for commit in commits {
+        if is_source_promotion_merge(commit) {
+            promotion_merges.push(commit.clone());
+        } else {
+            other_commits.push(commit.clone());
+        }
+    }
+
+    let classification = match (
+        promotion_merges.is_empty(),
+        other_commits.is_empty(),
+        commits.is_empty(),
+    ) {
+        (_, _, true) => "none",
+        (false, true, false) => "promotion-merge-only",
+        (true, false, false) => "non-promotion",
+        (false, false, false) => "mixed",
+        (true, true, false) => "none",
+    }
+    .to_string();
+
+    SourceAheadSummary {
+        classification,
+        promotion_merges,
+        other_commits,
+    }
+}
+
+fn is_source_promotion_merge(commit: &str) -> bool {
+    commit.contains("Merge pull request #") && commit.contains("promote/swarm-")
 }
 
 fn git_line(workspace_root: &Path, args: &[&str], notes: &mut Vec<String>) -> Option<String> {
@@ -565,6 +614,27 @@ fn render_markdown(report: &RepoContractReport) -> String {
     );
     push_row(
         &mut out,
+        "Source ahead classification",
+        &report.git_topology.source_ahead_classification,
+    );
+    push_row(
+        &mut out,
+        "Source promotion merges",
+        &format!(
+            "{} commit(s)",
+            report.git_topology.source_ahead_promotion_merges.len()
+        ),
+    );
+    push_row(
+        &mut out,
+        "Source other commits",
+        &format!(
+            "{} commit(s)",
+            report.git_topology.source_ahead_other_commits.len()
+        ),
+    );
+    push_row(
+        &mut out,
         "Swarm ahead",
         &format!("{} commit(s)", report.git_topology.swarm_ahead.len()),
     );
@@ -575,8 +645,13 @@ fn render_markdown(report: &RepoContractReport) -> String {
     );
     push_markdown_list(
         &mut out,
-        "Source ahead commits",
-        &report.git_topology.source_ahead,
+        "Source ahead non-promotion commits",
+        &report.git_topology.source_ahead_other_commits,
+    );
+    push_markdown_list(
+        &mut out,
+        "Source promotion merge commits",
+        &report.git_topology.source_ahead_promotion_merges,
     );
     push_markdown_list(
         &mut out,
@@ -789,5 +864,36 @@ commands = ["cargo xtask repo-contract-report", "git diff --check"]
         assert!(markdown.contains("# Source-of-truth graph"));
         assert!(markdown.contains("Repo contract report"));
         assert!(markdown.contains("## Git topology"));
+    }
+
+    #[test]
+    fn classifies_source_ahead_promotion_merges() {
+        let commits = vec![
+            "84485cc Merge pull request #499 from EffortlessMetrics/promote/swarm-20260522-8c50281"
+                .to_string(),
+            "ecdd4d9 Merge pull request #498 from EffortlessMetrics/promote/swarm-20260522-cbcd866"
+                .to_string(),
+        ];
+
+        let summary = classify_source_ahead(&commits);
+
+        assert_eq!(summary.classification, "promotion-merge-only");
+        assert_eq!(summary.promotion_merges, commits);
+        assert!(summary.other_commits.is_empty());
+    }
+
+    #[test]
+    fn classifies_source_ahead_mixed_commits() {
+        let promotion =
+            "84485cc Merge pull request #499 from EffortlessMetrics/promote/swarm-20260522-8c50281"
+                .to_string();
+        let source_only = "abc1234 docs: source-only release note".to_string();
+        let commits = vec![promotion.clone(), source_only.clone()];
+
+        let summary = classify_source_ahead(&commits);
+
+        assert_eq!(summary.classification, "mixed");
+        assert_eq!(summary.promotion_merges, vec![promotion]);
+        assert_eq!(summary.other_commits, vec![source_only]);
     }
 }
