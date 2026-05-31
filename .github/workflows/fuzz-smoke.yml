@@ -119,6 +119,36 @@ jobs:
           toolchain: nightly-2026-05-20
           components: llvm-tools-preview
 
+      - name: Ensure native C++ compiler for libFuzzer
+        if: steps.targets.outputs.targets != ''
+        run: |
+          set -euo pipefail
+
+          pick_compiler() {
+            for bin in c++ clang++ g++; do
+              if command -v "$bin" >/dev/null 2>&1; then
+                command -v "$bin"
+                return 0
+              fi
+            done
+            return 1
+          }
+
+          compiler="$(pick_compiler || true)"
+          if [ -z "$compiler" ] && command -v sudo >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends g++
+            compiler="$(pick_compiler || true)"
+          fi
+
+          if [ -z "$compiler" ]; then
+            echo "::error::cargo-fuzz/libfuzzer-sys requires c++, clang++, or g++ on the runner."
+            exit 1
+          fi
+
+          echo "CXX=$compiler" >> "$GITHUB_ENV"
+          "$compiler" --version
+
       - name: Cache cargo binaries
         if: steps.targets.outputs.targets != ''
         uses: actions/cache@v5
