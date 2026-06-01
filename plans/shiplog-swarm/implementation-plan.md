@@ -1377,6 +1377,20 @@ EffortlessMetrics/shiplog#559:
           routed proof passed through GitHub-hosted fallback in run
           26737148791, and source post-merge routed proof passed through
           GitHub-hosted fallback in run 26737538802
+
+EffortlessMetrics/shiplog#560:
+  swarm head: 6f2c9d0d9aea889948de9243007b6ad891b20d8d
+  included swarm PRs: EffortlessMetrics/shiplog-swarm#124
+  source merge: 53faf292918cd957418d9381af55715beb439426
+  result: regular merge commit; Droid BYOK workflows switched to
+          `custom:MiniMax-M3-0` and the PR branch fix restored runtime
+          `MINIMAX_API_KEY` expansion in the generated Factory
+          `settings.json`; swarm PR routed proof passed through GitHub-hosted
+          fallback in run 26738771780 after the branch update, swarm/main
+          routed proof passed through GitHub-hosted fallback in run
+          26739095859, source PR routed proof passed through GitHub-hosted
+          fallback in run 26739477590, and source post-merge routed proof
+          passed through GitHub-hosted fallback in run 26740543589
 ```
 
 ### Proof commands
