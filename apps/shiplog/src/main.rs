@@ -46,9 +46,15 @@ mod intake_report_builder;
 mod status;
 use intake_report_builder::build_intake_report;
 
+const TOP_LEVEL_AFTER_HELP: &str = "Review-ready loop:\n  shiplog init --guided\n  shiplog doctor --setup\n  shiplog status --latest\n  shiplog intake --last-6-months --explain\n  shiplog repair plan --latest\n  shiplog journal add --from-repair <repair_id>\n  shiplog intake --last-6-months --explain\n  shiplog repair diff --latest\n  shiplog runs diff --latest\n  shiplog share explain manager --latest\n\nAdvanced GitHub activity:\n  shiplog github activity plan\n  shiplog github activity scout\n  shiplog github activity run --profile authored --resume\n  shiplog github activity run --profile full --resume\n  shiplog github activity status\n  shiplog github activity report\n  shiplog github activity merge\n\nRead-first commands:\n  doctor --setup, status --latest, repair plan, repair diff, runs diff, and share explain inspect setup/receipts before write-producing commands.";
+
 #[derive(Parser, Debug)]
 #[command(name = "shiplog", version)]
-#[command(about = "Generate self-review packets with receipts + coverage.", long_about = None)]
+#[command(
+    about = "Run the review-readiness loop with receipts, repair guidance, and safe share profiles.",
+    long_about = "Run the review-readiness loop: set up sources, inspect status, collect evidence, repair gaps, compare improvement, and explain safe share posture.",
+    after_help = TOP_LEVEL_AFTER_HELP
+)]
 struct Cli {
     #[command(subcommand)]
     cmd: Command,
