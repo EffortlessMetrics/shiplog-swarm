@@ -46,7 +46,30 @@ mod intake_report_builder;
 mod status;
 use intake_report_builder::build_intake_report;
 
-const TOP_LEVEL_AFTER_HELP: &str = "Review-ready loop:\n  shiplog init --guided\n  shiplog doctor --setup\n  shiplog status --latest\n  shiplog intake --last-6-months --explain\n  shiplog repair plan --latest\n  shiplog journal add --from-repair <repair_id>\n  shiplog intake --last-6-months --explain\n  shiplog repair diff --latest\n  shiplog runs diff --latest\n  shiplog share explain manager --latest\n\nAdvanced GitHub activity:\n  shiplog github activity plan\n  shiplog github activity scout\n  shiplog github activity run --profile authored --resume\n  shiplog github activity run --profile full --resume\n  shiplog github activity status\n  shiplog github activity report\n  shiplog github activity merge\n\nRead-first commands:\n  doctor --setup, status --latest, repair plan, repair diff, runs diff, and share explain inspect setup/receipts before write-producing commands.";
+const TOP_LEVEL_AFTER_HELP: &str = "\
+Review-ready loop:
+  shiplog init --guided
+  shiplog doctor --setup
+  shiplog status --latest
+  shiplog intake --last-6-months --explain
+  shiplog repair plan --latest
+  shiplog journal add --from-repair <repair_id>
+  shiplog intake --last-6-months --explain
+  shiplog repair diff --latest
+  shiplog runs diff --latest
+  shiplog share explain manager --latest
+
+Advanced GitHub activity:
+  shiplog github activity plan
+  shiplog github activity scout
+  shiplog github activity run --profile authored --resume
+  shiplog github activity run --profile full --resume
+  shiplog github activity status
+  shiplog github activity report
+  shiplog github activity merge
+
+Read-first commands:
+  doctor --setup, status --latest, repair plan, repair diff, runs diff, and share explain inspect setup/receipts before write-producing commands.";
 
 #[derive(Parser, Debug)]
 #[command(name = "shiplog", version)]
