@@ -1704,7 +1704,195 @@ fn help_shows_all_subcommands() {
         .stdout(predicate::str::contains("open"))
         .stdout(predicate::str::contains("merge"))
         .stdout(predicate::str::contains("import"))
-        .stdout(predicate::str::contains("run"));
+        .stdout(predicate::str::contains("run"))
+        .stdout(predicate::str::contains("Review-ready loop:"))
+        .stdout(predicate::str::contains("shiplog init --guided"))
+        .stdout(predicate::str::contains("shiplog doctor --setup"))
+        .stdout(predicate::str::contains("shiplog status --latest"))
+        .stdout(predicate::str::contains(
+            "shiplog intake --last-6-months --explain",
+        ))
+        .stdout(predicate::str::contains("shiplog repair plan --latest"))
+        .stdout(predicate::str::contains(
+            "shiplog journal add --from-repair <repair_id>",
+        ))
+        .stdout(predicate::str::contains("shiplog repair diff --latest"))
+        .stdout(predicate::str::contains("shiplog runs diff --latest"))
+        .stdout(predicate::str::contains(
+            "shiplog share explain manager --latest",
+        ))
+        .stdout(predicate::str::contains("Advanced GitHub activity:"))
+        .stdout(predicate::str::contains("shiplog github activity plan"))
+        .stdout(predicate::str::contains(
+            "shiplog github activity run --profile authored --resume",
+        ))
+        .stdout(predicate::str::contains(
+            "shiplog github activity run --profile full --resume",
+        ))
+        .stdout(predicate::str::contains("shiplog github activity merge"))
+        .stdout(predicate::str::contains("Read-first commands:"));
+}
+
+#[test]
+fn github_activity_help_teaches_budget_aware_harvest_path() {
+    shiplog_cmd()
+        .args(["github", "activity", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Recommended harvest path:"))
+        .stdout(predicate::str::contains("shiplog github activity plan"))
+        .stdout(predicate::str::contains("shiplog github activity scout"))
+        .stdout(predicate::str::contains(
+            "shiplog github activity run --profile authored --resume",
+        ))
+        .stdout(predicate::str::contains(
+            "shiplog github activity run --profile full --resume",
+        ))
+        .stdout(predicate::str::contains("shiplog github activity status"))
+        .stdout(predicate::str::contains("shiplog github activity report"))
+        .stdout(predicate::str::contains("shiplog github activity merge"))
+        .stdout(predicate::str::contains("API-budget posture:"))
+        .stdout(predicate::str::contains(
+            "plan reads config and writes github.activity.plan.json without provider calls",
+        ))
+        .stdout(predicate::str::contains(
+            "scout and run read GitHub, write progress/API-ledger receipts, and honor --resume",
+        ))
+        .stdout(predicate::str::contains(
+            "status reads existing receipts only",
+        ))
+        .stdout(predicate::str::contains(
+            "merge writes final activity outputs from completed receipts",
+        ))
+        .stdout(predicate::str::contains(
+            "it does not render share profiles",
+        ));
+
+    shiplog_cmd()
+        .args(["github", "activity", "plan", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--config"))
+        .stdout(predicate::str::contains("--out"))
+        .stdout(predicate::str::contains("--profile"))
+        .stdout(predicate::str::contains("Static planning path:"))
+        .stdout(predicate::str::contains("shiplog github activity plan"))
+        .stdout(predicate::str::contains(
+            "shiplog github activity scout --resume",
+        ))
+        .stdout(predicate::str::contains(
+            "plan reads [github_activity] config and writes github.activity.plan.json",
+        ))
+        .stdout(predicate::str::contains(
+            "It makes no GitHub provider calls and does not create API cache entries",
+        ))
+        .stdout(predicate::str::contains(
+            "Run scout after plan before spending budget on a larger harvest profile",
+        ));
+
+    shiplog_cmd()
+        .args(["github", "activity", "scout", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--config"))
+        .stdout(predicate::str::contains("--out"))
+        .stdout(predicate::str::contains("--profile"))
+        .stdout(predicate::str::contains("--resume"))
+        .stdout(predicate::str::contains("Search-only scout path:"))
+        .stdout(predicate::str::contains(
+            "shiplog github activity scout --resume",
+        ))
+        .stdout(predicate::str::contains(
+            "scout is the first provider-call step and uses the search-only scout profile",
+        ))
+        .stdout(predicate::str::contains(
+            "It writes progress and API-ledger receipts so later status/report commands can explain cost",
+        ))
+        .stdout(predicate::str::contains(
+            "--resume skips work when a matching completed progress receipt already exists",
+        ));
+
+    shiplog_cmd()
+        .args(["github", "activity", "run", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--config"))
+        .stdout(predicate::str::contains("--out"))
+        .stdout(predicate::str::contains("--profile"))
+        .stdout(predicate::str::contains("--resume"))
+        .stdout(predicate::str::contains("Resumable harvest path:"))
+        .stdout(predicate::str::contains(
+            "shiplog github activity run --profile authored --resume",
+        ))
+        .stdout(predicate::str::contains(
+            "shiplog github activity run --profile full --resume",
+        ))
+        .stdout(predicate::str::contains(
+            "run reads GitHub according to the selected profile and writes progress/API-ledger receipts",
+        ))
+        .stdout(predicate::str::contains(
+            "Inspect status and report before merge so partial receipts do not look complete",
+        ));
+
+    shiplog_cmd()
+        .args(["github", "activity", "status", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--config"))
+        .stdout(predicate::str::contains("--out"))
+        .stdout(predicate::str::contains("Receipt inspection path:"))
+        .stdout(predicate::str::contains("shiplog github activity status"))
+        .stdout(predicate::str::contains("shiplog github activity report"))
+        .stdout(predicate::str::contains("shiplog github activity merge"))
+        .stdout(predicate::str::contains(
+            "status reads existing plan, progress, API-ledger, and output receipts only",
+        ))
+        .stdout(predicate::str::contains(
+            "It writes nothing and makes no GitHub provider calls",
+        ))
+        .stdout(predicate::str::contains(
+            "Missing or partial receipts include the next [writes] action to continue the harvest",
+        ));
+
+    shiplog_cmd()
+        .args(["github", "activity", "report", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--config"))
+        .stdout(predicate::str::contains("--out"))
+        .stdout(predicate::str::contains("Receipt report path:"))
+        .stdout(predicate::str::contains("shiplog github activity status"))
+        .stdout(predicate::str::contains("shiplog github activity report"))
+        .stdout(predicate::str::contains("shiplog github activity merge"))
+        .stdout(predicate::str::contains(
+            "report reads activity receipts and writes github.activity.report.json and .md",
+        ))
+        .stdout(predicate::str::contains(
+            "It reports API cost, cache reuse, owner filtering, and completion state from receipts",
+        ))
+        .stdout(predicate::str::contains(
+            "It makes no GitHub provider calls and does not render share profiles",
+        ));
+
+    shiplog_cmd()
+        .args(["github", "activity", "merge", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--config"))
+        .stdout(predicate::str::contains("--out"))
+        .stdout(predicate::str::contains("Final output path:"))
+        .stdout(predicate::str::contains("shiplog github activity status"))
+        .stdout(predicate::str::contains("shiplog github activity report"))
+        .stdout(predicate::str::contains("shiplog github activity merge"))
+        .stdout(predicate::str::contains(
+            "merge reads completed harvest receipts and writes final activity outputs",
+        ))
+        .stdout(predicate::str::contains(
+            "It makes no GitHub provider calls and does not render share profiles",
+        ))
+        .stdout(predicate::str::contains(
+            "Use status/report first if receipts are missing, partial, stale, or budget-limited",
+        ));
 }
 
 #[test]
@@ -1729,6 +1917,68 @@ fn doctor_help_shows_options() {
         .stdout(predicate::str::contains("--source"))
         .stdout(predicate::str::contains("--setup"))
         .stdout(predicate::str::contains("--repair-plan"));
+}
+
+#[test]
+fn doctor_help_teaches_setup_first_path() {
+    shiplog_cmd()
+        .args(["doctor", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Setup-first path:"))
+        .stdout(predicate::str::contains("shiplog init --guided"))
+        .stdout(predicate::str::contains("shiplog doctor --setup"))
+        .stdout(predicate::str::contains("shiplog sources status"))
+        .stdout(predicate::str::contains("shiplog status --latest"))
+        .stdout(predicate::str::contains(
+            "shiplog intake --last-6-months --explain",
+        ))
+        .stdout(predicate::str::contains("Safety posture:"))
+        .stdout(predicate::str::contains(
+            "doctor --setup reads local setup state without provider network calls or writes",
+        ))
+        .stdout(predicate::str::contains(
+            "doctor --repair-plan prints setup repair guidance, not evidence repair commands",
+        ))
+        .stdout(predicate::str::contains(
+            "sources status shows source readiness without collecting evidence",
+        ))
+        .stdout(predicate::str::contains(
+            "Run doctor --setup before intake when setup or redaction state is uncertain",
+        ));
+}
+
+#[test]
+fn status_help_teaches_review_loop_cockpit() {
+    shiplog_cmd()
+        .args(["status", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--latest"))
+        .stdout(predicate::str::contains("--json"))
+        .stdout(predicate::str::contains("Review-loop cockpit:"))
+        .stdout(predicate::str::contains("shiplog doctor --setup"))
+        .stdout(predicate::str::contains("shiplog status --latest"))
+        .stdout(predicate::str::contains(
+            "shiplog intake --last-6-months --explain",
+        ))
+        .stdout(predicate::str::contains("shiplog repair plan --latest"))
+        .stdout(predicate::str::contains(
+            "shiplog share explain manager --latest",
+        ))
+        .stdout(predicate::str::contains("Safety posture:"))
+        .stdout(predicate::str::contains(
+            "status --latest reads setup state and durable receipts without collecting evidence",
+        ))
+        .stdout(predicate::str::contains(
+            "status --latest --json exposes the same review-loop state for agents and scripts",
+        ))
+        .stdout(predicate::str::contains(
+            "status reports the first safe next action; it does not repair, rerun intake, or render share packets",
+        ))
+        .stdout(predicate::str::contains(
+            "Use status before first intake and after reruns to choose the next command",
+        ));
 }
 
 #[test]
@@ -1829,6 +2079,34 @@ fn journal_help_shows_add_options() {
         .stdout(predicate::str::contains("--dry-run"));
 
     shiplog_cmd()
+        .args(["journal", "add", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Report-derived repair path:"))
+        .stdout(predicate::str::contains("shiplog repair plan --latest"))
+        .stdout(predicate::str::contains(
+            "shiplog journal add --from-repair <repair_id>",
+        ))
+        .stdout(predicate::str::contains(
+            "shiplog intake --last-6-months --explain",
+        ))
+        .stdout(predicate::str::contains("shiplog repair diff --latest"))
+        .stdout(predicate::str::contains("shiplog runs diff --latest"))
+        .stdout(predicate::str::contains("Safety posture:"))
+        .stdout(predicate::str::contains(
+            "--from-repair resolves one manual-evidence repair item from intake.report.json",
+        ))
+        .stdout(predicate::str::contains(
+            "journal add writes local manual_events.yaml unless --dry-run is used",
+        ))
+        .stdout(predicate::str::contains(
+            "--out, --run, and --latest select the report used for --from-repair lookup",
+        ))
+        .stdout(predicate::str::contains(
+            "Rerun intake after adding evidence so repair diff and runs diff can compare receipts",
+        ));
+
+    shiplog_cmd()
         .args(["journal", "list", "--help"])
         .assert()
         .success()
@@ -1875,7 +2153,39 @@ fn runs_help_shows_list_show_and_compare() {
         .success()
         .stdout(predicate::str::contains("list"))
         .stdout(predicate::str::contains("show"))
-        .stdout(predicate::str::contains("compare"));
+        .stdout(predicate::str::contains("compare"))
+        .stdout(predicate::str::contains("diff"));
+
+    shiplog_cmd()
+        .args(["runs", "diff", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--latest"))
+        .stdout(predicate::str::contains("--from"))
+        .stdout(predicate::str::contains("--to"))
+        .stdout(predicate::str::contains("Packet-quality comparison path:"))
+        .stdout(predicate::str::contains(
+            "shiplog intake --last-6-months --explain",
+        ))
+        .stdout(predicate::str::contains("shiplog repair diff --latest"))
+        .stdout(predicate::str::contains("shiplog runs diff --latest"))
+        .stdout(predicate::str::contains("shiplog open packet --latest"))
+        .stdout(predicate::str::contains(
+            "shiplog share explain manager --latest",
+        ))
+        .stdout(predicate::str::contains("Safety posture:"))
+        .stdout(predicate::str::contains(
+            "runs diff reads existing run summaries, intake reports, and repair receipts",
+        ))
+        .stdout(predicate::str::contains(
+            "--latest compares the newest two runs; --from and --to compare explicit run IDs",
+        ))
+        .stdout(predicate::str::contains(
+            "runs diff reports improvement, regressions, and remaining weak signals without writing files",
+        ))
+        .stdout(predicate::str::contains(
+            "Use share explain after runs diff before rendering any share profile",
+        ));
 }
 
 #[test]
@@ -1928,6 +2238,37 @@ fn intake_help_shows_rescue_mode_options() {
 }
 
 #[test]
+fn intake_help_teaches_evidence_collection_handoff() {
+    shiplog_cmd()
+        .args(["intake", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Evidence collection path:"))
+        .stdout(predicate::str::contains("shiplog doctor --setup"))
+        .stdout(predicate::str::contains("shiplog status --latest"))
+        .stdout(predicate::str::contains(
+            "shiplog intake --last-6-months --explain",
+        ))
+        .stdout(predicate::str::contains("shiplog repair plan --latest"))
+        .stdout(predicate::str::contains(
+            "shiplog share explain manager --latest",
+        ))
+        .stdout(predicate::str::contains("Safety posture:"))
+        .stdout(predicate::str::contains(
+            "intake writes a new run under the output directory and renders packet/report receipts",
+        ))
+        .stdout(predicate::str::contains(
+            "--explain prints source decisions and repair hints to the terminal",
+        ))
+        .stdout(predicate::str::contains(
+            "--no-open prevents launching artifacts after writes; it does not make intake read-only",
+        ))
+        .stdout(predicate::str::contains(
+            "Run status --latest after intake to choose repair, diff, or share explain next",
+        ));
+}
+
+#[test]
 fn review_help_shows_run_options() {
     shiplog_cmd()
         .args(["review", "--help"])
@@ -1969,13 +2310,69 @@ fn review_fixups_help_shows_run_options() {
 }
 
 #[test]
+fn repair_help_teaches_receipt_derived_handoff_loop() {
+    shiplog_cmd()
+        .args(["repair", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("plan"))
+        .stdout(predicate::str::contains("diff"))
+        .stdout(predicate::str::contains(
+            "Receipt-derived repair loop:",
+        ))
+        .stdout(predicate::str::contains("shiplog repair plan --latest"))
+        .stdout(predicate::str::contains(
+            "shiplog journal add --from-repair <repair_id>",
+        ))
+        .stdout(predicate::str::contains(
+            "shiplog intake --last-6-months --explain",
+        ))
+        .stdout(predicate::str::contains("shiplog repair diff --latest"))
+        .stdout(predicate::str::contains("shiplog runs diff --latest"))
+        .stdout(predicate::str::contains("Safety posture:"))
+        .stdout(predicate::str::contains(
+            "repair plan reads the latest intake.report.json and does not rediscover sources",
+        ))
+        .stdout(predicate::str::contains(
+            "journal add --from-repair writes manual evidence only for safe report-derived manual repairs",
+        ))
+        .stdout(predicate::str::contains(
+            "repair diff and runs diff compare receipts across runs without writing repair data",
+        ))
+        .stdout(predicate::str::contains(
+            "Run repair plan before copying individual repair commands",
+        ));
+}
+
+#[test]
 fn share_help_shows_profiles_and_safety_options() {
     shiplog_cmd()
         .args(["share", "--help"])
         .assert()
         .success()
         .stdout(predicate::str::contains("manager"))
-        .stdout(predicate::str::contains("public"));
+        .stdout(predicate::str::contains("public"))
+        .stdout(predicate::str::contains("Read-first share path:"))
+        .stdout(predicate::str::contains(
+            "shiplog share explain manager --latest",
+        ))
+        .stdout(predicate::str::contains(
+            "shiplog share verify manager --latest",
+        ))
+        .stdout(predicate::str::contains("shiplog share manager --latest"))
+        .stdout(predicate::str::contains("Safety posture:"))
+        .stdout(predicate::str::contains(
+            "share explain reads receipts and reports what a profile would include, remove, or block",
+        ))
+        .stdout(predicate::str::contains(
+            "share verify checks readiness without writing profile packets",
+        ))
+        .stdout(predicate::str::contains(
+            "manager/public render commands write profile artifacts only after redaction setup is available",
+        ))
+        .stdout(predicate::str::contains(
+            "Use share explain before rendering when packet readiness, evidence debt, or redaction setup is uncertain",
+        ));
 
     shiplog_cmd()
         .args(["share", "manager", "--help"])
@@ -1985,7 +2382,102 @@ fn share_help_shows_profiles_and_safety_options() {
         .stdout(predicate::str::contains("--latest"))
         .stdout(predicate::str::contains("--run"))
         .stdout(predicate::str::contains("--redact-key"))
-        .stdout(predicate::str::contains("--zip"));
+        .stdout(predicate::str::contains("--zip"))
+        .stdout(predicate::str::contains("Verify-first render path:"))
+        .stdout(predicate::str::contains(
+            "shiplog share explain manager --latest",
+        ))
+        .stdout(predicate::str::contains(
+            "shiplog share verify manager --latest",
+        ))
+        .stdout(predicate::str::contains("shiplog share manager --latest"))
+        .stdout(predicate::str::contains("Safety posture:"))
+        .stdout(predicate::str::contains(
+            "manager/public render commands write share profile artifacts and optionally a zip",
+        ))
+        .stdout(predicate::str::contains(
+            "Rendering requires SHIPLOG_REDACT_KEY or --redact-key so deterministic aliases are available",
+        ))
+        .stdout(predicate::str::contains(
+            "Use share verify before rendering when readiness, evidence debt, or redaction setup is uncertain",
+        ))
+        .stdout(predicate::str::contains(
+            "Use public for the strictest redaction profile; use manager only for manager-safe review",
+        ));
+
+    shiplog_cmd()
+        .args(["share", "public", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--out"))
+        .stdout(predicate::str::contains("--latest"))
+        .stdout(predicate::str::contains("--run"))
+        .stdout(predicate::str::contains("--redact-key"))
+        .stdout(predicate::str::contains("--zip"))
+        .stdout(predicate::str::contains("Verify-first render path:"))
+        .stdout(predicate::str::contains("shiplog share explain public --latest"))
+        .stdout(predicate::str::contains(
+            "shiplog share verify public --latest --strict",
+        ))
+        .stdout(predicate::str::contains("shiplog share public --latest"))
+        .stdout(predicate::str::contains(
+            "Use strict public verify before rendering when readiness, evidence debt, or redaction setup is uncertain",
+        ))
+        .stdout(predicate::str::contains(
+            "Public is the strictest redaction profile; use manager only for manager-safe review",
+        ));
+
+    shiplog_cmd()
+        .args(["share", "explain", "manager", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--out"))
+        .stdout(predicate::str::contains("--latest"))
+        .stdout(predicate::str::contains("--run"))
+        .stdout(predicate::str::contains("--redact-key"))
+        .stdout(predicate::str::contains("Read-first explain path:"))
+        .stdout(predicate::str::contains("shiplog status --latest"))
+        .stdout(predicate::str::contains("shiplog runs diff --latest"))
+        .stdout(predicate::str::contains(
+            "shiplog share explain manager --latest",
+        ))
+        .stdout(predicate::str::contains(
+            "shiplog share verify manager --latest",
+        ))
+        .stdout(predicate::str::contains("shiplog share manager --latest"))
+        .stdout(predicate::str::contains("Safety posture:"))
+        .stdout(predicate::str::contains(
+            "share explain reads run receipts, intake reports, workstreams, and share posture without rendering profile artifacts",
+        ))
+        .stdout(predicate::str::contains(
+            "It reports included, removed, blocked, and needs-review items before any profile write",
+        ))
+        .stdout(predicate::str::contains(
+            "Missing a redaction key blocks rendering but does not block explanation",
+        ))
+        .stdout(predicate::str::contains(
+            "Use share verify after explain, then render only when the profile is ready",
+        ));
+
+    shiplog_cmd()
+        .args(["share", "explain", "public", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--out"))
+        .stdout(predicate::str::contains("--latest"))
+        .stdout(predicate::str::contains("--run"))
+        .stdout(predicate::str::contains("--redact-key"))
+        .stdout(predicate::str::contains("Read-first explain path:"))
+        .stdout(predicate::str::contains("shiplog status --latest"))
+        .stdout(predicate::str::contains("shiplog runs diff --latest"))
+        .stdout(predicate::str::contains("shiplog share explain public --latest"))
+        .stdout(predicate::str::contains(
+            "shiplog share verify public --latest --strict",
+        ))
+        .stdout(predicate::str::contains("shiplog share public --latest"))
+        .stdout(predicate::str::contains(
+            "Use strict public verify after explain, then render only when the public profile is ready",
+        ));
 
     shiplog_cmd()
         .args(["share", "verify", "manager", "--help"])
@@ -1995,7 +2487,53 @@ fn share_help_shows_profiles_and_safety_options() {
         .stdout(predicate::str::contains("--latest"))
         .stdout(predicate::str::contains("--run"))
         .stdout(predicate::str::contains("--redact-key"))
-        .stdout(predicate::str::contains("--strict"));
+        .stdout(predicate::str::contains("--strict"))
+        .stdout(predicate::str::contains(
+            "Read-before-render verification path:",
+        ))
+        .stdout(predicate::str::contains(
+            "shiplog share explain manager --latest",
+        ))
+        .stdout(predicate::str::contains(
+            "shiplog share verify manager --latest",
+        ))
+        .stdout(predicate::str::contains("shiplog share manager --latest"))
+        .stdout(predicate::str::contains("Safety posture:"))
+        .stdout(predicate::str::contains(
+            "share verify reads the selected run and share posture without writing profile packets",
+        ))
+        .stdout(predicate::str::contains(
+            "If neither SHIPLOG_REDACT_KEY nor --redact-key is present, verification fails closed before rendering",
+        ))
+        .stdout(predicate::str::contains(
+            "For public verification, --strict also scans the existing public packet for obvious raw URLs and names",
+        ))
+        .stdout(predicate::str::contains(
+            "Render only after verify reports the selected profile is ready",
+        ));
+
+    shiplog_cmd()
+        .args(["share", "verify", "public", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--out"))
+        .stdout(predicate::str::contains("--latest"))
+        .stdout(predicate::str::contains("--run"))
+        .stdout(predicate::str::contains("--redact-key"))
+        .stdout(predicate::str::contains("--strict"))
+        .stdout(predicate::str::contains(
+            "Read-before-render verification path:",
+        ))
+        .stdout(predicate::str::contains(
+            "shiplog share explain public --latest",
+        ))
+        .stdout(predicate::str::contains(
+            "shiplog share verify public --latest --strict",
+        ))
+        .stdout(predicate::str::contains("shiplog share public --latest"))
+        .stdout(predicate::str::contains(
+            "Render only after strict verify reports the public profile is ready",
+        ));
 
     shiplog_cmd()
         .args(["share", "verify", "manifest", "--help"])
@@ -2059,9 +2597,11 @@ fn init_guided_creates_local_first_setup_without_token_providers() -> CliTestRes
         .stdout(predicate::str::contains("Initialized guided shiplog setup"))
         .stdout(predicate::str::contains("shiplog doctor --setup"))
         .stdout(predicate::str::contains("shiplog sources status"))
+        .stdout(predicate::str::contains("shiplog status --latest"))
         .stdout(predicate::str::contains(
-            "shiplog collect multi --last-6-months",
+            "shiplog intake --last-6-months --explain",
         ))
+        .stdout(predicate::str::contains("shiplog collect multi").not())
         .stdout(predicate::str::contains("export GITHUB_TOKEN").not());
 
     let config = std::fs::read_to_string(tmp.path().join("shiplog.toml"))?;

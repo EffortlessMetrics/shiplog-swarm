@@ -169,7 +169,7 @@ Public packets are the most restrictive share profile. Use them only when you
 expect the output to leave your organization.
 
 ```bash
-shiplog share verify public --latest
+shiplog share verify public --latest --strict
 shiplog share public --latest --zip
 ```
 

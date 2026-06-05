@@ -46,9 +46,305 @@ mod intake_report_builder;
 mod status;
 use intake_report_builder::build_intake_report;
 
+const TOP_LEVEL_AFTER_HELP: &str = "\
+Review-ready loop:
+  shiplog init --guided
+  shiplog doctor --setup
+  shiplog status --latest
+  shiplog intake --last-6-months --explain
+  shiplog repair plan --latest
+  shiplog journal add --from-repair <repair_id>
+  shiplog intake --last-6-months --explain
+  shiplog repair diff --latest
+  shiplog runs diff --latest
+  shiplog share explain manager --latest
+
+Advanced GitHub activity:
+  shiplog github activity plan
+  shiplog github activity scout
+  shiplog github activity run --profile authored --resume
+  shiplog github activity run --profile full --resume
+  shiplog github activity status
+  shiplog github activity report
+  shiplog github activity merge
+
+Read-first commands:
+  doctor --setup, status --latest, repair plan, repair diff, runs diff, and share explain inspect setup/receipts before write-producing commands.";
+
+const GITHUB_ACTIVITY_AFTER_HELP: &str = "\
+Recommended harvest path:
+  shiplog github activity plan
+  shiplog github activity scout
+  shiplog github activity run --profile authored --resume
+  shiplog github activity run --profile full --resume
+  shiplog github activity status
+  shiplog github activity report
+  shiplog github activity merge
+
+API-budget posture:
+  plan reads config and writes github.activity.plan.json without provider calls.
+  scout and run read GitHub, write progress/API-ledger receipts, and honor --resume.
+  status reads existing receipts only.
+  report writes github.activity.report.json and .md from receipts.
+  merge writes final activity outputs from completed receipts; it does not render share profiles.";
+
+const GITHUB_ACTIVITY_PLAN_AFTER_HELP: &str = "\
+Static planning path:
+  shiplog github activity plan
+  shiplog github activity scout --resume
+  shiplog github activity run --profile authored --resume
+  shiplog github activity status
+
+API-budget posture:
+  plan reads [github_activity] config and writes github.activity.plan.json.
+  It makes no GitHub provider calls and does not create API cache entries.
+  Use --profile scout, authored, or full to preview a specific harvest breadth.
+  Run scout after plan before spending budget on a larger harvest profile.";
+
+const GITHUB_ACTIVITY_SCOUT_AFTER_HELP: &str = "\
+Search-only scout path:
+  shiplog github activity plan
+  shiplog github activity scout --resume
+  shiplog github activity run --profile authored --resume
+  shiplog github activity status
+
+API-budget posture:
+  scout is the first provider-call step and uses the search-only scout profile.
+  It writes progress and API-ledger receipts so later status/report commands can explain cost.
+  --resume skips work when a matching completed progress receipt already exists.
+  Use scout before authored/full harvests when API budget or owner filtering is uncertain.";
+
+const GITHUB_ACTIVITY_RUN_AFTER_HELP: &str = "\
+Resumable harvest path:
+  shiplog github activity run --profile authored --resume
+  shiplog github activity run --profile full --resume
+  shiplog github activity status
+  shiplog github activity report
+  shiplog github activity merge
+
+API-budget posture:
+  run reads GitHub according to the selected profile and writes progress/API-ledger receipts.
+  --resume skips work when a matching completed progress receipt already exists.
+  Use authored before full to reconstruct lower-cost actor-owned history first.
+  Inspect status and report before merge so partial receipts do not look complete.";
+
+const GITHUB_ACTIVITY_STATUS_AFTER_HELP: &str = "\
+Receipt inspection path:
+  shiplog github activity status
+  shiplog github activity report
+  shiplog github activity merge
+
+API-budget posture:
+  status reads existing plan, progress, API-ledger, and output receipts only.
+  It writes nothing and makes no GitHub provider calls.
+  Missing or partial receipts include the next [writes] action to continue the harvest.
+  Run status before rerunning or merging when resume state is uncertain.";
+
+const GITHUB_ACTIVITY_REPORT_AFTER_HELP: &str = "\
+Receipt report path:
+  shiplog github activity status
+  shiplog github activity report
+  shiplog github activity merge
+
+API-budget posture:
+  report reads activity receipts and writes github.activity.report.json and .md.
+  It reports API cost, cache reuse, owner filtering, and completion state from receipts.
+  It makes no GitHub provider calls and does not render share profiles.
+  Run report before merge when reviewers need API-budget evidence.";
+
+const GITHUB_ACTIVITY_MERGE_AFTER_HELP: &str = "\
+Final output path:
+  shiplog github activity status
+  shiplog github activity report
+  shiplog github activity merge
+
+API-budget posture:
+  merge reads completed harvest receipts and writes final activity outputs.
+  It makes no GitHub provider calls and does not render share profiles.
+  Use status/report first if receipts are missing, partial, stale, or budget-limited.
+  After merge, inspect activity outputs before running intake or share commands.";
+
+const DOCTOR_AFTER_HELP: &str = "\
+Setup-first path:
+  shiplog init --guided
+  shiplog doctor --setup
+  shiplog sources status
+  shiplog status --latest
+  shiplog intake --last-6-months --explain
+
+Safety posture:
+  doctor --setup reads local setup state without provider network calls or writes.
+  doctor --repair-plan prints setup repair guidance, not evidence repair commands.
+  sources status shows source readiness without collecting evidence.
+  Run doctor --setup before intake when setup or redaction state is uncertain.";
+
+const STATUS_AFTER_HELP: &str = "\
+Review-loop cockpit:
+  shiplog doctor --setup
+  shiplog status --latest
+  shiplog intake --last-6-months --explain
+  shiplog status --latest
+  shiplog repair plan --latest
+  shiplog share explain manager --latest
+
+Safety posture:
+  status --latest reads setup state and durable receipts without collecting evidence.
+  status --latest --json exposes the same review-loop state for agents and scripts.
+  status reports the first safe next action; it does not repair, rerun intake, or render share packets.
+  Use status before first intake and after reruns to choose the next command.";
+
+const INTAKE_AFTER_HELP: &str = "\
+Evidence collection path:
+  shiplog doctor --setup
+  shiplog status --latest
+  shiplog intake --last-6-months --explain
+  shiplog status --latest
+  shiplog repair plan --latest
+  shiplog share explain manager --latest
+
+Safety posture:
+  intake writes a new run under the output directory and renders packet/report receipts.
+  --explain prints source decisions and repair hints to the terminal.
+  --no-open prevents launching artifacts after writes; it does not make intake read-only.
+  Run status --latest after intake to choose repair, diff, or share explain next.";
+
+const JOURNAL_ADD_AFTER_HELP: &str = "\
+Report-derived repair path:
+  shiplog repair plan --latest
+  shiplog journal add --from-repair <repair_id>
+  shiplog intake --last-6-months --explain
+  shiplog repair diff --latest
+  shiplog runs diff --latest
+
+Safety posture:
+  --from-repair resolves one manual-evidence repair item from intake.report.json.
+  journal add writes local manual_events.yaml unless --dry-run is used.
+  --out, --run, and --latest select the report used for --from-repair lookup.
+  Rerun intake after adding evidence so repair diff and runs diff can compare receipts.";
+
+const RUNS_DIFF_AFTER_HELP: &str = "\
+Packet-quality comparison path:
+  shiplog intake --last-6-months --explain
+  shiplog repair diff --latest
+  shiplog runs diff --latest
+  shiplog open packet --latest
+  shiplog share explain manager --latest
+
+Safety posture:
+  runs diff reads existing run summaries, intake reports, and repair receipts.
+  --latest compares the newest two runs; --from and --to compare explicit run IDs.
+  runs diff reports improvement, regressions, and remaining weak signals without writing files.
+  Use share explain after runs diff before rendering any share profile.";
+
+const SHARE_EXPLAIN_MANAGER_AFTER_HELP: &str = "\
+Read-first explain path:
+  shiplog status --latest
+  shiplog runs diff --latest
+  shiplog share explain manager --latest
+  shiplog share verify manager --latest
+  shiplog share manager --latest
+
+Safety posture:
+  share explain reads run receipts, intake reports, workstreams, and share posture without rendering profile artifacts.
+  It reports included, removed, blocked, and needs-review items before any profile write.
+  Missing a redaction key blocks rendering but does not block explanation.
+  Use share verify after explain, then render only when the profile is ready.";
+
+const SHARE_EXPLAIN_PUBLIC_AFTER_HELP: &str = "\
+Read-first explain path:
+  shiplog status --latest
+  shiplog runs diff --latest
+  shiplog share explain public --latest
+  shiplog share verify public --latest --strict
+  shiplog share public --latest
+
+Safety posture:
+  share explain reads run receipts, intake reports, workstreams, and share posture without rendering profile artifacts.
+  It reports included, removed, blocked, and needs-review items before any profile write.
+  Missing a redaction key blocks rendering but does not block explanation.
+  Use strict public verify after explain, then render only when the public profile is ready.";
+
+const SHARE_VERIFY_MANAGER_AFTER_HELP: &str = "\
+Read-before-render verification path:
+  shiplog share explain manager --latest
+  shiplog share verify manager --latest
+  shiplog share manager --latest
+
+Safety posture:
+  share verify reads the selected run and share posture without writing profile packets.
+  If neither SHIPLOG_REDACT_KEY nor --redact-key is present, verification fails closed before rendering.
+  For public verification, --strict also scans the existing public packet for obvious raw URLs and names.
+  Render only after verify reports the selected profile is ready.";
+
+const SHARE_VERIFY_PUBLIC_AFTER_HELP: &str = "\
+Read-before-render verification path:
+  shiplog share explain public --latest
+  shiplog share verify public --latest --strict
+  shiplog share public --latest
+
+Safety posture:
+  share verify reads the selected run and share posture without writing profile packets.
+  If neither SHIPLOG_REDACT_KEY nor --redact-key is present, verification fails closed before rendering.
+  For public verification, --strict also scans the existing public packet for obvious raw URLs and names.
+  Render only after strict verify reports the public profile is ready.";
+
+const SHARE_RENDER_MANAGER_AFTER_HELP: &str = "\
+Verify-first render path:
+  shiplog share explain manager --latest
+  shiplog share verify manager --latest
+  shiplog share manager --latest
+
+Safety posture:
+  manager/public render commands write share profile artifacts and optionally a zip.
+  Rendering requires SHIPLOG_REDACT_KEY or --redact-key so deterministic aliases are available.
+  Use share verify before rendering when readiness, evidence debt, or redaction setup is uncertain.
+  Use public for the strictest redaction profile; use manager only for manager-safe review.";
+
+const SHARE_RENDER_PUBLIC_AFTER_HELP: &str = "\
+Verify-first render path:
+  shiplog share explain public --latest
+  shiplog share verify public --latest --strict
+  shiplog share public --latest
+
+Safety posture:
+  manager/public render commands write share profile artifacts and optionally a zip.
+  Rendering requires SHIPLOG_REDACT_KEY or --redact-key so deterministic aliases are available.
+  Use strict public verify before rendering when readiness, evidence debt, or redaction setup is uncertain.
+  Public is the strictest redaction profile; use manager only for manager-safe review.";
+
+const SHARE_AFTER_HELP: &str = "\
+Read-first share path:
+  shiplog share explain manager --latest
+  shiplog share verify manager --latest
+  shiplog share manager --latest
+
+Safety posture:
+  share explain reads receipts and reports what a profile would include, remove, or block.
+  share verify checks readiness without writing profile packets.
+  manager/public render commands write profile artifacts only after redaction setup is available.
+  Use share explain before rendering when packet readiness, evidence debt, or redaction setup is uncertain.";
+
+const REPAIR_AFTER_HELP: &str = "\
+Receipt-derived repair loop:
+  shiplog repair plan --latest
+  shiplog journal add --from-repair <repair_id>
+  shiplog intake --last-6-months --explain
+  shiplog repair diff --latest
+  shiplog runs diff --latest
+
+Safety posture:
+  repair plan reads the latest intake.report.json and does not rediscover sources.
+  journal add --from-repair writes manual evidence only for safe report-derived manual repairs.
+  repair diff and runs diff compare receipts across runs without writing repair data.
+  Run repair plan before copying individual repair commands.";
+
 #[derive(Parser, Debug)]
 #[command(name = "shiplog", version)]
-#[command(about = "Generate self-review packets with receipts + coverage.", long_about = None)]
+#[command(
+    about = "Run the review-readiness loop with receipts, repair guidance, and safe share profiles.",
+    long_about = "Run the review-readiness loop: set up sources, inspect status, collect evidence, repair gaps, compare improvement, and explain safe share posture.",
+    after_help = TOP_LEVEL_AFTER_HELP
+)]
 struct Cli {
     #[command(subcommand)]
     cmd: Command,
@@ -73,6 +369,11 @@ enum Command {
     },
 
     /// Check local config, source setup, tokens, and output safety.
+    #[command(
+        about = "Check local config, source setup, tokens, and output safety.",
+        long_about = "Check setup readiness before intake, including local files, source readiness, credentials, and share redaction state.",
+        after_help = DOCTOR_AFTER_HELP
+    )]
     Doctor {
         /// Path to shiplog.toml.
         #[arg(long, default_value = CONFIG_FILENAME)]
@@ -92,6 +393,11 @@ enum Command {
     },
 
     /// Run a guided best-effort review intake and print next steps.
+    #[command(
+        about = "Run a guided best-effort review intake and print next steps.",
+        long_about = "Collect review evidence into a new run, render packet and intake report receipts, explain source decisions, and hand back to status for the next safe action.",
+        after_help = INTAKE_AFTER_HELP
+    )]
     Intake(IntakeArgs),
 
     /// Validate and explain shiplog.toml without collecting data.
@@ -107,6 +413,11 @@ enum Command {
     },
 
     /// Inspect review-loop state across setup, evidence, repair, diff, and share receipts.
+    #[command(
+        about = "Inspect review-loop state across setup, evidence, repair, diff, and share receipts.",
+        long_about = "Inspect the read-only review-loop cockpit: setup state, latest evidence, repair movement, diff receipts, share posture, and first safe next action.",
+        after_help = STATUS_AFTER_HELP
+    )]
     Status(StatusArgs),
 
     /// Plan and inspect GitHub activity harvests without provider mutation.
@@ -223,7 +534,12 @@ enum Command {
         zip: bool,
     },
 
-    /// Render a manager- or public-safe share packet.
+    /// Explain, verify, or render a manager- or public-safe share packet.
+    #[command(
+        about = "Explain, verify, or render manager/public share profiles.",
+        long_about = "Explain and verify manager/public share posture before rendering profile artifacts.",
+        after_help = SHARE_AFTER_HELP
+    )]
     Share {
         #[command(subcommand)]
         cmd: ShareCommand,
@@ -286,7 +602,12 @@ enum Command {
         cmd: ReportCommand,
     },
 
-    /// Render repair guidance from durable intake report receipts.
+    /// Plan repairs and compare receipt-backed repair movement.
+    #[command(
+        about = "Plan repairs and compare receipt-backed repair movement.",
+        long_about = "Plan report-derived repairs, add safe manual repair evidence, rerun intake, and compare repair/run movement from receipts.",
+        after_help = REPAIR_AFTER_HELP
+    )]
     Repair {
         #[command(subcommand)]
         cmd: RepairCommand,
@@ -501,6 +822,11 @@ enum SourcesCommand {
 #[derive(Subcommand, Debug)]
 enum GithubCommand {
     /// Plan a GitHub activity harvest without making provider API calls.
+    #[command(
+        about = "Plan, resume, inspect, report, and merge GitHub activity harvests.",
+        long_about = "Plan, resume, inspect, report, and merge GitHub activity harvests while keeping API cost and receipt state visible.",
+        after_help = GITHUB_ACTIVITY_AFTER_HELP
+    )]
     Activity {
         #[command(subcommand)]
         cmd: GithubActivityCommand,
@@ -510,16 +836,46 @@ enum GithubCommand {
 #[derive(Subcommand, Debug)]
 enum GithubActivityCommand {
     /// Write github.activity.plan.json from [github_activity] config.
+    #[command(
+        about = "Write github.activity.plan.json from [github_activity] config.",
+        long_about = "Write github.activity.plan.json from [github_activity] config without making GitHub provider calls.",
+        after_help = GITHUB_ACTIVITY_PLAN_AFTER_HELP
+    )]
     Plan(GithubActivityPlanArgs),
     /// Run a search-only GitHub activity scout profile.
+    #[command(
+        about = "Run a search-only GitHub activity scout profile.",
+        long_about = "Run a search-only GitHub activity scout profile, recording progress and API-ledger receipts for later resume/status/report commands.",
+        after_help = GITHUB_ACTIVITY_SCOUT_AFTER_HELP
+    )]
     Scout(GithubActivityRunArgs),
     /// Run a GitHub activity harvest profile.
+    #[command(
+        about = "Run a GitHub activity harvest profile.",
+        long_about = "Run a GitHub activity harvest profile, recording resumable progress and API-ledger receipts.",
+        after_help = GITHUB_ACTIVITY_RUN_AFTER_HELP
+    )]
     Run(GithubActivityRunArgs),
     /// Read GitHub activity receipts and print harvest status.
+    #[command(
+        about = "Read GitHub activity receipts and print harvest status.",
+        long_about = "Read GitHub activity receipts and print harvest status without writing files or making GitHub provider calls.",
+        after_help = GITHUB_ACTIVITY_STATUS_AFTER_HELP
+    )]
     Status(GithubActivityStatusArgs),
     /// Read GitHub activity receipts and report API cost/cache/owner filtering.
+    #[command(
+        about = "Read GitHub activity receipts and report API cost/cache/owner filtering.",
+        long_about = "Read GitHub activity receipts and write a report of API cost, cache reuse, owner filtering, and completion state.",
+        after_help = GITHUB_ACTIVITY_REPORT_AFTER_HELP
+    )]
     Report(GithubActivityStatusArgs),
     /// Write final activity outputs from a completed harvest run.
+    #[command(
+        about = "Write final activity outputs from a completed harvest run.",
+        long_about = "Write final activity outputs from completed GitHub activity harvest receipts without rendering share profiles.",
+        after_help = GITHUB_ACTIVITY_MERGE_AFTER_HELP
+    )]
     Merge(GithubActivityStatusArgs),
 }
 
@@ -657,6 +1013,11 @@ enum IdentifyCommand {
 #[derive(Subcommand, Debug)]
 enum JournalCommand {
     /// Append one manual evidence entry to manual_events.yaml.
+    #[command(
+        about = "Append one manual evidence entry to manual_events.yaml.",
+        long_about = "Append factual manual evidence directly or from a report-derived repair item, then rerun intake so repair and run diffs can compare receipts.",
+        after_help = JOURNAL_ADD_AFTER_HELP
+    )]
     Add(JournalAddArgs),
     /// List manual evidence entries without editing manual_events.yaml.
     List(JournalListArgs),
@@ -972,6 +1333,11 @@ enum RunsCommand {
     },
 
     /// Compare packet quality movement across runs.
+    #[command(
+        about = "Compare packet quality movement across runs.",
+        long_about = "Compare packet-quality movement across existing run receipts, including evidence counts, readiness, claim candidates, repair state, regressions, and remaining weak signals.",
+        after_help = RUNS_DIFF_AFTER_HELP
+    )]
     Diff {
         /// Output directory containing shiplog runs.
         #[arg(long, default_value = "./out")]
@@ -1359,8 +1725,18 @@ impl From<RenderAppendixMode> for AppendixMode {
 #[derive(Subcommand, Debug)]
 enum ShareCommand {
     /// Render the manager-safe packet profile.
+    #[command(
+        about = "Render the manager-safe packet profile.",
+        long_about = "Render the manager-safe packet profile after share explanation and verification confirm redaction setup and packet readiness.",
+        after_help = SHARE_RENDER_MANAGER_AFTER_HELP
+    )]
     Manager(ShareOptions),
     /// Render the public-safe packet profile.
+    #[command(
+        about = "Render the public-safe packet profile.",
+        long_about = "Render the public-safe packet profile after share explanation and verification confirm redaction setup and packet readiness.",
+        after_help = SHARE_RENDER_PUBLIC_AFTER_HELP
+    )]
     Public(ShareOptions),
     /// Explain what a share profile would include, remove, or block.
     Explain {
@@ -1396,8 +1772,18 @@ struct ShareOptions {
 #[derive(Subcommand, Debug)]
 enum ShareExplainCommand {
     /// Explain the manager-safe share profile without rendering it.
+    #[command(
+        about = "Explain the manager-safe share profile without rendering it.",
+        long_about = "Explain what the manager-safe profile would include, remove, block, or still need before rendering any profile artifacts.",
+        after_help = SHARE_EXPLAIN_MANAGER_AFTER_HELP
+    )]
     Manager(ShareExplainOptions),
     /// Explain the public-safe share profile without rendering it.
+    #[command(
+        about = "Explain the public-safe share profile without rendering it.",
+        long_about = "Explain what the public-safe profile would include, remove, block, or still need before rendering any profile artifacts.",
+        after_help = SHARE_EXPLAIN_PUBLIC_AFTER_HELP
+    )]
     Public(ShareExplainOptions),
 }
 
@@ -1420,8 +1806,18 @@ struct ShareExplainOptions {
 #[derive(Subcommand, Debug)]
 enum ShareVerifyCommand {
     /// Verify the manager-safe share profile without rendering it.
+    #[command(
+        about = "Verify the manager-safe share profile without rendering it.",
+        long_about = "Verify that the manager-safe profile is ready before rendering any profile artifacts.",
+        after_help = SHARE_VERIFY_MANAGER_AFTER_HELP
+    )]
     Manager(ShareVerifyOptions),
     /// Verify the public-safe share profile without rendering it.
+    #[command(
+        about = "Verify the public-safe share profile without rendering it.",
+        long_about = "Verify that the public-safe profile is ready before rendering any profile artifacts.",
+        after_help = SHARE_VERIFY_PUBLIC_AFTER_HELP
+    )]
     Public(ShareVerifyOptions),
     /// Verify an existing share.manifest.json without rendering anything.
     Manifest(ShareManifestVerifyOptions),
@@ -2524,7 +2920,8 @@ fn run_init(sources: Vec<InitSource>, dry_run: bool, force: bool, guided: bool) 
     if guided {
         println!("  shiplog doctor --setup");
         println!("  shiplog sources status");
-        println!("  {}", init_next_command(&selected));
+        println!("  shiplog status --latest");
+        println!("  shiplog intake --last-6-months --explain");
     } else {
         println!("  edit {CONFIG_FILENAME}");
         for env_var in init_env_vars(&selected) {
