@@ -205,7 +205,34 @@ authored PR search, so it belongs last.
 
 ## Inspect receipts
 
-After each profile, inspect the receipts and latest run:
+After each profile, inspect the activity receipts before deciding whether to
+resume, report, or merge:
+
+```bash
+shiplog github activity status --config shiplog-github-full.toml --out ./out/github-full
+shiplog github activity report --config shiplog-github-full.toml --out ./out/github-full
+```
+
+`status` reads existing plan, progress, API-ledger, and output receipts only. It
+writes nothing and makes no GitHub provider calls.
+
+`report` reads activity receipts and writes `github.activity.report.json` and
+`github.activity.report.md`. It reports API cost, cache reuse, owner filtering,
+and completion state from receipts; it does not call GitHub or render share
+profiles.
+
+When `status` and `report` show completed receipts for the harvest you intend to
+finalize, write final activity outputs:
+
+```bash
+shiplog github activity merge --config shiplog-github-full.toml --out ./out/github-full
+```
+
+Use `status` and `report` first if receipts are missing, partial, stale, or
+budget-limited. `merge` reads completed harvest receipts and writes final
+activity outputs; it does not query GitHub or render share profiles.
+
+Then inspect the latest generated run and packet artifacts:
 
 ```bash
 shiplog status --out ./out/github-full --latest

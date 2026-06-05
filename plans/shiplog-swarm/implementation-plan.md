@@ -1972,6 +1972,18 @@ EffortlessMetrics/shiplog#602:
           routed proof passed in run 27023494902, source PR routed proof passed
           in run 27023996827, source post-merge routed proof passed in run
           27024607089, and source post-merge CI passed in run 27024606708
+
+EffortlessMetrics/shiplog#603:
+  swarm head: 6aa71e016c237e6a6e711a07877dd88fd784f6e5
+  included swarm PRs: EffortlessMetrics/shiplog-swarm#182
+  source merge: 289e941bad8893d53cf4622bba51b59e5a4d2b1e
+  result: regular merge commit; rapid first-intake guide now teaches rerun
+          comparison before share posture, active-goal and implementation-plan
+          receipts carried the #162-#181/#599-#602 receipt range, swarm PR
+          routed proof passed in run 27026032735, swarm/main routed proof
+          passed in run 27026535421, source PR routed proof passed in run
+          27027035021, source post-merge routed proof passed in run
+          27027729716, and source post-merge CI passed in run 27027729736
 ```
 
 ### Proof commands
