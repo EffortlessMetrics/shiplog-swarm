@@ -1704,7 +1704,33 @@ fn help_shows_all_subcommands() {
         .stdout(predicate::str::contains("open"))
         .stdout(predicate::str::contains("merge"))
         .stdout(predicate::str::contains("import"))
-        .stdout(predicate::str::contains("run"));
+        .stdout(predicate::str::contains("run"))
+        .stdout(predicate::str::contains("Review-ready loop:"))
+        .stdout(predicate::str::contains("shiplog init --guided"))
+        .stdout(predicate::str::contains("shiplog doctor --setup"))
+        .stdout(predicate::str::contains("shiplog status --latest"))
+        .stdout(predicate::str::contains(
+            "shiplog intake --last-6-months --explain",
+        ))
+        .stdout(predicate::str::contains("shiplog repair plan --latest"))
+        .stdout(predicate::str::contains(
+            "shiplog journal add --from-repair <repair_id>",
+        ))
+        .stdout(predicate::str::contains("shiplog repair diff --latest"))
+        .stdout(predicate::str::contains("shiplog runs diff --latest"))
+        .stdout(predicate::str::contains(
+            "shiplog share explain manager --latest",
+        ))
+        .stdout(predicate::str::contains("Advanced GitHub activity:"))
+        .stdout(predicate::str::contains("shiplog github activity plan"))
+        .stdout(predicate::str::contains(
+            "shiplog github activity run --profile authored --resume",
+        ))
+        .stdout(predicate::str::contains(
+            "shiplog github activity run --profile full --resume",
+        ))
+        .stdout(predicate::str::contains("shiplog github activity merge"))
+        .stdout(predicate::str::contains("Read-first commands:"));
 }
 
 #[test]
