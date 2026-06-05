@@ -210,7 +210,7 @@ Public packets are strict. Use status and share explanation before rendering.
 ```bash
 shiplog status --latest
 shiplog share explain public --latest
-shiplog share verify public --latest
+shiplog share verify public --latest --strict
 ```
 
 Render only after verification:

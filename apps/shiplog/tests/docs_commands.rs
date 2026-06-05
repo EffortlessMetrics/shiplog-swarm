@@ -2526,6 +2526,7 @@ fn recurring_review_loop_guide_documents_status_first_practice() {
         "shiplog repair diff --latest",
         "shiplog runs diff --latest",
         "shiplog share explain manager --latest",
+        "shiplog share verify public --latest --strict",
         "status first, then the next receipt-producing command",
         "flagship 0.9 guide",
         "Weekly self-review",
