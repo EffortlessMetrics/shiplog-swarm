@@ -146,6 +146,20 @@ Safety posture:
   --out, --run, and --latest select the report used for --from-repair lookup.
   Rerun intake after adding evidence so repair diff and runs diff can compare receipts.";
 
+const RUNS_DIFF_AFTER_HELP: &str = "\
+Packet-quality comparison path:
+  shiplog intake --last-6-months --explain
+  shiplog repair diff --latest
+  shiplog runs diff --latest
+  shiplog open packet --latest
+  shiplog share explain manager --latest
+
+Safety posture:
+  runs diff reads existing run summaries, intake reports, and repair receipts.
+  --latest compares the newest two runs; --from and --to compare explicit run IDs.
+  runs diff reports improvement, regressions, and remaining weak signals without writing files.
+  Use share explain after runs diff before rendering any share profile.";
+
 const SHARE_AFTER_HELP: &str = "\
 Read-first share path:
   shiplog share explain manager --latest
@@ -1137,6 +1151,11 @@ enum RunsCommand {
     },
 
     /// Compare packet quality movement across runs.
+    #[command(
+        about = "Compare packet quality movement across runs.",
+        long_about = "Compare packet-quality movement across existing run receipts, including evidence counts, readiness, claim candidates, repair state, regressions, and remaining weak signals.",
+        after_help = RUNS_DIFF_AFTER_HELP
+    )]
     Diff {
         /// Output directory containing shiplog runs.
         #[arg(long, default_value = "./out")]
