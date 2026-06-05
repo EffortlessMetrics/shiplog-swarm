@@ -2027,7 +2027,39 @@ fn runs_help_shows_list_show_and_compare() {
         .success()
         .stdout(predicate::str::contains("list"))
         .stdout(predicate::str::contains("show"))
-        .stdout(predicate::str::contains("compare"));
+        .stdout(predicate::str::contains("compare"))
+        .stdout(predicate::str::contains("diff"));
+
+    shiplog_cmd()
+        .args(["runs", "diff", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--latest"))
+        .stdout(predicate::str::contains("--from"))
+        .stdout(predicate::str::contains("--to"))
+        .stdout(predicate::str::contains("Packet-quality comparison path:"))
+        .stdout(predicate::str::contains(
+            "shiplog intake --last-6-months --explain",
+        ))
+        .stdout(predicate::str::contains("shiplog repair diff --latest"))
+        .stdout(predicate::str::contains("shiplog runs diff --latest"))
+        .stdout(predicate::str::contains("shiplog open packet --latest"))
+        .stdout(predicate::str::contains(
+            "shiplog share explain manager --latest",
+        ))
+        .stdout(predicate::str::contains("Safety posture:"))
+        .stdout(predicate::str::contains(
+            "runs diff reads existing run summaries, intake reports, and repair receipts",
+        ))
+        .stdout(predicate::str::contains(
+            "--latest compares the newest two runs; --from and --to compare explicit run IDs",
+        ))
+        .stdout(predicate::str::contains(
+            "runs diff reports improvement, regressions, and remaining weak signals without writing files",
+        ))
+        .stdout(predicate::str::contains(
+            "Use share explain after runs diff before rendering any share profile",
+        ));
 }
 
 #[test]
