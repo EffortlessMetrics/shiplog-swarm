@@ -475,7 +475,7 @@ mod tests {
     }
 
     #[test]
-    fn source_system_other_normalises_case() {
+    fn source_system_other_normalises_case() -> anyhow::Result<()> {
         // Other must be canonicalised to lowercase, same as known variants,
         // so equality and re-serialisation stay case-insensitive.
         let mixed = SourceSystem::from_str_lossy("PagerDuty");
@@ -483,16 +483,19 @@ mod tests {
         assert_eq!(mixed, lower);
         assert_eq!(mixed, SourceSystem::Other("pagerduty".into()));
 
-        let json = serde_json::to_string(&mixed).unwrap();
+        let json = serde_json::to_string(&mixed)?;
         assert_eq!(json, r#""pagerduty""#);
+        Ok(())
     }
 
     #[test]
-    fn source_system_backward_compat_object_form_unknown_key_normalises_case() {
+    fn source_system_backward_compat_object_form_unknown_key_normalises_case() -> anyhow::Result<()>
+    {
         // Arbitrary (non-"Other") object keys also flow through the Other
         // fallback and must be lowercased for the same reason.
-        let back: SourceSystem = serde_json::from_str(r#"{"PagerDuty":null}"#).unwrap();
+        let back: SourceSystem = serde_json::from_str(r#"{"PagerDuty":null}"#)?;
         assert_eq!(back, SourceSystem::Other("pagerduty".into()));
+        Ok(())
     }
 
     #[test]
