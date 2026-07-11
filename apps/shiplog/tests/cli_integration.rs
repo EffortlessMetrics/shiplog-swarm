@@ -1411,6 +1411,8 @@ fn status_latest_json(
     let out_arg = out.to_string_lossy().to_string();
     let assert = shiplog_cmd()
         .current_dir(tmp)
+        .env_remove("GITHUB_TOKEN")
+        .env("GH_CONFIG_DIR", tmp.join("gh-config"))
         .env_remove("SHIPLOG_REDACT_KEY")
         .args(["status", "--out", out_arg.as_str(), "--latest", "--json"])
         .assert()

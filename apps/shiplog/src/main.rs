@@ -7974,32 +7974,14 @@ fn review_setup_status(setup_status: &doctor::SetupStatus) -> status::SetupSumma
     {
         return status::SetupSummaryStatus::NeedsSetup;
     }
-    let any_ready_source = setup_status
-        .sources
-        .iter()
-        .any(|item| matches!(item.status, doctor::SetupItemStatus::Ready));
-    if !any_ready_source {
-        return status::SetupSummaryStatus::NeedsSetup;
+    match setup_status.requested_status {
+        doctor::SetupOverallStatus::Ready => status::SetupSummaryStatus::Ready,
+        doctor::SetupOverallStatus::ReadyWithCaveats => {
+            status::SetupSummaryStatus::ReadyWithCaveats
+        }
+        doctor::SetupOverallStatus::NeedsSetup => status::SetupSummaryStatus::NeedsSetup,
+        doctor::SetupOverallStatus::Blocked => status::SetupSummaryStatus::Blocked,
     }
-    if setup_status
-        .sources
-        .iter()
-        .any(setup_item_needs_review_setup)
-        || setup_status
-            .credentials
-            .iter()
-            .any(source_credential_item_needs_review_setup)
-    {
-        return status::SetupSummaryStatus::NeedsSetup;
-    }
-    if setup_status
-        .sources
-        .iter()
-        .any(|item| matches!(item.status, doctor::SetupItemStatus::Disabled))
-    {
-        return status::SetupSummaryStatus::ReadyWithCaveats;
-    }
-    status::SetupSummaryStatus::Ready
 }
 
 fn setup_item_blocks_review(item: &doctor::SetupItem) -> bool {
@@ -8045,6 +8027,9 @@ fn review_setup_reason(
     {
         return format!("{}: {}", item.label, item.reason);
     }
+    if setup_summary_status == status::SetupSummaryStatus::ReadyWithCaveats {
+        return "setup can collect evidence, with optional source caveats".to_string();
+    }
     if !setup_status
         .sources
         .iter()
@@ -8064,9 +8049,6 @@ fn review_setup_reason(
         })
     {
         return format!("{}: {}", item.label, item.reason);
-    }
-    if setup_summary_status == status::SetupSummaryStatus::ReadyWithCaveats {
-        return "setup can collect evidence, with optional source caveats".to_string();
     }
     "setup can collect evidence".to_string()
 }
