@@ -19,16 +19,6 @@ fn example_config(name: &str) -> PathBuf {
     repo_root().join("examples/configs").join(name)
 }
 
-fn assert_contains_in_order(doc: &str, doc_label: &str, needles: &[&str]) {
-    let mut cursor = 0;
-    for needle in needles {
-        let Some(offset) = doc[cursor..].find(needle) else {
-            panic!("{doc_label} should mention {needle:?} after the prior ordered command");
-        };
-        cursor += offset + needle.len();
-    }
-}
-
 fn normalize_newlines(doc: &str) -> String {
     doc.replace("\r\n", "\n")
 }
