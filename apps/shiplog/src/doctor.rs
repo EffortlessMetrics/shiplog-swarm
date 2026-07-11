@@ -1894,6 +1894,7 @@ repo = "."
 [sources.github]
 enabled = true
 user = "octo"
+api_base = "https://no-such.shiplog.test/api/v3"
 "#,
         )?;
         git2::Repository::init(temp.path())?;
@@ -1908,7 +1909,7 @@ user = "octo"
         assert_eq!(view.sources, status.sources);
         assert!(view.needs_action, "missing token should require action");
 
-        // git is ready (no action); github needs a token (one action).
+        // git is ready (no action); github needs authentication (one action).
         assert_eq!(
             find_item(&view.sources, "git")?.status,
             SetupItemStatus::Ready
@@ -1918,7 +1919,7 @@ user = "octo"
             SetupItemStatus::Unavailable
         );
 
-        // next_actions are deduped by command and contain the github token action.
+        // next_actions are deduped by command and contain the github auth action.
         let mut commands: Vec<&str> = view
             .next_actions
             .iter()
@@ -1928,7 +1929,7 @@ user = "octo"
         let mut deduped = commands.clone();
         deduped.dedup();
         assert_eq!(commands, deduped, "next_actions must be deduped by command");
-        assert!(commands.contains(&"set GITHUB_TOKEN"));
+        assert!(commands.contains(&"shiplog auth github status"));
         Ok(())
     }
 
