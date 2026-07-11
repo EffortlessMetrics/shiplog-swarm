@@ -2912,6 +2912,39 @@ fn update_rebuilds_packet_and_compares_against_prior_run() -> CliTestResult {
 }
 
 #[test]
+fn add_records_positional_title_and_suggests_update() -> CliTestResult {
+    let tmp = TempDir::new()?;
+    let before = file_tree_manifest(tmp.path());
+    let assert = shiplog_cmd()
+        .current_dir(tmp.path())
+        .args([
+            "add",
+            "Resolved the customer import incident",
+            "--date",
+            "2026-03-15",
+            "--impact",
+            "Protected the next import window",
+            "--workstream",
+            "Customer Reliability",
+            "--tag",
+            "incident",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Added manual event"))
+        .stdout(predicate::str::contains("shiplog update"));
+    let stdout = String::from_utf8(assert.get_output().stdout.clone())?;
+    assert!(stdout.contains("Resolved the customer import incident"));
+
+    let manual = std::fs::read_to_string(tmp.path().join("manual_events.yaml"))?;
+    assert!(manual.contains("Resolved the customer import incident"));
+    assert!(manual.contains("Protected the next import window"));
+    assert!(manual.contains("Customer Reliability"));
+    assert_ne!(before, file_tree_manifest(tmp.path()));
+    Ok(())
+}
+
+#[test]
 fn github_activity_plan_writes_static_receipt_without_provider_calls() -> CliTestResult {
     let tmp = TempDir::new()?;
     let config = tmp.path().join("shiplog-github-full.toml");
