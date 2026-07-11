@@ -440,6 +440,9 @@ enum Command {
     /// Refresh evidence, rebuild the packet, and compare against the prior run.
     Update(UpdateArgs),
 
+    /// Record one short factual note without the full journal syntax.
+    Add(AddArgs),
+
     /// Plan and inspect GitHub activity harvests without provider mutation.
     Github {
         #[command(subcommand)]
@@ -1024,6 +1027,39 @@ struct UpdateArgs {
     no_open: bool,
 }
 
+#[derive(Args, Debug)]
+struct AddArgs {
+    /// Factual title for the work.
+    title: String,
+    /// Path to shiplog.toml used to resolve the configured manual journal.
+    #[arg(long, default_value = CONFIG_FILENAME)]
+    config: PathBuf,
+    /// Single event date, in YYYY-MM-DD format. Defaults to today.
+    #[arg(long)]
+    date: Option<NaiveDate>,
+    /// Manual event type.
+    #[arg(long = "type", value_enum, default_value = "note")]
+    event_type: JournalEventType,
+    /// Optional factual context.
+    #[arg(long)]
+    description: Option<String>,
+    /// Workstream to associate with this evidence.
+    #[arg(long)]
+    workstream: Option<String>,
+    /// Optional outcome or impact note.
+    #[arg(long)]
+    impact: Option<String>,
+    /// Tag to attach. Repeat for multiple tags.
+    #[arg(long = "tag")]
+    tags: Vec<String>,
+    /// Receipt link as LABEL=URL. Repeat for multiple receipts.
+    #[arg(long = "receipt", value_name = "LABEL=URL")]
+    receipts: Vec<String>,
+    /// Print the entry that would be added without writing.
+    #[arg(long)]
+    dry_run: bool,
+}
+
 #[derive(serde::Serialize)]
 struct NextOutput {
     overall_status: status::ReviewLoopOverallStatus,
@@ -1165,6 +1201,8 @@ struct JournalAddArgs {
     /// Print the entry that would be added without writing.
     #[arg(long)]
     dry_run: bool,
+    #[arg(skip)]
+    quick: bool,
 }
 
 #[derive(Args, Debug)]
@@ -3180,6 +3218,31 @@ fn run_update(args: UpdateArgs) -> Result<()> {
         println!("Next update will compare against this packet.");
     }
     Ok(())
+}
+
+fn run_add(args: AddArgs) -> Result<()> {
+    let events = configured_manual_events_path(&args.config, true)
+        .unwrap_or_else(|| PathBuf::from(MANUAL_EVENTS_FILENAME));
+    run_journal_add(JournalAddArgs {
+        events,
+        from_repair: None,
+        out: None,
+        run: None,
+        latest: false,
+        id: None,
+        event_type: args.event_type,
+        date: args.date,
+        start: None,
+        end: None,
+        title: Some(args.title),
+        description: args.description,
+        workstream: args.workstream,
+        tags: args.tags,
+        receipts: args.receipts,
+        impact: args.impact,
+        dry_run: args.dry_run,
+        quick: true,
+    })
 }
 
 fn print_intake_next_step_footer(
@@ -7137,6 +7200,7 @@ fn run_journal_add(args: JournalAddArgs) -> Result<()> {
         receipts,
         impact,
         dry_run,
+        quick,
     } = args;
 
     let date = if date.is_none() && start.is_none() && end.is_none() {
@@ -7229,6 +7293,9 @@ fn run_journal_add(args: JournalAddArgs) -> Result<()> {
         println!("Next:");
         println!("  {}", repair.rerun_command);
         println!("  {}", repair.repair_plan_command);
+    } else if quick {
+        println!("Next:");
+        println!("  shiplog update");
     } else {
         println!("Next:");
         println!("  shiplog collect multi --last-6-months");
