@@ -47,6 +47,14 @@ mod status;
 use intake_report_builder::build_intake_report;
 
 const TOP_LEVEL_AFTER_HELP: &str = "\
+Start here:
+  shiplog
+  shiplog add \"what changed\"
+  shiplog update
+  shiplog next
+  shiplog open
+  shiplog share manager
+
 Review-ready loop:
   shiplog init --guided
   shiplog doctor --setup
