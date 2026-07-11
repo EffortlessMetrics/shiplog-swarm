@@ -3783,6 +3783,10 @@ enabled = false
             "--out",
             out.to_str().unwrap(),
             "--no-open",
+            "--since",
+            "2026-02-01",
+            "--until",
+            "2026-03-01",
         ])
         .assert()
         .success();
