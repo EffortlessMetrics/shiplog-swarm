@@ -1438,11 +1438,12 @@ mod tests {
     }
 
     #[test]
-    fn selected_next_action_is_safe_to_present_directly() {
+    fn selected_next_action_is_safe_to_present_directly() -> StatusTestResult {
         let placeholder = StatusNextAction::journal_add_from_repair("repair context is needed");
         let safe = StatusNextAction::repair_plan("inspect repair context");
 
-        let selected = select_next_action(&[placeholder, safe]).expect("safe action should exist");
+        let selected =
+            select_next_action(&[placeholder, safe]).ok_or("safe action should exist")?;
 
         assert_eq!(selected.key, "repair_plan");
         assert!(!selected.command.contains('<'));
@@ -1453,6 +1454,7 @@ mod tests {
             )])
             .is_none()
         );
+        Ok(())
     }
 
     #[test]
