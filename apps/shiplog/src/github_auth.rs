@@ -167,27 +167,30 @@ struct GhHost {
 }
 
 fn resolve_from_gh(host: String) -> GithubAuthResolution {
-    let metadata = |account: Option<String>, reason: Option<GithubAuthReason>| {
-        GithubAuthMetadata {
-            source: if reason.is_none() {
-                GithubAuthSource::GhCli
-            } else {
-                GithubAuthSource::Unavailable
-            },
-            host: host.clone(),
-            account,
-            availability: if reason.is_none() {
-                GithubAuthAvailability::Ready
-            } else {
-                GithubAuthAvailability::Unavailable
-            },
-            reason,
-        }
+    let metadata = |account: Option<String>, reason: Option<GithubAuthReason>| GithubAuthMetadata {
+        source: if reason.is_none() {
+            GithubAuthSource::GhCli
+        } else {
+            GithubAuthSource::Unavailable
+        },
+        host: host.clone(),
+        account,
+        availability: if reason.is_none() {
+            GithubAuthAvailability::Ready
+        } else {
+            GithubAuthAvailability::Unavailable
+        },
+        reason,
     };
 
     let status_output = match run_gh(&["auth", "status", "--json", "hosts"]) {
         Ok(output) if output.status.success() => output,
-        Ok(_) => return GithubAuthResolution::Unavailable(metadata(None, Some(GithubAuthReason::GhLoggedOut))),
+        Ok(_) => {
+            return GithubAuthResolution::Unavailable(metadata(
+                None,
+                Some(GithubAuthReason::GhLoggedOut),
+            ));
+        }
         Err(reason) => return GithubAuthResolution::Unavailable(metadata(None, Some(reason))),
     };
 
@@ -219,12 +222,22 @@ fn resolve_from_gh(host: String) -> GithubAuthResolution {
 
     let token_output = match run_gh(&["auth", "token", "--hostname", &host]) {
         Ok(output) if output.status.success() => output,
-        Ok(_) => return GithubAuthResolution::Unavailable(metadata(account, Some(GithubAuthReason::GhCommandFailed))),
+        Ok(_) => {
+            return GithubAuthResolution::Unavailable(metadata(
+                account,
+                Some(GithubAuthReason::GhCommandFailed),
+            ));
+        }
         Err(reason) => return GithubAuthResolution::Unavailable(metadata(account, Some(reason))),
     };
-    let secret = String::from_utf8_lossy(&token_output.stdout).trim().to_owned();
+    let secret = String::from_utf8_lossy(&token_output.stdout)
+        .trim()
+        .to_owned();
     if secret.is_empty() {
-        return GithubAuthResolution::Unavailable(metadata(account, Some(GithubAuthReason::GhLoggedOut)));
+        return GithubAuthResolution::Unavailable(metadata(
+            account,
+            Some(GithubAuthReason::GhLoggedOut),
+        ));
     }
 
     GithubAuthResolution::Available(GithubCredential {
@@ -251,7 +264,11 @@ fn run_gh(arguments: &[&str]) -> Result<Output, GithubAuthReason> {
     let deadline = Instant::now() + GH_COMMAND_TIMEOUT;
     loop {
         match child.try_wait() {
-            Ok(Some(_)) => return child.wait_with_output().map_err(|_| GithubAuthReason::GhCommandFailed),
+            Ok(Some(_)) => {
+                return child
+                    .wait_with_output()
+                    .map_err(|_| GithubAuthReason::GhCommandFailed);
+            }
             Ok(None) if Instant::now() >= deadline => {
                 terminate_child(&mut child);
                 return Err(GithubAuthReason::GhTimedOut);
@@ -298,7 +315,13 @@ mod tests {
         ]);
         let selected = environment_credential("github.example.com", &environment)
             .ok_or_else(|| anyhow!("expected enterprise credential"))?;
-        ensure!(selected == (GithubAuthSource::GithubEnterpriseToken, "enterprise".to_owned()));
+        ensure!(
+            selected
+                == (
+                    GithubAuthSource::GithubEnterpriseToken,
+                    "enterprise".to_owned()
+                )
+        );
         Ok(())
     }
 
@@ -312,9 +335,11 @@ mod tests {
     #[test]
     fn normalizes_configured_api_hosts() -> Result<()> {
         ensure!(github_host(None).map_err(|_| anyhow!("invalid default host"))? == "github.com");
-        ensure!(github_host(Some("https://GitHub.Example.com/api/v3"))
-            .map_err(|_| anyhow!("invalid enterprise host"))?
-            == "github.example.com");
+        ensure!(
+            github_host(Some("https://GitHub.Example.com/api/v3"))
+                .map_err(|_| anyhow!("invalid enterprise host"))?
+                == "github.example.com"
+        );
         Ok(())
     }
 
