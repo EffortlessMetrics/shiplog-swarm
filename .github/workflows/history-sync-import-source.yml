@@ -25,7 +25,7 @@ jobs:
     timeout-minutes: 5
     env:
       START_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-      EXECUTION_REF: refs/heads/agent/execute-source-history-import-20260712
+      IMPORT_TAG: history-sync-import-20260712
     steps:
       - name: Check out the triggering branch tip
         uses: actions/checkout@v4
@@ -61,18 +61,10 @@ jobs:
           echo "sha=${merge_sha}" >> "${GITHUB_OUTPUT}"
           echo "Created two-parent merge ${merge_sha}"
 
-      - name: Publish the generated merge on the execution branch
+      - name: Import the generated merge through a temporary tag
         shell: bash
         run: |
           set -euo pipefail
-          git push --quiet origin "${{ steps.merge.outputs.sha }}:${EXECUTION_REF}"
-          echo "Published generated merge ${{ steps.merge.outputs.sha }}"
-
-      - name: Clean obsolete temporary branches
-        if: always()
-        shell: bash
-        run: |
-          git push --quiet origin --delete agent/bootstrap-source-history-import-20260712 || true
-          git push --quiet origin --delete agent/run-source-history-import-20260712 || true
-          git push --quiet origin --delete agent/retry-source-history-import-20260712 || true
-          git push --quiet origin --delete agent/observe-source-history-import-20260712 || true
+          git tag -f "${IMPORT_TAG}" "${{ steps.merge.outputs.sha }}"
+          git push --quiet --force origin "refs/tags/${IMPORT_TAG}:refs/tags/${IMPORT_TAG}"
+          echo "Imported generated merge ${{ steps.merge.outputs.sha }} as ${IMPORT_TAG}"
