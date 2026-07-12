@@ -4,6 +4,13 @@ on:
   push:
     branches:
       - main
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - reopened
+      - synchronize
 
 permissions:
   contents: write
@@ -16,12 +23,14 @@ jobs:
   import-history:
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    env:
+      START_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
-      - name: Check out the merged trigger commit
+      - name: Check out the triggering branch tip
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ github.sha }}
+          ref: ${{ env.START_SHA }}
 
       - name: Create the reciprocal history-preserving merge
         shell: bash
@@ -34,7 +43,7 @@ jobs:
           git remote add source https://github.com/EffortlessMetrics/shiplog.git
           git fetch --no-tags source main
 
-          git checkout -B sync/history-preserving-shiplog-20260712 "${GITHUB_SHA}"
+          git checkout -B sync/history-preserving-shiplog-20260712 "${START_SHA}"
           source_sha="$(git rev-parse source/main)"
 
           git merge \
@@ -61,3 +70,5 @@ jobs:
           git push origin --delete agent/bootstrap-source-history-import-20260712 || true
           git push origin --delete agent/run-source-history-import-20260712 || true
           git push origin --delete agent/retry-source-history-import-20260712 || true
+          git push origin --delete agent/observe-source-history-import-20260712 || true
+          git push origin --delete agent/execute-source-history-import-20260712 || true
