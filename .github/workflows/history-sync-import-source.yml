@@ -11,7 +11,6 @@ on:
 
 permissions:
   contents: read
-  issues: write
 
 concurrency:
   group: one-time-shiplog-source-object-report
@@ -25,8 +24,6 @@ jobs:
       - name: Report exact source commit and tree objects
         shell: bash
         env:
-          GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
           SWARM_BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           set -euo pipefail
@@ -39,16 +36,7 @@ jobs:
 
           source_sha="$(git rev-parse FETCH_HEAD)"
           source_tree="$(git rev-parse "${source_sha}^{tree}")"
-          body="history-sync-object-report
-          source_sha=${source_sha}
-          source_tree=${source_tree}
-          swarm_base_sha=${SWARM_BASE_SHA}"
 
-          jq -n --arg body "${body}" '{body: $body}' > comment.json
-          curl --fail-with-body --silent --show-error \
-            -X POST \
-            -H "Authorization: Bearer ${GH_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
-            --data-binary @comment.json
+          echo "HISTORY_SYNC_SOURCE_SHA=${source_sha}"
+          echo "HISTORY_SYNC_SOURCE_TREE=${source_tree}"
+          echo "HISTORY_SYNC_SWARM_BASE_SHA=${SWARM_BASE_SHA}"
