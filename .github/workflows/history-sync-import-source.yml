@@ -1,9 +1,6 @@
-name: One-time shiplog source history import
+name: One-time shiplog source object report
 
 on:
-  push:
-    branches:
-      - main
   pull_request:
     branches:
       - main
@@ -13,58 +10,45 @@ on:
       - synchronize
 
 permissions:
-  contents: write
+  contents: read
+  issues: write
 
 concurrency:
-  group: one-time-shiplog-source-history-import
+  group: one-time-shiplog-source-object-report
   cancel-in-progress: false
 
 jobs:
-  import-history:
+  report-objects:
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    env:
-      START_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-      IMPORT_TAG: history-sync-import-20260712
     steps:
-      - name: Check out the triggering branch tip
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          show-progress: false
-          ref: ${{ env.START_SHA }}
-
-      - name: Create the reciprocal history-preserving merge
-        id: merge
+      - name: Report exact source commit and tree objects
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          SWARM_BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           set -euo pipefail
 
-          git config user.name "EffortlessSteven"
-          git config user.email "git@effortlesssteven.com"
+          mkdir source-object-report
+          cd source-object-report
+          git init -q
           git remote add source https://github.com/EffortlessMetrics/shiplog.git
           git fetch --quiet --no-tags source main
-          git checkout -q -B sync/history-preserving-shiplog-20260712 "${START_SHA}"
 
-          source_sha="$(git rev-parse source/main)"
-          git merge --quiet --no-ff --no-commit --allow-unrelated-histories -s ours source/main
-          git read-tree --reset -u "source/main^{tree}"
-          git rm -q -f --ignore-unmatch .github/workflows/history-sync-import-source.yml .history-sync-trigger
-          git commit -q \
-            -m "merge(sync): join shiplog source history through ${source_sha:0:12}" \
-            -m "Keep shiplog-swarm/main as the first parent, record shiplog/main as the second parent, and use the released shiplog tree as the merged result. Remove the one-time import workflow and trigger marker from that result." \
-            -m "[skip ci]"
+          source_sha="$(git rev-parse FETCH_HEAD)"
+          source_tree="$(git rev-parse "${source_sha}^{tree}")"
+          body="history-sync-object-report
+          source_sha=${source_sha}
+          source_tree=${source_tree}
+          swarm_base_sha=${SWARM_BASE_SHA}"
 
-          merge_sha="$(git rev-parse HEAD)"
-          parent_count="$(git show -s --format=%P HEAD | wc -w)"
-          test "${parent_count}" -eq 2
-          echo "sha=${merge_sha}" >> "${GITHUB_OUTPUT}"
-          echo "Created two-parent merge ${merge_sha}"
-
-      - name: Import the generated merge through a temporary tag
-        shell: bash
-        run: |
-          set -euo pipefail
-          git tag -f "${IMPORT_TAG}" "${{ steps.merge.outputs.sha }}"
-          git push --quiet --force origin "refs/tags/${IMPORT_TAG}:refs/tags/${IMPORT_TAG}"
-          echo "Imported generated merge ${{ steps.merge.outputs.sha }} as ${IMPORT_TAG}"
+          jq -n --arg body "${body}" '{body: $body}' > comment.json
+          curl --fail-with-body --silent --show-error \
+            -X POST \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
+            --data-binary @comment.json
