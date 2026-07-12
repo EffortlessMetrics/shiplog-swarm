@@ -30,45 +30,57 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          show-progress: false
           ref: ${{ env.START_SHA }}
 
       - name: Create the reciprocal history-preserving merge
+        id: merge
         shell: bash
         run: |
           set -euo pipefail
 
           git config user.name "EffortlessSteven"
           git config user.email "git@effortlesssteven.com"
-
           git remote add source https://github.com/EffortlessMetrics/shiplog.git
-          git fetch --no-tags source main
+          git fetch --quiet --no-tags source main
+          git checkout -q -B sync/history-preserving-shiplog-20260712 "${START_SHA}"
 
-          git checkout -B sync/history-preserving-shiplog-20260712 "${START_SHA}"
           source_sha="$(git rev-parse source/main)"
-
-          git merge \
-            --no-ff \
-            --no-commit \
-            --allow-unrelated-histories \
-            -s ours \
-            source/main
+          git merge --quiet --no-ff --no-commit --allow-unrelated-histories -s ours source/main
           git read-tree --reset -u "source/main^{tree}"
-          git rm -f --ignore-unmatch .github/workflows/history-sync-import-source.yml .history-sync-trigger
-          git commit \
+          git rm -q -f --ignore-unmatch .github/workflows/history-sync-import-source.yml .history-sync-trigger
+          git commit -q \
             -m "merge(sync): join shiplog source history through ${source_sha:0:12}" \
             -m "Keep shiplog-swarm/main as the first parent, record shiplog/main as the second parent, and use the released shiplog tree as the merged result. Remove the one-time import workflow and trigger marker from that result." \
             -m "[skip ci]"
 
-          git push origin HEAD:refs/heads/sync/history-preserving-shiplog-20260712
+          merge_sha="$(git rev-parse HEAD)"
+          parent_count="$(git show -s --format=%P HEAD | wc -w)"
+          test "${parent_count}" -eq 2
+          echo "sha=${merge_sha}" >> "${GITHUB_OUTPUT}"
+          echo "Created two-parent merge ${merge_sha}"
 
-          if git push origin HEAD:refs/heads/main; then
+      - name: Advance the pre-created sync ref
+        shell: bash
+        run: |
+          set -euo pipefail
+          git push --quiet origin "${{ steps.merge.outputs.sha }}:refs/heads/sync/history-preserving-shiplog-20260712"
+          echo "Advanced sync ref to ${{ steps.merge.outputs.sha }}"
+
+      - name: Attempt exact main fast-forward
+        shell: bash
+        run: |
+          if git push --quiet origin "${{ steps.merge.outputs.sha }}:refs/heads/main"; then
             echo "Fast-forwarded shiplog-swarm/main directly"
           else
             echo "Direct main update is protected; the exact merge remains on the sync branch"
           fi
 
-          git push origin --delete agent/bootstrap-source-history-import-20260712 || true
-          git push origin --delete agent/run-source-history-import-20260712 || true
-          git push origin --delete agent/retry-source-history-import-20260712 || true
-          git push origin --delete agent/observe-source-history-import-20260712 || true
-          git push origin --delete agent/execute-source-history-import-20260712 || true
+      - name: Clean temporary agent branches
+        if: always()
+        shell: bash
+        run: |
+          git push --quiet origin --delete agent/bootstrap-source-history-import-20260712 || true
+          git push --quiet origin --delete agent/run-source-history-import-20260712 || true
+          git push --quiet origin --delete agent/retry-source-history-import-20260712 || true
+          git push --quiet origin --delete agent/observe-source-history-import-20260712 || true
