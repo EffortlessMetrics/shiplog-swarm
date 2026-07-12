@@ -25,6 +25,7 @@ jobs:
     timeout-minutes: 5
     env:
       START_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      EXECUTION_REF: refs/heads/agent/execute-source-history-import-20260712
     steps:
       - name: Check out the triggering branch tip
         uses: actions/checkout@v4
@@ -60,23 +61,14 @@ jobs:
           echo "sha=${merge_sha}" >> "${GITHUB_OUTPUT}"
           echo "Created two-parent merge ${merge_sha}"
 
-      - name: Advance the pre-created sync ref
+      - name: Publish the generated merge on the execution branch
         shell: bash
         run: |
           set -euo pipefail
-          git push --quiet origin "${{ steps.merge.outputs.sha }}:refs/heads/sync/history-preserving-shiplog-20260712"
-          echo "Advanced sync ref to ${{ steps.merge.outputs.sha }}"
+          git push --quiet origin "${{ steps.merge.outputs.sha }}:${EXECUTION_REF}"
+          echo "Published generated merge ${{ steps.merge.outputs.sha }}"
 
-      - name: Attempt exact main fast-forward
-        shell: bash
-        run: |
-          if git push --quiet origin "${{ steps.merge.outputs.sha }}:refs/heads/main"; then
-            echo "Fast-forwarded shiplog-swarm/main directly"
-          else
-            echo "Direct main update is protected; the exact merge remains on the sync branch"
-          fi
-
-      - name: Clean temporary agent branches
+      - name: Clean obsolete temporary branches
         if: always()
         shell: bash
         run: |
