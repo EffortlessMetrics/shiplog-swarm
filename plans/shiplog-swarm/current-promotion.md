@@ -9,7 +9,7 @@
 
 - `EffortlessMetrics/shiplog-swarm#225` — canonicalize unknown source-system names to lowercase.
 - `EffortlessMetrics/shiplog-swarm#226` — enforce half-open Git and Jira date windows.
-- `EffortlessMetrics/shiplog-swarm#SELF_PR` — refresh the current promotion receipts and compact the active manifest.
+- `EffortlessMetrics/shiplog-swarm#233` — refresh the current promotion receipts and compact the active manifest.
 
 ## Proof
 
