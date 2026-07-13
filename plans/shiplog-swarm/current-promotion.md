@@ -3,13 +3,13 @@
 **Status:** source promotion in progress
 **Swarm head before receipt refresh:** `2862863b38ce5fe078ac440085648c4198a460be`
 **Source base:** `a3a15edcdc03d667f6e0152b86455c067c5d6509`
-**Reserved source promotion:** `EffortlessMetrics/shiplog#650`
+**Source promotion:** `EffortlessMetrics/shiplog#652`
 
 ## Included work
 
 - `EffortlessMetrics/shiplog-swarm#225` — canonicalize unknown source-system names to lowercase.
 - `EffortlessMetrics/shiplog-swarm#226` — enforce half-open Git and Jira date windows.
-- `EffortlessMetrics/shiplog-swarm#233` — refresh the current promotion receipts and compact the active manifest.
+- `EffortlessMetrics/shiplog-swarm#233` — make hosted routing deterministic and refresh the current promotion receipts.
 
 ## Proof
 
@@ -17,13 +17,14 @@
 
 - `Shiplog Rust Small Result` passed for `shiplog-swarm/main` at `2862863b38ce5fe078ac440085648c4198a460be` in run `29218878179`.
 - Branch protection is strict and requires only `Shiplog Rust Small Result`.
+- PR #233 makes `allow-github-hosted` and `ci-budget-ack` route directly to GitHub-hosted CI before self-hosted runner discovery.
 - The stale pre-reconciliation security report PR `EffortlessMetrics/shiplog-swarm#200` was closed unmerged.
 
 ### Source proof
 
-- `EffortlessMetrics/shiplog#650` reserves the final regular-merge promotion number and will be converted from issue to PR after the final swarm SHA is known.
-- Source `Shiplog Rust Small Result` passed at the pre-receipt head in run `29230991924` on closed draft `EffortlessMetrics/shiplog#649`.
-- Source proof must rerun and pass at the final receipt-refresh head before merge.
+- `EffortlessMetrics/shiplog#652` is the stable source-local regular-merge promotion PR.
+- Source `Shiplog Rust Small Result` passed at the pre-receipt head in run `29230991924` on closed transport PR `EffortlessMetrics/shiplog#649`.
+- After PR #233 merges, the source-local promotion branch will fast-forward to the exact resulting swarm main SHA and all source checks must rerun and pass there.
 - The source-only regex Dependabot PR `EffortlessMetrics/shiplog#632` was closed; dependency work remains on the swarm trunk.
 
 ## Merge boundary
@@ -47,4 +48,4 @@ rtk git diff --check
 
 ## Next action
 
-Merge this receipt refresh after exact-head proof, create the final source promotion branch at the resulting swarm head, convert `EffortlessMetrics/shiplog#650` into that pull request, require green source proof, and merge it with a regular merge commit.
+Merge PR #233 after exact-head proof, import the resulting swarm main object into the source repository, fast-forward the source-local branch behind `EffortlessMetrics/shiplog#652`, require green source proof at that exact head, and merge #652 with a regular merge commit.
