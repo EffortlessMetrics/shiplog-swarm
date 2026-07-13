@@ -22,7 +22,8 @@
 ### Source proof
 
 - `EffortlessMetrics/shiplog#649` is the regular-merge promotion PR.
-- Source PR `Shiplog Rust Small Result` must pass at the final receipt-refresh head before merge.
+- Source `Shiplog Rust Small Result` passed at the pre-receipt head in run `29230991924`.
+- Source proof must rerun and pass after the promotion branch advances to the final receipt-refresh head.
 - The source-only regex Dependabot PR `EffortlessMetrics/shiplog#632` was closed; dependency work remains on the swarm trunk.
 
 ## Merge boundary
