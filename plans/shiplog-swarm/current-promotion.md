@@ -3,7 +3,7 @@
 **Status:** source promotion in progress
 **Swarm head before receipt refresh:** `2862863b38ce5fe078ac440085648c4198a460be`
 **Source base:** `a3a15edcdc03d667f6e0152b86455c067c5d6509`
-**Source promotion:** `EffortlessMetrics/shiplog#649`
+**Reserved source promotion:** `EffortlessMetrics/shiplog#650`
 
 ## Included work
 
@@ -21,9 +21,9 @@
 
 ### Source proof
 
-- `EffortlessMetrics/shiplog#649` is the regular-merge promotion PR.
-- Source `Shiplog Rust Small Result` passed at the pre-receipt head in run `29230991924`.
-- Source proof must rerun and pass after the promotion branch advances to the final receipt-refresh head.
+- `EffortlessMetrics/shiplog#650` reserves the final regular-merge promotion number and will be converted from issue to PR after the final swarm SHA is known.
+- Source `Shiplog Rust Small Result` passed at the pre-receipt head in run `29230991924` on closed draft `EffortlessMetrics/shiplog#649`.
+- Source proof must rerun and pass at the final receipt-refresh head before merge.
 - The source-only regex Dependabot PR `EffortlessMetrics/shiplog#632` was closed; dependency work remains on the swarm trunk.
 
 ## Merge boundary
@@ -47,4 +47,4 @@ rtk git diff --check
 
 ## Next action
 
-Merge this receipt refresh after `Shiplog Rust Small Result` passes, fast-forward the source promotion branch to the resulting swarm head, require green source proof, and merge `EffortlessMetrics/shiplog#649` with a regular merge commit.
+Merge this receipt refresh after exact-head proof, create the final source promotion branch at the resulting swarm head, convert `EffortlessMetrics/shiplog#650` into that pull request, require green source proof, and merge it with a regular merge commit.
