@@ -1,0 +1,60 @@
+name: One-time patch for routed CI label override
+
+on:
+  push:
+    branches:
+      - docs/refresh-promotion-receipts-20260713
+
+permissions:
+  contents: write
+
+jobs:
+  patch-router:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out receipt branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: docs/refresh-promotion-receipts-20260713
+
+      - name: Make hosted-fallback labels deterministic
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python3 <<'PY'
+          from pathlib import Path
+
+          path = Path('.github/workflows/em-ci-routed-shiplog-rust.yml')
+          text = path.read_text(encoding='utf-8')
+          needle = '''          if not trusted:
+              set_output("github", "fork_pr")
+              sys.exit(0)
+
+          if force_route == "github":
+'''
+          replacement = '''          if event_name == "pull_request" and (
+              "allow-github-hosted" in labels or "ci-budget-ack" in labels
+          ):
+              set_output("github", "label_forced_github")
+              sys.exit(0)
+
+          if not trusted:
+              set_output("github", "fork_pr")
+              sys.exit(0)
+
+          if force_route == "github":
+'''
+          if needle not in text:
+              raise SystemExit('router insertion point not found')
+          path.write_text(text.replace(needle, replacement, 1), encoding='utf-8')
+          PY
+
+          git rm .github/workflows/patch-routed-ci-label-override.yml
+          git config user.name "EffortlessSteven"
+          git config user.email "git@effortlesssteven.com"
+          git add .github/workflows/em-ci-routed-shiplog-rust.yml
+          git commit -m "fix(ci): honor hosted-run labels before runner routing [skip ci]"
+          git push origin HEAD:refs/heads/docs/refresh-promotion-receipts-20260713
