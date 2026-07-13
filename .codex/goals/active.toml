@@ -51,8 +51,9 @@ receipts = [
   "EffortlessMetrics/shiplog-swarm#225",
   "EffortlessMetrics/shiplog-swarm#226",
   "EffortlessMetrics/shiplog-swarm#233",
-  "EffortlessMetrics/shiplog#649",
+  "EffortlessMetrics/shiplog#650",
   "EffortlessMetrics/shiplog-swarm#200 closed as stale pre-reconciliation evidence",
   "EffortlessMetrics/shiplog#632 closed as deferred source-only dependency work",
   "EffortlessMetrics/shiplog#648 closed as unused transport bootstrap",
+  "EffortlessMetrics/shiplog#649 closed after pre-receipt source proof because its standalone-repository head was pinned",
 ]
