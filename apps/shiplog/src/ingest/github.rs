@@ -1509,23 +1509,23 @@ struct ReviewUser {
 /// allowed to use cleartext.
 pub fn validate_https_api_base(api_base: &str) -> Result<()> {
     let parsed = Url::parse(api_base).context("parse GitHub API base URL")?;
-    let host_str = parsed.host_str().ok_or_else(|| {
-        anyhow::anyhow!("GitHub API base must include a host")
-    })?;
+    let host_str = parsed
+        .host_str()
+        .ok_or_else(|| anyhow::anyhow!("GitHub API base must include a host"))?;
 
     // Allow HTTP for loopback addresses (local mock servers used by
     // integration tests). The protection here is against exfiltrating
     // bearer tokens to remote hosts, not against loopback connections.
-    let host = parsed.host().ok_or_else(|| {
-        anyhow::anyhow!("GitHub API base must include a host")
-    })?;
+    let host = parsed
+        .host()
+        .ok_or_else(|| anyhow::anyhow!("GitHub API base must include a host"))?;
     let host_ip: Option<std::net::IpAddr> = match host {
         url::Host::Domain(_) => None,
         url::Host::Ipv4(ip) => Some(std::net::IpAddr::V4(ip)),
         url::Host::Ipv6(ip) => Some(std::net::IpAddr::V6(ip)),
     };
-    let is_loopback = host_str.eq_ignore_ascii_case("localhost")
-        || host_ip.is_some_and(|ip| ip.is_loopback());
+    let is_loopback =
+        host_str.eq_ignore_ascii_case("localhost") || host_ip.is_some_and(|ip| ip.is_loopback());
 
     if parsed.scheme() != "https" && !is_loopback {
         anyhow::bail!(
