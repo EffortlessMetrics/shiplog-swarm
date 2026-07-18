@@ -67,6 +67,9 @@ fn contributor_docs_and_wrappers_share_the_fresh_clone_contract() -> anyhow::Res
     assert!(!workflow.contains("pull_request:\n    paths:"));
     assert!(workflow.contains("persist-credentials: false"));
     assert!(workflow.contains("extraheader"));
+    assert!(workflow.contains("unset GITHUB_TOKEN GH_TOKEN GITLAB_TOKEN"));
+    assert!(workflow.contains("Remove-Item \"Env:$_\""));
+    assert!(!workflow.contains("SHIPLOG_REDACT_KEY: \"\""));
     assert!(workflow.contains("shiplog-no-gh"));
     assert!(workflow.contains("if gh --version"));
     assert!(workflow.contains("& gh --version"));

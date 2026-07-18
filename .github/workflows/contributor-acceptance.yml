@@ -16,13 +16,6 @@ jobs:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
-    env:
-      GITHUB_TOKEN: ""
-      GH_TOKEN: ""
-      GITLAB_TOKEN: ""
-      JIRA_TOKEN: ""
-      LINEAR_API_KEY: ""
-      SHIPLOG_REDACT_KEY: ""
     steps:
       - name: Check out the contributor repository
         uses: actions/checkout@v7.0.0
@@ -85,18 +78,47 @@ jobs:
           }
           exit 0
 
-      - name: Build the locked workspace
-        run: cargo build --workspace --locked
+      - name: Build the locked workspace (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          unset GITHUB_TOKEN GH_TOKEN GITLAB_TOKEN JIRA_TOKEN LINEAR_API_KEY SHIPLOG_REDACT_KEY
+          test -z "${GITHUB_TOKEN+x}${GH_TOKEN+x}${GITLAB_TOKEN+x}${JIRA_TOKEN+x}${LINEAR_API_KEY+x}${SHIPLOG_REDACT_KEY+x}"
+          cargo build --workspace --locked
+
+      - name: Build the locked workspace (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          'GITHUB_TOKEN', 'GH_TOKEN', 'GITLAB_TOKEN', 'JIRA_TOKEN', 'LINEAR_API_KEY', 'SHIPLOG_REDACT_KEY' |
+            ForEach-Object { Remove-Item "Env:$_" -ErrorAction SilentlyContinue }
+          $retained = @('GITHUB_TOKEN', 'GH_TOKEN', 'GITLAB_TOKEN', 'JIRA_TOKEN', 'LINEAR_API_KEY', 'SHIPLOG_REDACT_KEY' |
+            Where-Object { Test-Path "Env:$_" })
+          if ($retained.Count -ne 0) {
+            throw 'contributor build environment retained a credential variable'
+          }
+          cargo build --workspace --locked
 
       - name: Run canonical contributor gate (Unix)
         if: runner.os != 'Windows'
         shell: bash
-        run: bash scripts/dev-check.sh
+        run: |
+          unset GITHUB_TOKEN GH_TOKEN GITLAB_TOKEN JIRA_TOKEN LINEAR_API_KEY SHIPLOG_REDACT_KEY
+          test -z "${GITHUB_TOKEN+x}${GH_TOKEN+x}${GITLAB_TOKEN+x}${JIRA_TOKEN+x}${LINEAR_API_KEY+x}${SHIPLOG_REDACT_KEY+x}"
+          bash scripts/dev-check.sh
 
       - name: Run canonical contributor gate (PowerShell)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: ./scripts/dev-check.ps1
+        run: |
+          'GITHUB_TOKEN', 'GH_TOKEN', 'GITLAB_TOKEN', 'JIRA_TOKEN', 'LINEAR_API_KEY', 'SHIPLOG_REDACT_KEY' |
+            ForEach-Object { Remove-Item "Env:$_" -ErrorAction SilentlyContinue }
+          $retained = @('GITHUB_TOKEN', 'GH_TOKEN', 'GITLAB_TOKEN', 'JIRA_TOKEN', 'LINEAR_API_KEY', 'SHIPLOG_REDACT_KEY' |
+            Where-Object { Test-Path "Env:$_" })
+          if ($retained.Count -ne 0) {
+            throw 'contributor gate environment retained a credential variable'
+          }
+          ./scripts/dev-check.ps1
 
       - name: Verify checks did not generate repository state
         shell: bash
