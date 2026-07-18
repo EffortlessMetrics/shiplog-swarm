@@ -5098,8 +5098,13 @@ Merge this PR with a regular merge commit; do not squash.
 
     #[test]
     fn next_actions_stop_when_source_ahead_has_product_drift() {
-        let actions =
-            topology_next_actions("source-ahead", Some(false), "promotion-merge-only", &[], &[]);
+        let actions = topology_next_actions(
+            "source-ahead",
+            Some(false),
+            "promotion-merge-only",
+            &[],
+            &[],
+        );
 
         assert_eq!(
             actions,
