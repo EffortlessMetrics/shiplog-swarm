@@ -2604,7 +2604,7 @@ fn classify_differing_paths(
         {
             result.approved_source_only.push(path.clone());
         } else {
-            if source_changed_paths.contains(path) {
+            if source_changed_paths.contains(path) && !swarm_changed_paths.contains(path) {
                 result.unapproved_source_only.push(path.clone());
             }
             result.product_drift_paths.push(path.clone());
@@ -4959,6 +4959,7 @@ Merge this PR with a regular merge commit; do not squash.
         );
 
         assert!(classification.approved_source_only.is_empty());
+        assert!(classification.unapproved_source_only.is_empty());
         assert_eq!(classification.product_drift_paths, vec![path]);
     }
 
