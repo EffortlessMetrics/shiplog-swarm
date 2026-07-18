@@ -409,6 +409,21 @@ mod tests {
                 ),
             )?;
         }
+        for name in [
+            "bdd-smoke.yml",
+            "bdd-testing.yml",
+            "ci.yml",
+            "fuzz-smoke.yml",
+            "fuzzing.yml",
+            "mutation-testing.yml",
+            "property-smoke.yml",
+            "property-testing.yml",
+        ] {
+            fs::write(
+                dir.path().join(".github/workflows").join(name),
+                "on: workflow_dispatch\npermissions:\n  contents: read\njobs:\n  verify:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo verify\n",
+            )?;
+        }
         let release_permission = if role == RepositoryRole::Source {
             "write"
         } else {
