@@ -83,6 +83,7 @@ jobs:
           if ($LASTEXITCODE -eq 0) {
             throw 'gh unexpectedly remained available'
           }
+          exit 0
 
       - name: Build the locked workspace
         run: cargo build --workspace --locked
