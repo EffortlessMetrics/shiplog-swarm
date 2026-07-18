@@ -1,3 +1,4 @@
+<!-- GENERATED FROM plans/shiplog-swarm/promotion-state.toml BY `cargo xtask promotion-state`. DO NOT EDIT BY HAND. -->
 # Current shiplog-swarm Promotion
 
 **Status:** completed; approved source governance follows the promotion
@@ -7,29 +8,28 @@
 
 ## Included work
 
-- `EffortlessMetrics/shiplog-swarm#238` — add the bounded, idempotent source-promotion preparation entrypoint.
-- `EffortlessMetrics/shiplog#655` — promote the exact proven swarm head with a regular merge commit.
-- `EffortlessMetrics/shiplog#656` — keep source dependency automation verification-only without changing the promoted product tree.
+- `EffortlessMetrics/shiplog-swarm#238`
+
+## Pending swarm work
+
+- `EffortlessMetrics/shiplog-swarm#248`
+- `EffortlessMetrics/shiplog-swarm#251`
+- `EffortlessMetrics/shiplog-swarm#253`
+
+## Truth hierarchy
+
+1. Git refs and ancestry
+2. GitHub PR / check state
+3. `plans/shiplog-swarm/promotion-state.toml` (this promotion's source of truth)
+4. Generated reports (`target/source-of-truth/*`, this file)
+5. Historical archive (`plans/shiplog-swarm/implementation-plan.md`)
 
 ## Topology boundary
 
 - Product development remains authoritative in `EffortlessMetrics/shiplog-swarm`.
-- `policy/source-only-paths.toml` explicitly approves the source-only `.github/dependabot.yml` governance surface.
-- Unknown source-only paths and all changed product paths remain drift.
 - Source promotion uses a regular merge commit; do not squash.
 - Release authority, tags, publishing, signing, and release workflows remain in `EffortlessMetrics/shiplog`.
 
-## Verification
-
-```bash
-rtk git fetch origin --prune
-rtk git fetch swarm --prune
-rtk git merge-base origin/main swarm/main
-rtk cargo xtask repo-contract-report
-rtk git diff --check
-```
-
 ## Next action
 
-Use the next substantive swarm PR to carry these receipts. Do not create a
-receipt-only refresh PR. The bounded-manifest follow-up remains issue #241.
+Prepare the next source promotion for the pending swarm range with `cargo xtask promote --swarm-sha $(git rev-parse swarm/main)`. Carry these receipts in the next substantive swarm PR; do not open a receipt-only refresh PR.

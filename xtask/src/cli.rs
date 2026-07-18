@@ -63,6 +63,10 @@ enum Command {
     /// Verify and prepare an idempotent source promotion branch.
     Promote(PromoteArgs),
 
+    /// Validate the bounded promotion-state manifest and generate
+    /// `plans/shiplog-swarm/current-promotion.md` from it.
+    PromotionState(PromotionStateArgs),
+
     /// Generate source-of-truth closeout and archived-goal artifacts.
     Closeout(CloseoutArgs),
 
@@ -239,6 +243,14 @@ pub struct PromoteArgs {
 }
 
 #[derive(Debug, Args)]
+pub struct PromotionStateArgs {
+    /// Validate the manifest and verify the checked-in
+    /// `current-promotion.md` matches it, instead of regenerating the file.
+    #[arg(long)]
+    pub check: bool,
+}
+
+#[derive(Debug, Args)]
 pub struct CloseoutArgs {
     /// Goal ID expected in `.codex/goals/active.toml`.
     #[arg(long)]
@@ -384,6 +396,9 @@ impl Cli {
                 branch: args.branch,
                 output: args.output,
             }),
+            Command::PromotionState(args) => {
+                tasks::promotion_state::run(&workspace_root, args.check)
+            }
             Command::Closeout(args) => tasks::closeout::run(tasks::closeout::CloseoutInputs {
                 workspace_root,
                 goal: args.goal,
