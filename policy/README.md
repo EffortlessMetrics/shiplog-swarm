@@ -27,6 +27,7 @@ the master rollout doc at
 | `network-allowlist.toml` | policy | file-policy checker (#149) |
 | `publish-allowlist.toml` | release | package-boundary audit and publish scripts |
 | `ripr-suppressions.toml` | policy | ripr lane (#153) |
+| `source-only-paths.toml` | repo-infra/release | `repo-contract-report`; exact-path source governance classification |
 
 ## Common receipt fields
 
