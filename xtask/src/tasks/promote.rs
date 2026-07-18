@@ -12,6 +12,7 @@ use std::process::Command;
 use super::promotion_body;
 
 const SWARM_REPO: &str = "EffortlessMetrics/shiplog-swarm";
+const SOURCE_REPO: &str = "EffortlessMetrics/shiplog";
 const ROUTED_WORKFLOW: &str = "EM CI Routed Shiplog Rust";
 const REQUIRED_RESULT: &str = "Shiplog Rust Small Result";
 
@@ -104,6 +105,39 @@ struct PromotePlan {
     source_pr: Option<String>,
     dry_run: bool,
     next_actions: Vec<String>,
+    planned_mutations: Vec<PlannedMutation>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+enum PlannedMutation {
+    WriteReceipt {
+        path: String,
+    },
+    WritePromotionBody {
+        path: String,
+    },
+    PushBranch {
+        remote: String,
+        ref_name: String,
+        refspec: String,
+        current_target: Option<String>,
+        disposition: MutationDisposition,
+    },
+    CreateOrUpdatePullRequest {
+        repository: String,
+        base: String,
+        head: String,
+        disposition: MutationDisposition,
+    },
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "kebab-case")]
+enum MutationDisposition {
+    Required,
+    AlreadyCurrent,
+    Deferred,
 }
 
 pub fn run(inputs: PromoteInputs) -> Result<()> {
@@ -218,6 +252,32 @@ fn run_with_port_to(
         "Open a regular-merge source promotion PR from the branch; do not squash.".to_string(),
         "After merge, run `cargo xtask repo-contract-report`.".to_string(),
     ];
+    let receipt_path = receipt_path_for_output(&inputs.output);
+    let planned_mutations = vec![
+        PlannedMutation::WriteReceipt {
+            path: portable_display(&inputs.workspace_root, &receipt_path),
+        },
+        PlannedMutation::WritePromotionBody {
+            path: portable_display(&inputs.workspace_root, &inputs.output),
+        },
+        PlannedMutation::PushBranch {
+            remote: inputs.source_remote.clone(),
+            ref_name: format!("refs/heads/{branch}"),
+            refspec: format!("{swarm_sha}:refs/heads/{branch}"),
+            current_target: (!existing_sha.is_empty()).then(|| existing_sha.to_string()),
+            disposition: if existing_sha == swarm_sha {
+                MutationDisposition::AlreadyCurrent
+            } else {
+                MutationDisposition::Required
+            },
+        },
+        PlannedMutation::CreateOrUpdatePullRequest {
+            repository: SOURCE_REPO.to_string(),
+            base: "main".to_string(),
+            head: branch.clone(),
+            disposition: MutationDisposition::Deferred,
+        },
+    ];
     let plan = PromotePlan {
         swarm_head: swarm_sha.clone(),
         source_ref: inputs.source_ref.clone(),
@@ -232,6 +292,7 @@ fn run_with_port_to(
         source_pr: None,
         dry_run: inputs.dry_run,
         next_actions,
+        planned_mutations,
     };
     if inputs.dry_run {
         let json = serde_json::to_string_pretty(&plan).context("promote: serialize plan")?;
@@ -351,14 +412,10 @@ fn extract_trailing_pr_number(subject: &str) -> Option<u64> {
 /// Write the machine-readable promotion plan next to the generated body and
 /// return its path. `output` is the generated-body file path (the same value
 /// `promotion_body` writes to); the receipt is placed in that file's parent
-/// directory. This is a build artifact under `target/`, not a tracked
-/// mutation, so it is emitted in `--dry-run` too.
+/// directory. Dry-run reports this exact target but returns before calling this
+/// writer.
 fn write_plan_receipt(workspace_root: &Path, output: &Path, plan: &PromotePlan) -> Result<PathBuf> {
-    let receipt_path = output
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."))
-        .join("promote-receipt.json");
+    let receipt_path = receipt_path_for_output(output);
     let absolute = if receipt_path.is_absolute() {
         receipt_path.clone()
     } else {
@@ -372,6 +429,14 @@ fn write_plan_receipt(workspace_root: &Path, output: &Path, plan: &PromotePlan) 
     fs::write(&absolute, format!("{json}\n"))
         .with_context(|| format!("promote: write {}", absolute.display()))?;
     Ok(absolute)
+}
+
+fn receipt_path_for_output(output: &Path) -> PathBuf {
+    output
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."))
+        .join("promote-receipt.json")
 }
 
 fn load_promotion_state(workspace_root: &Path) -> Result<PromotionState> {
@@ -458,12 +523,18 @@ fn find_latest_promotion_merge(
     loop {
         let parents = port.git_output(workspace_root, &["show", "-s", "--format=%P", &cursor])?;
         let parents: Vec<_> = parents.split_whitespace().collect();
+        if governance_commits.contains(&cursor) {
+            let first = parents.first().with_context(|| {
+                format!("promote: approved source governance commit {cursor} has no parent")
+            })?;
+            cursor = (*first).to_string();
+            continue;
+        }
         match parents.as_slice() {
-            [first, second] if *second == promoted_swarm_head => return Ok(cursor),
+            [_first, second] if *second == promoted_swarm_head => return Ok(cursor),
             [_first, _second] => bail!(
                 "promote: source commit {cursor} is an unexpected merge, not the recorded regular promotion checkpoint"
             ),
-            [first] if governance_commits.contains(&cursor) => cursor = (*first).to_string(),
             [..] => bail!(
                 "promote: unapproved source divergence at {cursor}; only recorded source governance may follow the latest promotion merge"
             ),
@@ -482,10 +553,8 @@ fn green_swarm_receipt(
         SWARM_REPO,
         "--workflow",
         ROUTED_WORKFLOW,
-        "--branch",
-        "main",
-        "--limit",
-        "20",
+        "--commit",
+        swarm_sha,
         "--json",
         "databaseId,headSha,status,conclusion",
     ])?;
@@ -606,6 +675,10 @@ fn display_path(workspace_root: &Path, path: &Path) -> String {
         .unwrap_or_else(|_| path.display().to_string())
 }
 
+fn portable_display(workspace_root: &Path, path: &Path) -> String {
+    display_path(workspace_root, path).replace('\\', "/")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -615,13 +688,19 @@ mod tests {
 
     struct StubPort {
         gh: RefCell<VecDeque<std::result::Result<Vec<u8>, String>>>,
+        gh_calls: RefCell<Vec<Vec<String>>>,
+        remote_target: Option<String>,
         fail_merge_base: bool,
     }
 
     impl PromotePort for StubPort {
         fn git_output(&self, workspace_root: &Path, args: &[&str]) -> Result<String> {
             if args.first() == Some(&"ls-remote") {
-                return Ok(String::new());
+                return Ok(self
+                    .remote_target
+                    .as_ref()
+                    .map(|target| format!("{target}\t{}", args.last().unwrap_or(&"")))
+                    .unwrap_or_default());
             }
             if self.fail_merge_base && args.first() == Some(&"merge-base") {
                 bail!("stub merge-base failure");
@@ -633,7 +712,10 @@ mod tests {
             SystemPort.git_status(workspace_root, args)
         }
 
-        fn gh_output(&self, _args: &[&str]) -> Result<Vec<u8>> {
+        fn gh_output(&self, args: &[&str]) -> Result<Vec<u8>> {
+            self.gh_calls
+                .borrow_mut()
+                .push(args.iter().map(|arg| (*arg).to_string()).collect());
             match self.gh.borrow_mut().pop_front() {
                 Some(Ok(output)) => Ok(output),
                 Some(Err(message)) => bail!("stub gh: {message}"),
@@ -650,6 +732,14 @@ mod tests {
     }
 
     fn fixture_git() -> Result<GitFixture> {
+        fixture_git_with_governance_shape(false)
+    }
+
+    fn fixture_git_with_merge_governance() -> Result<GitFixture> {
+        fixture_git_with_governance_shape(true)
+    }
+
+    fn fixture_git_with_governance_shape(merge_governance: bool) -> Result<GitFixture> {
         let dir = tempfile::tempdir()?;
         git_fixture(dir.path(), &["init", "--initial-branch=base"])?;
         git_fixture(dir.path(), &["config", "user.email", "test@example.com"])?;
@@ -673,9 +763,27 @@ mod tests {
             dir.path(),
             &["merge", "--no-ff", "promoted", "-m", "Merge promotion #655"],
         )?;
-        fs::write(dir.path().join("governance.txt"), "approved\n")?;
-        git_fixture(dir.path(), &["add", "governance.txt"])?;
-        git_fixture(dir.path(), &["commit", "-m", "chore: governance (#656)"])?;
+        if merge_governance {
+            git_fixture(dir.path(), &["switch", "-c", "governance-side"])?;
+            fs::write(dir.path().join("governance.txt"), "approved\n")?;
+            git_fixture(dir.path(), &["add", "governance.txt"])?;
+            git_fixture(dir.path(), &["commit", "-m", "chore: governance payload"])?;
+            git_fixture(dir.path(), &["switch", "source"])?;
+            git_fixture(
+                dir.path(),
+                &[
+                    "merge",
+                    "--no-ff",
+                    "governance-side",
+                    "-m",
+                    "chore: governance (#656)",
+                ],
+            )?;
+        } else {
+            fs::write(dir.path().join("governance.txt"), "approved\n")?;
+            git_fixture(dir.path(), &["add", "governance.txt"])?;
+            git_fixture(dir.path(), &["commit", "-m", "chore: governance (#656)"])?;
+        }
         let governance = git_fixture(dir.path(), &["rev-parse", "HEAD"])?;
         fs::create_dir_all(dir.path().join("plans/shiplog-swarm"))?;
         fs::write(
@@ -725,6 +833,8 @@ mod tests {
                 )
                 .into_bytes()),
             ])),
+            gh_calls: RefCell::new(Vec::new()),
+            remote_target: None,
             fail_merge_base: false,
         }
     }
@@ -749,8 +859,65 @@ mod tests {
         let port = stub_port(&fixture, true, true);
         let inputs = fixture_inputs(&fixture);
         let target = fixture.dir.path().join("target");
-        run_with_port(&port, inputs)?;
+        let mut output = Vec::new();
+        run_with_port_to(&port, inputs, &mut output)?;
+        let plan: serde_json::Value = serde_json::from_slice(&output)?;
+        let branch = format!("promote/swarm-current-{}", &fixture.current[..12]);
+        ensure!(
+            plan["planned_mutations"]
+                == serde_json::json!([
+                    {
+                        "kind": "write-receipt",
+                        "path": "target/source-of-truth/promote-receipt.json"
+                    },
+                    {
+                        "kind": "write-promotion-body",
+                        "path": "target/source-of-truth/promotion-body.md"
+                    },
+                    {
+                        "kind": "push-branch",
+                        "remote": "origin",
+                        "ref_name": format!("refs/heads/{branch}"),
+                        "refspec": format!("{}:refs/heads/{branch}", fixture.current),
+                        "current_target": null,
+                        "disposition": "required"
+                    },
+                    {
+                        "kind": "create-or-update-pull-request",
+                        "repository": "EffortlessMetrics/shiplog",
+                        "base": "main",
+                        "head": branch,
+                        "disposition": "deferred"
+                    }
+                ])
+        );
         ensure!(!target.exists());
+        Ok(())
+    }
+
+    #[test]
+    fn planner_follows_first_parent_of_approved_merge_governance() -> Result<()> {
+        let fixture = fixture_git_with_merge_governance()?;
+        let port = stub_port(&fixture, true, true);
+        let mut output = Vec::new();
+        run_with_port_to(&port, fixture_inputs(&fixture), &mut output)?;
+        let plan: serde_json::Value = serde_json::from_slice(&output)?;
+        ensure!(plan["last_promoted_swarm_head"] == fixture.promoted);
+        Ok(())
+    }
+
+    #[test]
+    fn planner_records_already_current_branch_target() -> Result<()> {
+        let fixture = fixture_git()?;
+        let mut port = stub_port(&fixture, true, true);
+        port.remote_target = Some(fixture.current.clone());
+        let mut output = Vec::new();
+        run_with_port_to(&port, fixture_inputs(&fixture), &mut output)?;
+        let plan: serde_json::Value = serde_json::from_slice(&output)?;
+        let push = &plan["planned_mutations"][2];
+        ensure!(push["current_target"] == fixture.current);
+        ensure!(push["disposition"] == "already-current");
+        ensure!(!fixture.dir.path().join("target").exists());
         Ok(())
     }
 
@@ -775,6 +942,17 @@ mod tests {
         inputs.swarm_sha = fixture.promoted.clone();
         inputs.allow_historical = true;
         run_with_port(&port, inputs)?;
+        let calls = port.gh_calls.borrow();
+        let run_list = calls
+            .iter()
+            .find(|args| args.starts_with(&["run".to_string(), "list".to_string()]))
+            .context("expected exact-head run-list call")?;
+        ensure!(
+            run_list
+                .windows(2)
+                .any(|pair| pair == ["--commit", fixture.promoted.as_str()])
+        );
+        ensure!(!run_list.iter().any(|arg| arg == "--branch"));
         Ok(())
     }
 
@@ -799,6 +977,8 @@ mod tests {
         let fixture = fixture_git()?;
         let port = StubPort {
             gh: RefCell::new(VecDeque::from([Ok(b"not-json".to_vec())])),
+            gh_calls: RefCell::new(Vec::new()),
+            remote_target: None,
             fail_merge_base: false,
         };
         let error = run_with_port(&port, fixture_inputs(&fixture))
@@ -955,6 +1135,9 @@ mod tests {
             source_pr: None,
             dry_run: true,
             next_actions: vec!["Open a regular-merge source promotion PR.".to_string()],
+            planned_mutations: vec![PlannedMutation::WriteReceipt {
+                path: "target/source-of-truth/promote-receipt.json".to_string(),
+            }],
         };
         let path = write_plan_receipt(dir.path(), &output, &plan).unwrap();
         assert_eq!(
