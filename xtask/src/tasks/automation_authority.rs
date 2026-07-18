@@ -65,6 +65,11 @@ enum Effect {
 }
 
 pub fn run(workspace_root: &Path, role: RepositoryRole) -> Result<()> {
+    let role = ci_bound_role(
+        role,
+        std::env::var("GITHUB_ACTIONS").ok().as_deref(),
+        std::env::var("GITHUB_REPOSITORY").ok().as_deref(),
+    )?;
     let findings = inspect(workspace_root, role)?;
     if findings.is_empty() {
         println!("check-automation-authority ({role:?}): no findings");
@@ -81,8 +86,33 @@ pub fn run(workspace_root: &Path, role: RepositoryRole) -> Result<()> {
 
 pub fn run_pinned(workspace_root: &Path) -> Result<()> {
     let path = workspace_root.join("policy/automation-authority.toml");
-    let policy: Policy = toml::from_str(&fs::read_to_string(&path)?)?;
+    let policy: Policy = toml::from_str(
+        &fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?,
+    )
+    .with_context(|| format!("parse {}", path.display()))?;
     run(workspace_root, policy.repository_role)
+}
+
+fn ci_bound_role(
+    requested: RepositoryRole,
+    github_actions: Option<&str>,
+    repository: Option<&str>,
+) -> Result<RepositoryRole> {
+    if github_actions != Some("true") {
+        return Ok(requested);
+    }
+    let repository = repository.context("GITHUB_REPOSITORY is required in GitHub Actions")?;
+    let expected = match repository {
+        "EffortlessMetrics/shiplog-swarm" => RepositoryRole::Swarm,
+        "EffortlessMetrics/shiplog" => RepositoryRole::Source,
+        other => bail!("untrusted GitHub Actions repository identity {other:?}"),
+    };
+    if requested != expected {
+        bail!(
+            "requested/policy role {requested:?} does not match immutable GitHub repository identity {repository:?} ({expected:?})"
+        );
+    }
+    Ok(expected)
 }
 
 fn inspect(workspace_root: &Path, role: RepositoryRole) -> Result<Vec<String>> {
@@ -100,10 +130,11 @@ fn inspect(workspace_root: &Path, role: RepositoryRole) -> Result<Vec<String>> {
         ));
     }
 
-    let dependabot_text = fs::read_to_string(workspace_root.join(".github/dependabot.yml"))
-        .context("read .github/dependabot.yml")?;
-    let dependabot: Yaml =
-        serde_yaml::from_str(&dependabot_text).context("parse dependabot YAML")?;
+    let dependabot_path = workspace_root.join(".github/dependabot.yml");
+    let dependabot_text = fs::read_to_string(&dependabot_path)
+        .with_context(|| format!("read {}", dependabot_path.display()))?;
+    let dependabot: Yaml = serde_yaml::from_str(&dependabot_text)
+        .with_context(|| format!("parse YAML {}", dependabot_path.display()))?;
     let updates = yaml_get(&dependabot, "updates").and_then(Yaml::as_sequence);
     match role {
         RepositoryRole::Swarm if updates.is_none_or(Vec::is_empty) => findings
@@ -115,8 +146,12 @@ fn inspect(workspace_root: &Path, role: RepositoryRole) -> Result<Vec<String>> {
     }
 
     let workflows = workspace_root.join(".github/workflows");
-    for entry in fs::read_dir(&workflows).context("read .github/workflows")? {
-        let path = entry?.path();
+    for entry in
+        fs::read_dir(&workflows).with_context(|| format!("read {}", workflows.display()))?
+    {
+        let path = entry
+            .with_context(|| format!("read directory entry in {}", workflows.display()))?
+            .path();
         if matches!(
             path.extension().and_then(|value| value.to_str()),
             Some("yml" | "yaml")
@@ -207,21 +242,14 @@ fn inspect_workflow(path: &Path, role: RepositoryRole, findings: &mut Vec<String
     let text = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
     let yaml: Yaml = serde_yaml::from_str(&text)
         .with_context(|| format!("parse workflow YAML {}", path.display()))?;
-    let scheduled = yaml_get(&yaml, "on")
-        .and_then(|on| yaml_get(on, "schedule"))
-        .is_some();
-    let callable = yaml_get(&yaml, "on")
-        .and_then(|on| yaml_get(on, "workflow_call"))
-        .is_some();
     let top_permissions = yaml_get(&yaml, "permissions");
     let jobs = yaml_get(&yaml, "jobs")
         .and_then(Yaml::as_mapping)
-        .context("workflow jobs must be a mapping")?;
+        .with_context(|| format!("workflow jobs must be a mapping in {}", path.display()))?;
     for (job_name, job) in jobs {
         let job_name = job_name.as_str().unwrap_or("<unknown>");
         let effective = yaml_get(job, "permissions").or(top_permissions);
         let contents = permission(effective, "contents");
-        let pull_requests = permission(effective, "pull-requests");
         let source_writer =
             name == "release.yml" && matches!(job_name, "create-release" | "upload-assets");
         match role {
@@ -245,21 +273,29 @@ fn inspect_workflow(path: &Path, role: RepositoryRole, findings: &mut Vec<String
             }
             _ => {}
         }
-        if role == RepositoryRole::Source
-            && (scheduled || callable)
-            && pull_requests == Some("write")
-        {
-            findings.push(format!(
-                "source scheduled/reusable workflow {name:?} job {job_name:?} enables pull-request writes"
-            ));
+        if role == RepositoryRole::Source {
+            for scope in write_scopes(effective) {
+                if !(source_writer && scope == "contents") {
+                    findings.push(format!(
+                        "source workflow {name:?} job {job_name:?} enables forbidden {scope}: write"
+                    ));
+                }
+            }
         }
         let mut strings = Vec::new();
         collect_strings(job, &mut strings);
         for value in strings {
-            if mutation_marker(value)
-                && !(role == RepositoryRole::Source && source_writer)
-                && !(role == RepositoryRole::Swarm && name != "release.yml")
-            {
+            let mutation = mutation_kind(value);
+            let allowed = match mutation {
+                None => true,
+                Some(MutationKind::ReleaseOperation) => {
+                    role == RepositoryRole::Source && source_writer
+                }
+                Some(MutationKind::AlternateCredentialOrMutation) => {
+                    role == RepositoryRole::Swarm && name != "release.yml"
+                }
+            };
+            if !allowed {
                 findings.push(format!(
                     "workflow {name:?} job {job_name:?} contains forbidden mutation path {value:?}"
                 ));
@@ -283,6 +319,18 @@ fn permission<'a>(permissions: Option<&'a Yaml>, key: &str) -> Option<&'a str> {
     }
 }
 
+fn write_scopes(permissions: Option<&Yaml>) -> Vec<String> {
+    match permissions {
+        Some(Yaml::String(value)) if value == "write-all" => vec!["write-all".to_string()],
+        Some(Yaml::Mapping(values)) => values
+            .iter()
+            .filter(|(_, value)| value.as_str() == Some("write"))
+            .map(|(key, _)| key.as_str().unwrap_or("<non-string>").to_string())
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
 fn collect_strings<'a>(value: &'a Yaml, output: &mut Vec<&'a str>) {
     match value {
         Yaml::String(value) => output.push(value),
@@ -297,22 +345,33 @@ fn collect_strings<'a>(value: &'a Yaml, output: &mut Vec<&'a str>) {
     }
 }
 
-fn mutation_marker(value: &str) -> bool {
+#[derive(Clone, Copy)]
+enum MutationKind {
+    ReleaseOperation,
+    AlternateCredentialOrMutation,
+}
+
+fn mutation_kind(value: &str) -> Option<MutationKind> {
     let lower = value.to_ascii_lowercase();
+    if ["softprops/action-gh-release", "gh release create"]
+        .iter()
+        .any(|marker| lower.contains(marker))
+    {
+        return Some(MutationKind::ReleaseOperation);
+    }
     [
         "git push",
         "gh pr create",
         "create-pull-request",
         "create-github-app-token",
-        "softprops/action-gh-release",
         "cargo publish",
-        "gh release create",
         "personal_access_token",
         "app_token",
         "pat_token",
     ]
     .iter()
     .any(|marker| lower.contains(marker))
+    .then_some(MutationKind::AlternateCredentialOrMutation)
 }
 
 #[cfg(test)]
@@ -487,6 +546,70 @@ mod tests {
                 .filter(|finding| finding.contains("forbidden mutation path"))
                 .count()
                 >= 2
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn ci_repository_identity_cannot_be_overridden() -> Result<()> {
+        ensure!(
+            ci_bound_role(
+                RepositoryRole::Swarm,
+                Some("true"),
+                Some("EffortlessMetrics/shiplog-swarm")
+            )? == RepositoryRole::Swarm
+        );
+        ensure!(
+            ci_bound_role(
+                RepositoryRole::Source,
+                Some("true"),
+                Some("EffortlessMetrics/shiplog-swarm")
+            )
+            .is_err()
+        );
+        ensure!(
+            ci_bound_role(
+                RepositoryRole::Swarm,
+                Some("true"),
+                Some("fork/shiplog-swarm")
+            )
+            .is_err()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn source_rejects_every_non_contents_write_scope() -> Result<()> {
+        let dir = fixture(RepositoryRole::Source, false)?;
+        fs::write(
+            dir.path().join(".github/workflows/agent.yml"),
+            "on: workflow_dispatch\npermissions:\n  contents: read\n  issues: write\n  id-token: write\njobs:\n  mutate:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo no\n",
+        )?;
+        let findings = inspect(dir.path(), RepositoryRole::Source)?;
+        ensure!(findings.iter().any(|finding| finding.contains("issues")));
+        ensure!(findings.iter().any(|finding| finding.contains("id-token")));
+        Ok(())
+    }
+
+    #[test]
+    fn source_release_writer_rejects_alternate_mutation_paths() -> Result<()> {
+        let dir = fixture(RepositoryRole::Source, false)?;
+        fs::write(
+            dir.path().join(".github/workflows/release.yml"),
+            "on: workflow_dispatch\npermissions:\n  contents: read\njobs:\n  create-release:\n    permissions:\n      contents: write\n    steps:\n      - uses: softprops/action-gh-release@pinned\n      - run: git push origin HEAD:main\n        env:\n          PAT_TOKEN: secret\n  upload-assets:\n    permissions:\n      contents: write\n",
+        )?;
+        let findings = inspect(dir.path(), RepositoryRole::Source)?;
+        ensure!(
+            findings
+                .iter()
+                .filter(|finding| finding.contains("forbidden mutation path"))
+                .count()
+                >= 2
+        );
+        ensure!(
+            !findings
+                .iter()
+                .any(|finding| finding.contains("softprops/action-gh-release"))
         );
         Ok(())
     }
