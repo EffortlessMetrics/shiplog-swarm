@@ -234,10 +234,16 @@ fn extract_trailing_pr_number(subject: &str) -> Option<u64> {
 }
 
 /// Write the machine-readable promotion plan next to the generated body and
-/// return its path. This is a build artifact under `target/`, not a tracked
+/// return its path. `output` is the generated-body file path (the same value
+/// `promotion_body` writes to); the receipt is placed in that file's parent
+/// directory. This is a build artifact under `target/`, not a tracked
 /// mutation, so it is emitted in `--dry-run` too.
 fn write_plan_receipt(workspace_root: &Path, output: &Path, plan: &PromotePlan) -> Result<PathBuf> {
-    let receipt_path = output.with_file_name("promote-receipt.json");
+    let receipt_path = output
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."))
+        .join("promote-receipt.json");
     let absolute = if receipt_path.is_absolute() {
         receipt_path.clone()
     } else {
