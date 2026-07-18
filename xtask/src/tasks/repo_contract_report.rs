@@ -336,16 +336,14 @@ struct BranchProtectionContractReport {
 #[derive(Debug, Serialize)]
 struct ReceiptFreshnessReport {
     status: String,
+    manifest_present: bool,
     latest_source_promotion_merge: Option<String>,
     latest_source_promotion_receipt: Option<String>,
-    latest_source_receipt_in_active_goal: Option<bool>,
-    latest_source_receipt_in_plan: Option<bool>,
+    latest_source_receipt_in_manifest: Option<bool>,
     latest_swarm_head: Option<String>,
     latest_swarm_receipt: Option<String>,
-    latest_swarm_receipt_in_active_goal: Option<bool>,
-    latest_swarm_receipt_in_plan: Option<bool>,
-    missing_active_goal_receipts: Vec<String>,
-    missing_plan_receipts: Vec<String>,
+    latest_swarm_receipt_in_manifest: Option<bool>,
+    missing_manifest_receipts: Vec<String>,
     notes: Vec<String>,
     next_actions: Vec<String>,
 }
@@ -363,7 +361,7 @@ pub fn run(workspace_root: &Path) -> Result<()> {
     let routed_ci_health = inspect_routed_ci_health(workspace_root);
     let promotion_pr_contract = inspect_promotion_pr_contract(workspace_root, &git_topology);
     let branch_protection_contract = inspect_branch_protection_contract(workspace_root);
-    let receipt_freshness = inspect_receipt_freshness(workspace_root, &goal, &git_topology);
+    let receipt_freshness = inspect_receipt_freshness(workspace_root, &git_topology);
 
     let output_dir = workspace_root.join("target").join("source-of-truth");
     fs::create_dir_all(&output_dir).with_context(|| format!("create {}", output_dir.display()))?;
@@ -2271,11 +2269,19 @@ fn branch_protection_next_actions(status: &str) -> Vec<String> {
 
 fn inspect_receipt_freshness(
     workspace_root: &Path,
-    goal: &ActiveGoal,
     git_topology: &GitTopologyReport,
 ) -> ReceiptFreshnessReport {
     let mut notes = Vec::new();
-    let plan_text = load_plan_texts(workspace_root, goal, &mut notes);
+    let manifest = match crate::tasks::promotion_state::load_optional(workspace_root) {
+        Ok(manifest) => manifest,
+        Err(err) => {
+            notes.push(format!(
+                "bounded promotion-state manifest {} is malformed: {err:#}",
+                crate::tasks::promotion_state::MANIFEST_REL
+            ));
+            None
+        }
+    };
 
     let latest_source_promotion_merge = git_topology.source_ahead_promotion_merges.first().cloned();
     let latest_source_promotion_receipt = latest_source_promotion_merge
@@ -2303,64 +2309,68 @@ fn inspect_receipt_freshness(
         })
         .map(|number| github_receipt(SWARM_REPO, number));
 
-    let latest_source_receipt_in_active_goal =
-        receipt_presence_in_goal(goal, latest_source_promotion_receipt.as_deref());
-    let latest_source_receipt_in_plan =
-        receipt_presence_in_text(&plan_text, latest_source_promotion_receipt.as_deref());
-    let latest_swarm_receipt_in_active_goal =
-        receipt_presence_in_goal(goal, latest_swarm_receipt.as_deref());
-    let latest_swarm_receipt_in_plan =
-        receipt_presence_in_text(&plan_text, latest_swarm_receipt.as_deref());
+    // The bounded manifest is the single manually maintained authority for
+    // recorded promotion receipts; the active goal and implementation plan are
+    // no longer scanned for receipt presence.
+    let latest_source_receipt_in_manifest = manifest.as_ref().and_then(|state| {
+        latest_source_promotion_receipt
+            .as_deref()
+            .map(|receipt| state.recorded_receipts().iter().any(|r| r == receipt))
+    });
+    let latest_swarm_receipt_in_manifest = manifest.as_ref().and_then(|state| {
+        latest_swarm_receipt
+            .as_deref()
+            .map(|receipt| manifest_knows_receipt(state, receipt))
+    });
 
-    let mut missing_active_goal_receipts = Vec::new();
+    let mut missing_manifest_receipts = Vec::new();
     push_missing_receipt(
-        &mut missing_active_goal_receipts,
+        &mut missing_manifest_receipts,
         latest_source_promotion_receipt.as_deref(),
-        latest_source_receipt_in_active_goal,
+        latest_source_receipt_in_manifest,
     );
     push_missing_receipt(
-        &mut missing_active_goal_receipts,
+        &mut missing_manifest_receipts,
         latest_swarm_receipt.as_deref(),
-        latest_swarm_receipt_in_active_goal,
-    );
-
-    let mut missing_plan_receipts = Vec::new();
-    push_missing_receipt(
-        &mut missing_plan_receipts,
-        latest_source_promotion_receipt.as_deref(),
-        latest_source_receipt_in_plan,
-    );
-    push_missing_receipt(
-        &mut missing_plan_receipts,
-        latest_swarm_receipt.as_deref(),
-        latest_swarm_receipt_in_plan,
+        latest_swarm_receipt_in_manifest,
     );
 
     let mut required = Vec::new();
-    if let Some(value) = latest_source_receipt_in_active_goal {
+    if manifest.is_none() {
+        notes.push(format!(
+            "bounded promotion-state manifest {} is absent; receipt freshness is unavailable",
+            crate::tasks::promotion_state::MANIFEST_REL
+        ));
+    }
+    if let Some(value) = latest_source_receipt_in_manifest {
         required.push(value);
-    } else {
+    } else if manifest.is_some() {
         notes.push(
             "latest source promotion PR could not be inferred from source promotion commits"
                 .to_string(),
         );
     }
-    if let Some(value) = latest_source_receipt_in_plan {
+    if let Some(value) = latest_swarm_receipt_in_manifest {
         required.push(value);
-    }
-    if let Some(value) = latest_swarm_receipt_in_active_goal {
-        required.push(value);
-    } else {
+    } else if manifest.is_some() {
         notes.push("latest swarm PR could not be inferred from swarm/main head".to_string());
     }
-    if let Some(value) = latest_swarm_receipt_in_plan {
-        required.push(value);
-    }
 
-    let status = receipt_freshness_status(&required, latest_swarm_head.as_deref()).to_string();
-    if status == "pending-next-substantive-pr" {
+    // A missing receipt that the manifest explicitly defers is a carry-forward
+    // for the next substantive PR, not stale drift.
+    let deferred_missing = manifest.as_ref().is_some_and(|state| {
+        missing_manifest_receipts
+            .iter()
+            .any(|receipt| state.is_deferred(receipt))
+    });
+
+    let mut status = receipt_freshness_status(&required, latest_swarm_head.as_deref()).to_string();
+    if status == "stale" && deferred_missing {
+        status = "pending-substantive-carry".to_string();
+    }
+    if status == "pending-substantive-carry" {
         notes.push(
-            "latest swarm head is a receipt refresh; self-referential receipts should be carried by the next substantive swarm PR"
+            "receipts are pending carry-forward by the next substantive swarm PR; do not open a receipt-only refresh PR"
                 .to_string(),
         );
     }
@@ -2369,19 +2379,32 @@ fn inspect_receipt_freshness(
 
     ReceiptFreshnessReport {
         status,
+        manifest_present: manifest.is_some(),
         latest_source_promotion_merge,
         latest_source_promotion_receipt,
-        latest_source_receipt_in_active_goal,
-        latest_source_receipt_in_plan,
+        latest_source_receipt_in_manifest,
         latest_swarm_head,
         latest_swarm_receipt,
-        latest_swarm_receipt_in_active_goal,
-        latest_swarm_receipt_in_plan,
-        missing_active_goal_receipts,
-        missing_plan_receipts,
+        latest_swarm_receipt_in_manifest,
+        missing_manifest_receipts,
         notes,
         next_actions,
     }
+}
+
+/// A receipt is "known" to the manifest when it belongs to the latest
+/// completed promotion slice (recorded or deferred) or is tracked as pending
+/// swarm work.
+fn manifest_knows_receipt(
+    manifest: &crate::tasks::promotion_state::PromotionState,
+    receipt: &str,
+) -> bool {
+    manifest.carries_receipt(receipt)
+        || manifest
+            .pending
+            .swarm_pr_range
+            .iter()
+            .any(|value| value == receipt)
 }
 
 fn push_missing_receipt(
@@ -2398,9 +2421,8 @@ fn push_missing_receipt(
 
 fn receipt_freshness_missing_receipts(report: &ReceiptFreshnessReport) -> Vec<String> {
     report
-        .missing_active_goal_receipts
+        .missing_manifest_receipts
         .iter()
-        .chain(report.missing_plan_receipts.iter())
         .cloned()
         .collect::<BTreeSet<_>>()
         .into_iter()
@@ -2413,7 +2435,7 @@ fn receipt_freshness_status(required: &[bool], latest_swarm_head: Option<&str>) 
     } else if required.iter().all(|present| *present) {
         "current"
     } else if is_receipt_refresh_head(latest_swarm_head) {
-        "pending-next-substantive-pr"
+        "pending-substantive-carry"
     } else {
         "stale"
     }
@@ -2439,38 +2461,6 @@ fn is_receipt_refresh_head(latest_swarm_head: Option<&str>) -> bool {
     let update_action =
         subject.contains("update") || subject.contains("updates") || subject.contains("updated");
     (refresh_action || record_action || update_action) && (receipt_word || receipt_ledger)
-}
-
-fn load_plan_texts(workspace_root: &Path, goal: &ActiveGoal, notes: &mut Vec<String>) -> String {
-    let mut text = String::new();
-    for plan in goal
-        .work_item
-        .iter()
-        .map(|item| item.plan.trim())
-        .filter(|plan| !plan.is_empty())
-    {
-        match fs::read_to_string(workspace_root.join(plan)) {
-            Ok(plan_text) => {
-                text.push_str(&plan_text);
-                text.push('\n');
-            }
-            Err(err) => notes.push(format!("read {plan} failed: {err}")),
-        }
-    }
-    text
-}
-
-fn receipt_presence_in_goal(goal: &ActiveGoal, receipt: Option<&str>) -> Option<bool> {
-    let receipt = receipt?;
-    Some(
-        goal.work_item
-            .iter()
-            .any(|item| item.receipts.iter().any(|value| value == receipt)),
-    )
-}
-
-fn receipt_presence_in_text(text: &str, receipt: Option<&str>) -> Option<bool> {
-    receipt.map(|receipt| text.contains(receipt))
 }
 
 fn github_receipt(repo: &str, number: u64) -> String {
@@ -2550,19 +2540,19 @@ fn parse_leading_number(text: &str) -> Option<u64> {
 fn receipt_freshness_next_actions(status: &str) -> Vec<String> {
     match status {
         "current" => vec![
-            "Latest completed source promotion and swarm PR receipts are recorded in the active goal and plan."
+            "Latest completed source promotion and swarm PR receipts are recorded in `plans/shiplog-swarm/promotion-state.toml`."
                 .to_string(),
         ],
         "stale" => vec![
-            "Record the latest completed source promotion and swarm PR receipts in `.codex/goals/active.toml` and `plans/shiplog-swarm/implementation-plan.md` during the next substantive swarm PR."
+            "Update the latest completed source promotion and swarm PR receipts in the bounded manifest `plans/shiplog-swarm/promotion-state.toml`, then regenerate `current-promotion.md` with `cargo xtask promotion-state`."
                 .to_string(),
         ],
-        "pending-next-substantive-pr" => vec![
-            "The latest swarm change is itself a receipt refresh; carry these self-referential receipts in the next substantive swarm PR instead of opening another receipt-only loop."
+        "pending-substantive-carry" => vec![
+            "Outstanding receipts are a self-referential refresh or explicitly deferred; carry them in the next substantive swarm PR instead of opening another receipt-only loop."
                 .to_string(),
         ],
         _ => vec![
-            "Verify source promotion and swarm PR subjects, then refresh receipt records manually if needed."
+            "Ensure the bounded manifest `plans/shiplog-swarm/promotion-state.toml` exists and run from a promotion checkout with `origin` (source) and `swarm` remotes, then rerun `rtk cargo xtask repo-contract-report`."
                 .to_string(),
         ],
     }
@@ -3918,6 +3908,11 @@ fn render_markdown(report: &RepoContractReport) -> String {
     push_row(&mut out, "Status", &report.receipt_freshness.status);
     push_row(
         &mut out,
+        "Manifest present",
+        &report.receipt_freshness.manifest_present.to_string(),
+    );
+    push_row(
+        &mut out,
         "Latest source promotion merge",
         report
             .receipt_freshness
@@ -3936,17 +3931,8 @@ fn render_markdown(report: &RepoContractReport) -> String {
     );
     push_row(
         &mut out,
-        "Source receipt in active goal",
-        &bool_opt(
-            &report
-                .receipt_freshness
-                .latest_source_receipt_in_active_goal,
-        ),
-    );
-    push_row(
-        &mut out,
-        "Source receipt in plan",
-        &bool_opt(&report.receipt_freshness.latest_source_receipt_in_plan),
+        "Source receipt in manifest",
+        &bool_opt(&report.receipt_freshness.latest_source_receipt_in_manifest),
     );
     push_row(
         &mut out,
@@ -3968,28 +3954,15 @@ fn render_markdown(report: &RepoContractReport) -> String {
     );
     push_row(
         &mut out,
-        "Swarm receipt in active goal",
-        &bool_opt(&report.receipt_freshness.latest_swarm_receipt_in_active_goal),
+        "Swarm receipt in manifest",
+        &bool_opt(&report.receipt_freshness.latest_swarm_receipt_in_manifest),
     );
     push_row(
         &mut out,
-        "Swarm receipt in plan",
-        &bool_opt(&report.receipt_freshness.latest_swarm_receipt_in_plan),
-    );
-    push_row(
-        &mut out,
-        "Missing active goal receipts",
+        "Missing manifest receipts",
         &format!(
             "{} item(s)",
-            report.receipt_freshness.missing_active_goal_receipts.len()
-        ),
-    );
-    push_row(
-        &mut out,
-        "Missing plan receipts",
-        &format!(
-            "{} item(s)",
-            report.receipt_freshness.missing_plan_receipts.len()
+            report.receipt_freshness.missing_manifest_receipts.len()
         ),
     );
     push_row(
@@ -4009,13 +3982,8 @@ fn render_markdown(report: &RepoContractReport) -> String {
     );
     push_markdown_list(
         &mut out,
-        "Missing active goal receipts",
-        &report.receipt_freshness.missing_active_goal_receipts,
-    );
-    push_markdown_list(
-        &mut out,
-        "Missing plan receipts",
-        &report.receipt_freshness.missing_plan_receipts,
+        "Missing manifest receipts",
+        &report.receipt_freshness.missing_manifest_receipts,
     );
     push_markdown_bullets(
         &mut out,
@@ -5499,12 +5467,12 @@ Merge this PR with a regular merge commit; do not squash.
         assert!(
             actions
                 .iter()
-                .any(|action| action.contains(".codex/goals/active.toml"))
+                .any(|action| action.contains("plans/shiplog-swarm/promotion-state.toml"))
         );
         assert!(
             actions
                 .iter()
-                .any(|action| action.contains("plans/shiplog-swarm/implementation-plan.md"))
+                .any(|action| action.contains("cargo xtask promotion-state"))
         );
     }
 
@@ -5515,7 +5483,7 @@ Merge this PR with a regular merge commit; do not squash.
             Some("37ad2c5 docs(swarm): refresh promotion receipts (#88)"),
         );
 
-        assert_eq!(status, "pending-next-substantive-pr");
+        assert_eq!(status, "pending-substantive-carry");
         let actions = receipt_freshness_next_actions(status);
         assert!(
             actions
@@ -5531,7 +5499,7 @@ Merge this PR with a regular merge commit; do not squash.
             Some("e270c48 docs: refresh promotion receipts (#139)"),
         );
 
-        assert_eq!(status, "pending-next-substantive-pr");
+        assert_eq!(status, "pending-substantive-carry");
     }
 
     #[test]
@@ -5541,7 +5509,7 @@ Merge this PR with a regular merge commit; do not squash.
             Some("b046873 docs(swarm): refresh native-deps promotion receipts (#104)"),
         );
 
-        assert_eq!(status, "pending-next-substantive-pr");
+        assert_eq!(status, "pending-substantive-carry");
     }
 
     #[test]
@@ -5551,7 +5519,7 @@ Merge this PR with a regular merge commit; do not squash.
             Some("e86bcde docs(swarm): refresh branch cleanup receipts (#114)"),
         );
 
-        assert_eq!(status, "pending-next-substantive-pr");
+        assert_eq!(status, "pending-substantive-carry");
     }
 
     #[test]
@@ -5561,7 +5529,7 @@ Merge this PR with a regular merge commit; do not squash.
             Some("8efda78 docs(swarm): record workflow admission receipts (#133)"),
         );
 
-        assert_eq!(status, "pending-next-substantive-pr");
+        assert_eq!(status, "pending-substantive-carry");
     }
 
     #[test]
@@ -5571,7 +5539,7 @@ Merge this PR with a regular merge commit; do not squash.
             Some("123abcd docs(swarm): update promotion ledger (#134)"),
         );
 
-        assert_eq!(status, "pending-next-substantive-pr");
+        assert_eq!(status, "pending-substantive-carry");
     }
 
     #[test]
@@ -5582,6 +5550,53 @@ Merge this PR with a regular merge commit; do not squash.
         );
 
         assert_eq!(status, "stale");
+    }
+
+    #[test]
+    fn manifest_knows_recorded_pending_and_deferred_receipts() {
+        let text = r#"
+schema_version = 1
+[latest_promotion]
+status = "completed"
+source_promotion_pr = "EffortlessMetrics/shiplog#655"
+promoted_swarm_head = "c4fdba22"
+source_governance = ["EffortlessMetrics/shiplog#656"]
+included_swarm_prs = ["EffortlessMetrics/shiplog-swarm#238"]
+[pending]
+swarm_pr_range = ["EffortlessMetrics/shiplog-swarm#253"]
+deferred_receipt_carry = ["EffortlessMetrics/shiplog-swarm#240"]
+"#;
+        let state: crate::tasks::promotion_state::PromotionState =
+            toml::from_str(text).expect("parse");
+
+        // Recorded promotion-slice receipts are known.
+        assert!(manifest_knows_receipt(
+            &state,
+            "EffortlessMetrics/shiplog#655"
+        ));
+        assert!(manifest_knows_receipt(
+            &state,
+            "EffortlessMetrics/shiplog#656"
+        ));
+        assert!(manifest_knows_receipt(
+            &state,
+            "EffortlessMetrics/shiplog-swarm#238"
+        ));
+        // Pending and deferred receipts are known (tracked, not stale drift).
+        assert!(manifest_knows_receipt(
+            &state,
+            "EffortlessMetrics/shiplog-swarm#253"
+        ));
+        assert!(manifest_knows_receipt(
+            &state,
+            "EffortlessMetrics/shiplog-swarm#240"
+        ));
+        assert!(state.is_deferred("EffortlessMetrics/shiplog-swarm#240"));
+        // An unrelated receipt is not known.
+        assert!(!manifest_knows_receipt(
+            &state,
+            "EffortlessMetrics/shiplog-swarm#999"
+        ));
     }
 
     #[test]

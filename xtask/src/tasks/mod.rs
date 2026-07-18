@@ -19,4 +19,5 @@ pub mod policy_report;
 pub mod pr_body;
 pub mod promote;
 pub mod promotion_body;
+pub mod promotion_state;
 pub mod repo_contract_report;
