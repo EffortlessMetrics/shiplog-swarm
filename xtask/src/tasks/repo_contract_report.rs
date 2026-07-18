@@ -2356,16 +2356,15 @@ fn inspect_receipt_freshness(
         notes.push("latest swarm PR could not be inferred from swarm/main head".to_string());
     }
 
-    // A missing receipt that the manifest explicitly defers is a carry-forward
-    // for the next substantive PR, not stale drift.
-    let deferred_missing = manifest.as_ref().is_some_and(|state| {
-        missing_manifest_receipts
-            .iter()
-            .any(|receipt| state.is_deferred(receipt))
-    });
+    // Missing receipts are a carry-forward (not stale drift) only when EVERY
+    // outstanding receipt is explicitly deferred. A single genuinely untracked
+    // receipt keeps the status stale even if another one is deferred.
+    let all_missing_deferred = manifest
+        .as_ref()
+        .is_some_and(|state| all_missing_receipts_deferred(state, &missing_manifest_receipts));
 
     let mut status = receipt_freshness_status(&required, latest_swarm_head.as_deref()).to_string();
-    if status == "stale" && deferred_missing {
+    if status == "stale" && all_missing_deferred {
         status = "pending-substantive-carry".to_string();
     }
     if status == "pending-substantive-carry" {
@@ -2405,6 +2404,16 @@ fn manifest_knows_receipt(
             .swarm_pr_range
             .iter()
             .any(|value| value == receipt)
+}
+
+/// True when there is at least one outstanding receipt and every one of them is
+/// explicitly deferred by the manifest. A single non-deferred missing receipt
+/// makes this false so genuine drift stays `stale`.
+fn all_missing_receipts_deferred(
+    manifest: &crate::tasks::promotion_state::PromotionState,
+    missing: &[String],
+) -> bool {
+    !missing.is_empty() && missing.iter().all(|receipt| manifest.is_deferred(receipt))
 }
 
 fn push_missing_receipt(
@@ -5597,6 +5606,37 @@ deferred_receipt_carry = ["EffortlessMetrics/shiplog-swarm#240"]
             &state,
             "EffortlessMetrics/shiplog-swarm#999"
         ));
+    }
+
+    #[test]
+    fn all_missing_deferred_requires_every_receipt_to_be_deferred() {
+        let text = r#"
+schema_version = 1
+[latest_promotion]
+status = "completed"
+source_promotion_pr = "EffortlessMetrics/shiplog#655"
+promoted_swarm_head = "c4fdba22"
+[pending]
+deferred_receipt_carry = ["EffortlessMetrics/shiplog#700"]
+"#;
+        let state: crate::tasks::promotion_state::PromotionState =
+            toml::from_str(text).expect("parse");
+
+        // Every outstanding receipt is deferred -> carry-forward.
+        assert!(all_missing_receipts_deferred(
+            &state,
+            &["EffortlessMetrics/shiplog#700".to_string()]
+        ));
+        // One deferred + one genuinely untracked receipt -> stays stale.
+        assert!(!all_missing_receipts_deferred(
+            &state,
+            &[
+                "EffortlessMetrics/shiplog#700".to_string(),
+                "EffortlessMetrics/shiplog-swarm#999".to_string(),
+            ]
+        ));
+        // No outstanding receipts -> not a carry-forward.
+        assert!(!all_missing_receipts_deferred(&state, &[]));
     }
 
     #[test]

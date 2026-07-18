@@ -9,8 +9,10 @@
 //! This task validates that manifest (failing closed on malformed state) and
 //! generates the human-readable `plans/shiplog-swarm/current-promotion.md`
 //! from it. `--check` verifies the manifest and that the checked-in generated
-//! Markdown matches what the manifest would produce, so drift is caught by CI
-//! rather than silently accumulating a second source of truth.
+//! Markdown matches what the manifest would produce. The same invariant is
+//! enforced inside the required `cargo test` gate by the
+//! `checked_in_current_promotion_md_matches_manifest` test, so a second source
+//! of truth cannot silently drift back in.
 
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
@@ -469,6 +471,23 @@ deferred_receipt_carry = ["EffortlessMetrics/shiplog-swarm#240"]
         assert!(state.carries_receipt("EffortlessMetrics/shiplog-swarm#240"));
         assert!(state.is_deferred("EffortlessMetrics/shiplog-swarm#240"));
         assert!(!state.is_deferred("EffortlessMetrics/shiplog#655"));
+    }
+
+    #[test]
+    fn checked_in_current_promotion_md_matches_manifest() {
+        // The workspace root is the parent of the xtask crate directory.
+        let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("xtask crate has a parent workspace directory");
+        let state = load(workspace_root).expect("load checked-in promotion-state manifest");
+        let expected = render_markdown(&state);
+        let actual = fs::read_to_string(workspace_root.join(GENERATED_REL))
+            .expect("read checked-in current-promotion.md");
+        assert_eq!(
+            actual, expected,
+            "plans/shiplog-swarm/current-promotion.md is out of sync with promotion-state.toml; \
+             regenerate it with `cargo xtask promotion-state`"
+        );
     }
 
     #[test]
