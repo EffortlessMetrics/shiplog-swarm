@@ -447,7 +447,7 @@ fn validate_source_only_paths_policy(
             || entry
                 .path
                 .split('/')
-                .any(|part| part.is_empty() || part == "..")
+                .any(|part| part.is_empty() || part == "." || part == "..")
         {
             bail!(
                 "source-only path must be a normalized, non-empty repository-relative path: {:?}",
@@ -2761,8 +2761,8 @@ fn topology_next_actions(
                 .to_string(),
         ),
         ("swarm-ahead", _, _) if !swarm_ahead.is_empty() => {}
-        ("source-ahead", _, "promotion-merge-only") => actions.push(
-            "No swarm promotion is pending; source is ahead only by promotion merge commits."
+        ("source-ahead", _, _) => actions.push(
+            "Stop normal promotion and inspect the source/swarm product diff before merging more work."
                 .to_string(),
         ),
         ("unavailable", _, _) => actions.push(
@@ -4968,9 +4968,11 @@ Merge this PR with a regular merge commit; do not squash.
         let today = NaiveDate::from_ymd_opt(2026, 7, 17).expect("valid date");
         let malformed = source_only_entry("../dependabot.yml", "2027-01-01");
         let expired = source_only_entry(".github/dependabot.yml", "2026-07-16");
+        let current_dir = source_only_entry(".github/./dependabot.yml", "2027-01-01");
 
         assert!(validate_source_only_paths_policy(&[malformed], today).is_err());
         assert!(validate_source_only_paths_policy(&[expired], today).is_err());
+        assert!(validate_source_only_paths_policy(&[current_dir], today).is_err());
     }
 
     #[test]
@@ -5090,6 +5092,19 @@ Merge this PR with a regular merge commit; do not squash.
             actions,
             vec![
                 "Continue normal development in `EffortlessMetrics/shiplog-swarm`; no source promotion is pending."
+            ]
+        );
+    }
+
+    #[test]
+    fn next_actions_stop_when_source_ahead_has_product_drift() {
+        let actions =
+            topology_next_actions("source-ahead", Some(false), "promotion-merge-only", &[], &[]);
+
+        assert_eq!(
+            actions,
+            vec![
+                "Stop normal promotion and inspect the source/swarm product diff before merging more work."
             ]
         );
     }
