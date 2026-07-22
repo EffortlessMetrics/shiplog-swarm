@@ -12,9 +12,21 @@
 
 ## Pending swarm work
 
+- `EffortlessMetrics/shiplog-swarm#247`
 - `EffortlessMetrics/shiplog-swarm#248`
+- `EffortlessMetrics/shiplog-swarm#249`
+- `EffortlessMetrics/shiplog-swarm#250`
 - `EffortlessMetrics/shiplog-swarm#251`
+- `EffortlessMetrics/shiplog-swarm#252`
 - `EffortlessMetrics/shiplog-swarm#253`
+- `EffortlessMetrics/shiplog-swarm#254`
+- `EffortlessMetrics/shiplog-swarm#255`
+- `EffortlessMetrics/shiplog-swarm#256`
+- `EffortlessMetrics/shiplog-swarm#257`
+- `EffortlessMetrics/shiplog-swarm#258`
+- `EffortlessMetrics/shiplog-swarm#259`
+- `EffortlessMetrics/shiplog-swarm#260`
+- `EffortlessMetrics/shiplog-swarm#261`
 
 ## Truth hierarchy
 
