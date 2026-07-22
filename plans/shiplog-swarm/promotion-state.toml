@@ -40,9 +40,21 @@ included_swarm_prs = ["EffortlessMetrics/shiplog-swarm#238"]
 [pending]
 # Merged swarm PRs after `promoted_swarm_head` that are not yet promoted.
 swarm_pr_range = [
+  "EffortlessMetrics/shiplog-swarm#247",
   "EffortlessMetrics/shiplog-swarm#248",
+  "EffortlessMetrics/shiplog-swarm#249",
+  "EffortlessMetrics/shiplog-swarm#250",
   "EffortlessMetrics/shiplog-swarm#251",
+  "EffortlessMetrics/shiplog-swarm#252",
   "EffortlessMetrics/shiplog-swarm#253",
+  "EffortlessMetrics/shiplog-swarm#254",
+  "EffortlessMetrics/shiplog-swarm#255",
+  "EffortlessMetrics/shiplog-swarm#256",
+  "EffortlessMetrics/shiplog-swarm#257",
+  "EffortlessMetrics/shiplog-swarm#258",
+  "EffortlessMetrics/shiplog-swarm#259",
+  "EffortlessMetrics/shiplog-swarm#260",
+  "EffortlessMetrics/shiplog-swarm#261",
 ]
 # Receipts explicitly deferred to a later substantive carry-forward. A
 # receipt listed here is treated as pending-substantive-carry, not stale.
