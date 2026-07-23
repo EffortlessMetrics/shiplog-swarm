@@ -4,6 +4,7 @@
 **Status:** completed; approved source governance follows the promotion
 **Promoted swarm head:** `c4fdba223d1c5c5b99a95b159ab8123d83d4b842`
 **Source promotion:** `EffortlessMetrics/shiplog#655`
+**Source merge commit:** `160d430f1a5af338537e35ff98b8ddda14d4673c`
 **Source governance:** `EffortlessMetrics/shiplog#656`
 
 ## Included work
@@ -27,6 +28,8 @@
 - `EffortlessMetrics/shiplog-swarm#259`
 - `EffortlessMetrics/shiplog-swarm#260`
 - `EffortlessMetrics/shiplog-swarm#261`
+- `EffortlessMetrics/shiplog-swarm#262`
+- `EffortlessMetrics/shiplog-swarm#269`
 
 ## Truth hierarchy
 

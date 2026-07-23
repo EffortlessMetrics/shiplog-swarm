@@ -27,7 +27,7 @@ status = "completed"
 disposition = "completed-with-governance"
 source_promotion_pr = "EffortlessMetrics/shiplog#655"
 # Regular-merge commit SHA on source main, once known. Empty until observed.
-source_merge_sha = ""
+source_merge_sha = "160d430f1a5af338537e35ff98b8ddda14d4673c"
 promoted_swarm_head = "c4fdba223d1c5c5b99a95b159ab8123d83d4b842"
 # Approved source-only governance receipts that accompany this promotion.
 source_governance = ["EffortlessMetrics/shiplog#656"]
@@ -55,6 +55,8 @@ swarm_pr_range = [
   "EffortlessMetrics/shiplog-swarm#259",
   "EffortlessMetrics/shiplog-swarm#260",
   "EffortlessMetrics/shiplog-swarm#261",
+  "EffortlessMetrics/shiplog-swarm#262",
+  "EffortlessMetrics/shiplog-swarm#269",
 ]
 # Receipts explicitly deferred to a later substantive carry-forward. A
 # receipt listed here is treated as pending-substantive-carry, not stale.
