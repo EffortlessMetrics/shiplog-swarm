@@ -277,15 +277,19 @@ cargo xtask repo-contract-report after merge.
 
 `--verify-only` is a read-only post-merge check: instead of preparing a branch
 it confirms the exact swarm head already landed on `--source-ref` as a
-regular-merge (two-parent) promotion checkpoint whose second parent is that
-head, with only approved source governance following it. It emits a
-machine-readable `mode: "verify-only"` receipt and fails closed if the promotion
-has not landed, landed squashed, or the source tree carries unapproved
-divergence. It performs no ref, PR, or file mutation. Because a promoted head is
-usually no longer current swarm/main by the time it is verified, `--verify-only`
-does not require `--allow-historical`; it still checks the head is reachable
-from `--swarm-ref`. Pair it with `cargo xtask repo-contract-report` to check
-source post-merge CI and topology alignment.
+regular-merge (two-parent) checkpoint whose second parent is that head. It emits
+a machine-readable `mode: "verify-only"` receipt (emitted only on success; a
+failed verification exits non-zero with no receipt) and fails closed if the
+promotion has not landed or was squash-merged. The landing is recognized even
+when later commits have already landed on source, so verification does not
+depend on `promotion-state.toml` being updated first. It performs no ref, PR, or
+file mutation and makes no `gh` calls. Because a promoted head is usually no
+longer current swarm/main by the time it is verified, `--verify-only` does not
+require `--allow-historical`; it still checks the head is reachable from
+`--swarm-ref`. `--dry-run` has no additional effect in this mode (verify-only is
+already read-only). Confirming source post-merge CI and whether the source tip
+carries unapproved divergence remains the job of
+`cargo xtask repo-contract-report`; pair the two.
 
 ### `cargo xtask closeout`
 
