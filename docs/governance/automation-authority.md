@@ -149,7 +149,8 @@ The matrix is a policy contract, not a convention. To change an effect:
 
 1. Edit [`policy/automation-authority.toml`](../../policy/automation-authority.toml)
    and update the expected matrix in
-   `xtask/src/tasks/automation_authority.rs` in the same change.
+   [`xtask/src/tasks/automation_authority.rs`](../../xtask/src/tasks/automation_authority.rs)
+   in the same change.
 2. Update this document's matrix and effect definitions to match.
 3. If the change makes a file legitimately differ between source and swarm, record
    it in [`policy/source-only-paths.toml`](../../policy/source-only-paths.toml) with
