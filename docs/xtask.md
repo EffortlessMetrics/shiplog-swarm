@@ -266,6 +266,7 @@ swarm=shiplog-swarm:
 
     rtk cargo xtask promote --swarm-sha <exact-swarm-sha> --dry-run
     rtk cargo xtask promote --swarm-sha <exact-swarm-sha>
+    rtk cargo xtask promote --swarm-sha <exact-swarm-sha> --verify-only
 
 The command checks shared ancestry and a completed successful
 Shiplog Rust Small Result run for the exact SHA, then creates or fast-forwards
@@ -273,6 +274,18 @@ promote/swarm-current-<sha> on the source remote and writes the existing
 promotion-body contract. It never merges, squashes, tags, publishes, or
 deploys. Open the generated PR with a regular merge commit and verify it with
 cargo xtask repo-contract-report after merge.
+
+`--verify-only` is a read-only post-merge check: instead of preparing a branch
+it confirms the exact swarm head already landed on `--source-ref` as a
+regular-merge (two-parent) promotion checkpoint whose second parent is that
+head, with only approved source governance following it. It emits a
+machine-readable `mode: "verify-only"` receipt and fails closed if the promotion
+has not landed, landed squashed, or the source tree carries unapproved
+divergence. It performs no ref, PR, or file mutation. Because a promoted head is
+usually no longer current swarm/main by the time it is verified, `--verify-only`
+does not require `--allow-historical`; it still checks the head is reachable
+from `--swarm-ref`. Pair it with `cargo xtask repo-contract-report` to check
+source post-merge CI and topology alignment.
 
 ### `cargo xtask closeout`
 
