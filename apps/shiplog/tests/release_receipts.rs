@@ -67,6 +67,18 @@ fn validate(run: &Path, receipts: bool) -> Command {
     cmd
 }
 
+/// Assert `--receipts` validation fails AND that it failed for the expected
+/// receipt-specific reason, so a future regression that fails at the same call
+/// site for an unrelated reason cannot pass silently.
+fn assert_receipts_reject(run: &Path, expected_error: &str) {
+    let assert = validate(run, true).assert().failure();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
+    assert!(
+        stderr.contains(expected_error),
+        "expected receipts failure to mention {expected_error:?}. stderr:\n{stderr}"
+    );
+}
+
 #[test]
 fn receipts_validation_accepts_a_healthy_cold_start_run() {
     let (_tmp, run) = cold_start_run();
@@ -82,7 +94,7 @@ fn receipts_validation_accepts_a_healthy_cold_start_run() {
 fn receipts_validation_rejects_malformed_coverage_manifest() {
     let (_tmp, run) = cold_start_run();
     fs::write(run.join("coverage.manifest.json"), "not valid json{").expect("corrupt coverage");
-    validate(&run, true).assert().failure();
+    assert_receipts_reject(&run, "coverage receipt");
 }
 
 #[test]
@@ -90,7 +102,7 @@ fn receipts_validation_rejects_malformed_bundle_manifest() {
     let (_tmp, run) = cold_start_run();
     // Valid JSON, but missing every required BundleManifest field.
     fs::write(run.join("bundle.manifest.json"), "{}").expect("corrupt bundle");
-    validate(&run, true).assert().failure();
+    assert_receipts_reject(&run, "bundle receipt");
 }
 
 #[test]
@@ -103,7 +115,7 @@ fn receipts_validation_rejects_malformed_ledger_line() {
         format!("{pristine}\nthis line is not a json event\n"),
     )
     .expect("corrupt ledger");
-    validate(&run, true).assert().failure();
+    assert_receipts_reject(&run, "is not a well-formed event record");
 }
 
 #[test]
@@ -114,7 +126,7 @@ fn receipts_validation_rejects_packet_missing_required_sections() {
         "# Something Else\n\nno required sections here\n",
     )
     .expect("corrupt packet");
-    validate(&run, true).assert().failure();
+    assert_receipts_reject(&run, "missing required section");
 }
 
 #[test]
