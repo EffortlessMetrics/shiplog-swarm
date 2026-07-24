@@ -25,6 +25,7 @@ pub struct PromoteInputs {
     pub source_remote: String,
     pub output: PathBuf,
     pub allow_historical: bool,
+    pub verify_only: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -207,6 +208,10 @@ fn run_with_port_to(
             &["rev-parse", &format!("{}^{{commit}}", inputs.swarm_ref)],
         )
         .with_context(|| format!("promote: resolve {}", inputs.swarm_ref))?;
+
+    if inputs.verify_only {
+        return run_verify_only(port, &inputs, &state, &swarm_sha, &swarm_ref_sha, output);
+    }
 
     if !inputs.allow_historical && swarm_sha != swarm_ref_sha {
         bail!(
@@ -427,6 +432,129 @@ fn run_with_port_to(
         "promote: after merge run cargo xtask repo-contract-report"
     )?;
     Ok(())
+}
+
+/// Machine-readable receipt for `--verify-only`: confirms that an exact swarm
+/// head already landed on the source ref as a regular-merge promotion
+/// checkpoint. Emitted only on success (a failed verification bails before this
+/// is constructed and exits non-zero). Deterministic for a given repository
+/// state; writes nothing.
+#[derive(Debug, Serialize)]
+struct PromoteVerification {
+    mode: &'static str,
+    swarm_head: String,
+    source_ref: String,
+    source_head: String,
+    last_promoted_swarm_head: String,
+    landed_merge: String,
+    included_swarm_prs: Vec<String>,
+    checks: Vec<String>,
+    next_actions: Vec<String>,
+}
+
+/// Read-only post-merge verification. Confirms the requested swarm head is
+/// reachable from the swarm ref and has landed on the source ref as a
+/// regular-merge (two-parent) checkpoint whose second parent is the exact swarm
+/// head. Fails closed if the promotion has not landed or was squash-merged.
+/// Performs no ref, PR, or file mutation, and makes no `gh` calls. It confirms
+/// only that the merge landed — checking source post-merge CI and whether the
+/// source tip carries unapproved divergence remains the job of
+/// `repo-contract-report`.
+fn run_verify_only(
+    port: &impl PromotePort,
+    inputs: &PromoteInputs,
+    state: &PromotionState,
+    swarm_sha: &str,
+    swarm_ref_sha: &str,
+    output: &mut dyn Write,
+) -> Result<()> {
+    ensure_ancestor_with_port(
+        port,
+        &inputs.workspace_root,
+        swarm_sha,
+        swarm_ref_sha,
+        "the verified swarm head must be reachable from the swarm ref",
+    )?;
+    let source_head = port
+        .git_output(
+            &inputs.workspace_root,
+            &["rev-parse", &format!("{}^{{commit}}", inputs.source_ref)],
+        )
+        .with_context(|| format!("promote: resolve {}", inputs.source_ref))?;
+    let landed_merge = find_regular_merge_landing(
+        port,
+        &inputs.workspace_root,
+        &source_head,
+        swarm_sha,
+    )?
+    .with_context(|| {
+        format!(
+            "promote: verify-only could not confirm a regular-merge checkpoint landing swarm head {swarm_sha} on {} (the promotion is unlanded or was squash-merged)",
+            inputs.source_ref
+        )
+    })?;
+    let included_swarm_prs = included_swarm_prs(
+        port,
+        &inputs.workspace_root,
+        &state.latest_promotion.promoted_swarm_head,
+        swarm_sha,
+    )?;
+    let verification = PromoteVerification {
+        mode: "verify-only",
+        swarm_head: swarm_sha.to_string(),
+        source_ref: inputs.source_ref.clone(),
+        source_head,
+        last_promoted_swarm_head: state.latest_promotion.promoted_swarm_head.clone(),
+        landed_merge: landed_merge.clone(),
+        included_swarm_prs,
+        checks: vec![
+            format!("swarm head {swarm_sha} is reachable from {}", inputs.swarm_ref),
+            format!(
+                "regular-merge checkpoint {landed_merge} reachable from {} has swarm head {swarm_sha} as its second parent",
+                inputs.source_ref
+            ),
+        ],
+        next_actions: vec![
+            "Run `cargo xtask repo-contract-report` to check source post-merge CI and topology alignment.".to_string(),
+        ],
+    };
+    let json =
+        serde_json::to_string_pretty(&verification).context("promote: serialize verification")?;
+    writeln!(output, "{json}").context("promote: write verification receipt")?;
+    Ok(())
+}
+
+/// Search the source history reachable from `source_head` for a regular
+/// two-parent merge whose second parent is exactly `swarm_sha` — the shape a
+/// non-squashed promotion checkpoint produces. Returns the newest such merge, or
+/// `None` when the head has not landed as a regular merge (unlanded or squashed,
+/// where `swarm_sha` is not a merged-in parent anywhere in source history).
+/// Later commits on top of the checkpoint do not hide the landing.
+fn find_regular_merge_landing(
+    port: &impl PromotePort,
+    workspace_root: &Path,
+    source_head: &str,
+    swarm_sha: &str,
+) -> Result<Option<String>> {
+    let output = port
+        .git_output(
+            workspace_root,
+            &["rev-list", "--merges", "--parents", source_head],
+        )
+        .with_context(|| {
+            format!("promote: enumerate merges reachable from source head {source_head}")
+        })?;
+    Ok(regular_merge_landing_from_rev_list(&output, swarm_sha))
+}
+
+fn regular_merge_landing_from_rev_list(output: &str, swarm_sha: &str) -> Option<String> {
+    output.lines().find_map(|line| {
+        // A promotion checkpoint is exactly "<merge> <parent1> <parent2>".
+        // Reject octopus merges even when the swarm head happens to be the
+        // second parent: they are not the required two-parent topology.
+        let fields = line.split_whitespace().collect::<Vec<_>>();
+        (fields.len() == 3 && fields[2] == swarm_sha).then(|| fields[0].to_string())
+    })
 }
 
 /// Enumerate the swarm PRs squash-merged between the last promoted source head
@@ -1015,6 +1143,134 @@ mod tests {
         git_output(workspace_root, args)
     }
 
+    /// Advance the fixture `source` branch by landing the swarm head (`current`)
+    /// as a regular two-parent merge, mirroring a completed promotion. Returns
+    /// the landed merge commit sha.
+    fn advance_source_with_regular_merge(fixture: &GitFixture) -> Result<String> {
+        git_fixture(fixture.dir.path(), &["switch", "source"])?;
+        git_fixture(
+            fixture.dir.path(),
+            &["merge", "--no-ff", "swarm", "-m", "Merge promotion #700"],
+        )?;
+        git_fixture(fixture.dir.path(), &["rev-parse", "HEAD"])
+    }
+
+    /// Advance the fixture `source` branch by landing the swarm head as a
+    /// single-parent (squash-shaped) commit instead of a regular merge.
+    fn advance_source_with_squash(fixture: &GitFixture) -> Result<String> {
+        git_fixture(fixture.dir.path(), &["switch", "source"])?;
+        fs::write(fixture.dir.path().join("squashed.txt"), "squashed\n")?;
+        git_fixture(fixture.dir.path(), &["add", "squashed.txt"])?;
+        git_fixture(
+            fixture.dir.path(),
+            &["commit", "-m", "feat: squashed promotion (#700)"],
+        )?;
+        git_fixture(fixture.dir.path(), &["rev-parse", "HEAD"])
+    }
+
+    fn verify_only_inputs(fixture: &GitFixture) -> PromoteInputs {
+        let mut inputs = fixture_inputs(fixture);
+        inputs.dry_run = false;
+        inputs.verify_only = true;
+        inputs
+    }
+
+    #[test]
+    fn verify_only_confirms_regular_merge_landed_with_expected_ancestry() -> Result<()> {
+        let fixture = fixture_git()?;
+        let landed = advance_source_with_regular_merge(&fixture)?;
+        let port = stub_port(&fixture, true, true);
+        let mut output = Vec::new();
+        run_with_port_to(&port, verify_only_inputs(&fixture), &mut output)?;
+        let receipt: serde_json::Value = serde_json::from_slice(&output)?;
+        ensure!(receipt["mode"] == "verify-only");
+        ensure!(receipt["landed_merge"] == landed);
+        ensure!(receipt["swarm_head"] == fixture.current);
+        ensure!(receipt["last_promoted_swarm_head"] == fixture.promoted);
+        ensure!(
+            receipt["included_swarm_prs"]
+                == serde_json::json!(["EffortlessMetrics/shiplog-swarm#255"])
+        );
+        // Read-only: no ref push, no PR create/edit, no on-disk artifacts.
+        ensure!(port.git_mutations.borrow().is_empty());
+        ensure!(!port.gh_calls.borrow().iter().any(|call| {
+            call.get(1)
+                .is_some_and(|action| action == "create" || action == "edit")
+        }));
+        ensure!(!fixture.dir.path().join("target").exists());
+        Ok(())
+    }
+
+    #[test]
+    fn verify_only_rejects_unlanded_promotion() -> Result<()> {
+        // Source still points at the previous checkpoint; the swarm head has
+        // not landed as a merge whose second parent is the requested head.
+        let fixture = fixture_git()?;
+        let port = stub_port(&fixture, true, true);
+        let error = run_with_port_to(&port, verify_only_inputs(&fixture), &mut Vec::new())
+            .expect_err("unlanded promotion must fail closed");
+        ensure!(error.chain().any(|cause| {
+            cause
+                .to_string()
+                .contains("could not confirm a regular-merge checkpoint")
+        }));
+        ensure!(port.git_mutations.borrow().is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn verify_only_rejects_squash_shaped_landing() -> Result<()> {
+        let fixture = fixture_git()?;
+        advance_source_with_squash(&fixture)?;
+        let port = stub_port(&fixture, true, true);
+        let error = run_with_port_to(&port, verify_only_inputs(&fixture), &mut Vec::new())
+            .expect_err("squash-shaped landing must fail closed");
+        ensure!(error.chain().any(|cause| {
+            cause
+                .to_string()
+                .contains("could not confirm a regular-merge checkpoint")
+        }));
+        ensure!(port.git_mutations.borrow().is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn verify_only_confirms_landing_despite_later_source_commits() -> Result<()> {
+        // A genuine regular-merge landing must still verify after unrelated
+        // commits land on source before promotion-state.toml is updated.
+        let fixture = fixture_git()?;
+        let landed = advance_source_with_regular_merge(&fixture)?;
+        git_fixture(fixture.dir.path(), &["switch", "source"])?;
+        fs::write(fixture.dir.path().join("later.txt"), "later\n")?;
+        git_fixture(fixture.dir.path(), &["add", "later.txt"])?;
+        git_fixture(
+            fixture.dir.path(),
+            &["commit", "-m", "chore: later source commit (#701)"],
+        )?;
+        let port = stub_port(&fixture, true, true);
+        let mut output = Vec::new();
+        run_with_port_to(&port, verify_only_inputs(&fixture), &mut output)?;
+        let receipt: serde_json::Value = serde_json::from_slice(&output)?;
+        // The landing is still recognized as the earlier merge, not the tip.
+        ensure!(receipt["landed_merge"] == landed);
+        ensure!(receipt["source_head"] != landed);
+        ensure!(port.git_mutations.borrow().is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn verify_only_rejects_octopus_merge_shaped_landing() -> Result<()> {
+        let output = "\
+merge-new source-parent requested-swarm-head unrelated-parent
+merge-old source-parent another-swarm-head
+";
+        ensure!(
+            regular_merge_landing_from_rev_list(output, "requested-swarm-head").is_none(),
+            "octopus merge must not satisfy the two-parent promotion contract"
+        );
+        Ok(())
+    }
+
     fn stub_port(fixture: &GitFixture, run_success: bool, job_success: bool) -> StubPort {
         stub_port_for_head(fixture, &fixture.current, run_success, job_success)
     }
@@ -1062,6 +1318,7 @@ mod tests {
             source_remote: "origin".to_string(),
             output: PathBuf::from("target/source-of-truth/promotion-body.md"),
             allow_historical: false,
+            verify_only: false,
         }
     }
 
