@@ -544,18 +544,17 @@ fn find_regular_merge_landing(
         .with_context(|| {
             format!("promote: enumerate merges reachable from source head {source_head}")
         })?;
-    for line in output.lines() {
-        // Each line is "<merge> <parent1> <parent2> [<parent3>...]".
-        let mut fields = line.split_whitespace();
-        let Some(merge) = fields.next() else {
-            continue;
-        };
-        let _first_parent = fields.next();
-        if fields.next() == Some(swarm_sha) {
-            return Ok(Some(merge.to_string()));
-        }
-    }
-    Ok(None)
+    Ok(regular_merge_landing_from_rev_list(&output, swarm_sha))
+}
+
+fn regular_merge_landing_from_rev_list(output: &str, swarm_sha: &str) -> Option<String> {
+    output.lines().find_map(|line| {
+        // A promotion checkpoint is exactly "<merge> <parent1> <parent2>".
+        // Reject octopus merges even when the swarm head happens to be the
+        // second parent: they are not the required two-parent topology.
+        let fields = line.split_whitespace().collect::<Vec<_>>();
+        (fields.len() == 3 && fields[2] == swarm_sha).then(|| fields[0].to_string())
+    })
 }
 
 /// Enumerate the swarm PRs squash-merged between the last promoted source head
@@ -1256,6 +1255,19 @@ mod tests {
         ensure!(receipt["landed_merge"] == landed);
         ensure!(receipt["source_head"] != landed);
         ensure!(port.git_mutations.borrow().is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn verify_only_rejects_octopus_merge_shaped_landing() -> Result<()> {
+        let output = "\
+merge-new source-parent requested-swarm-head unrelated-parent
+merge-old source-parent another-swarm-head
+";
+        ensure!(
+            regular_merge_landing_from_rev_list(output, "requested-swarm-head").is_none(),
+            "octopus merge must not satisfy the two-parent promotion contract"
+        );
         Ok(())
     }
 
