@@ -4233,7 +4233,8 @@ fn validate_run_receipts(run_dir: &Path) -> Result<usize> {
     let packet_path = run_dir.join("packet.md");
     let packet = std::fs::read_to_string(&packet_path)
         .with_context(|| format!("read receipt {}", packet_path.display()))?;
-    ensure_no_secret_sentinels("packet markdown", &packet)?;
+    ensure_no_secret_sentinels("packet markdown", &packet)
+        .with_context(|| format!("packet receipt {}", packet_path.display()))?;
     for section in PACKET_REQUIRED_SECTIONS {
         if !packet.contains(section) {
             anyhow::bail!(
