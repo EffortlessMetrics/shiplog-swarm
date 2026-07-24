@@ -19,9 +19,9 @@ token operations.
 When working from a checkout that has both remotes:
 
 ```bash
-rtk git fetch origin --prune
-rtk git fetch swarm --prune
-rtk git switch -c <branch> swarm/main
+git fetch origin --prune
+git fetch swarm --prune
+git switch -c <branch> swarm/main
 ```
 
 Push normal development branches to `swarm` and open PRs against
@@ -115,7 +115,7 @@ Weekly Monday 08:00 UTC full repository security scan.
 - Trigger: Schedule + manual workflow dispatch
 - Permissions: `contents: write` (for scan report publication)
 - Model: `custom:MiniMax-M3-0`
-- Threshold: Medium
+- Depth: `shallow`
 - Secrets: `FACTORY_API_KEY` and `MINIMAX_API_KEY`; runs skip if either is unavailable
 - Critical issues block; High issues reported only
 
