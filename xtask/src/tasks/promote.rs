@@ -771,17 +771,17 @@ fn parse_promotion_checkpoint(
             "promote: overlay {second_parent} is parented on {overlay_parent}, not the checkpoint's first parent {first_parent}"
         );
     }
-    // Validated when present. Overlays only record a resolution plan once one
-    // exists, so an overlay without the trailer is still a valid checkpoint; a
-    // malformed one never is.
-    let resolution_plan_id = overlay_trailer(&message, OVERLAY_PLAN_TRAILER);
-    if let Some(plan_id) = &resolution_plan_id
-        && (plan_id.len() != 40 || !plan_id.chars().all(|c| c.is_ascii_hexdigit()))
-    {
+    // Required now that every overlay records the plan it was built from, so a
+    // hand-made commit cannot pass by carrying only the two head trailers.
+    let plan_id = overlay_trailer(&message, OVERLAY_PLAN_TRAILER).with_context(|| {
+        format!("promote: overlay {second_parent} carries no {OVERLAY_PLAN_TRAILER} trailer")
+    })?;
+    if plan_id.len() != 40 || !plan_id.chars().all(|c| c.is_ascii_hexdigit()) {
         bail!(
             "promote: overlay {second_parent} records a malformed resolution plan id {plan_id:?}"
         );
     }
+    let resolution_plan_id = Some(plan_id);
     Ok(PromotionCheckpoint {
         merge_sha: merge_sha.to_string(),
         source_parent: first_parent.to_string(),
@@ -1146,10 +1146,10 @@ impl ResolutionBasis {
             Self::SourceChangeNotInSwarm {
                 source_pr: Some(receipt),
             } => format!(
-                "{path}: swarm does not carry {receipt}'s change; port it to swarm, or make the path source-authoritative in {SOURCE_ONLY_PATH_POLICY}"
+                "{path}: swarm does not carry {receipt}'s change; port it to swarm and record it as equivalent or superseded, or make the path source-authoritative in {SOURCE_ONLY_PATH_POLICY}"
             ),
             Self::SourceChangeNotInSwarm { source_pr: None } => format!(
-                "{path}: only source changed this, so promoting would revert it; record a transition receipt or make it source-authoritative"
+                "{path}: only source changed this, so promoting would revert it; port the change to swarm and record it as equivalent or superseded, or make the path source-authoritative in {SOURCE_ONLY_PATH_POLICY}"
             ),
             Self::UnprovenTwoSided => format!(
                 "{path}: both repositories changed this path with no receipt proving they are reconciled"
@@ -1254,7 +1254,11 @@ fn plan_path_resolutions(
             } else {
                 (PathEffect::TakeSource, ResolutionBasis::SourceOnlyPolicy)
             }
-        } else if let Some(receipt) = transition_authority.two_sided.get(path.as_str()) {
+        } else if let Some(receipt) = transition_authority
+            .two_sided
+            .get(path.as_str())
+            .filter(|_| touched_by_source && touched_by_swarm)
+        {
             (
                 PathEffect::TakeSwarm,
                 ResolutionBasis::ResolvedTransition {
@@ -1327,11 +1331,14 @@ fn tree_blobs(
     workspace_root: &Path,
     revision: &str,
 ) -> Result<BTreeMap<String, String>> {
+    // NUL-delimited: path identity is part of the promotion authority contract,
+    // so a path containing whitespace, a tab, or a quote must not be able to
+    // reshape the parse.
     let output = port
-        .git_output(workspace_root, &["ls-tree", "-r", revision])
+        .git_output(workspace_root, &["ls-tree", "-rz", "--full-tree", revision])
         .with_context(|| format!("promote: read tree of {revision}"))?;
     let mut blobs = BTreeMap::new();
-    for entry in output.lines() {
+    for entry in output.split('\0').filter(|entry| !entry.is_empty()) {
         // "<mode> <type> <oid>\t<path>"
         let Some((meta, path)) = entry.split_once('\t') else {
             continue;
@@ -1349,11 +1356,18 @@ fn git_diff_names(
     left: &str,
     right: &str,
 ) -> Result<Vec<String>> {
-    let output = port.git_output(workspace_root, &["diff", "--name-only", left, right])?;
+    // NUL-delimited, and renames disabled. A path containing whitespace or a
+    // quote must not reshape the parse, and a rename reported as one entry would
+    // hide what is really a deletion plus an addition, each of which needs its
+    // own resolution.
+    let output = port.git_output(
+        workspace_root,
+        &["diff", "--name-only", "--no-renames", "-z", left, right],
+    )?;
     Ok(output
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-        .map(|line| line.to_string())
+        .split('\0')
+        .filter(|entry| !entry.is_empty())
+        .map(str::to_string)
         .collect())
 }
 
@@ -1466,20 +1480,54 @@ fn prepare_source_overlay(
             &commit_env,
         )?;
         let overlay_sha = git(&["rev-parse", "HEAD"])?;
-        // The invariant that closes the silent-discard class: the overlay may
-        // differ from the swarm tree only on paths the plan resolved to source.
-        // Anything else it dropped, reverted, or reintroduced surfaces here no
-        // matter which step got it wrong. Containment rather than equality,
-        // because a resolved path whose content already matches swarm correctly
-        // produces no difference at all.
-        let drifted = git(&["diff", "--name-only", &overlay_sha, swarm_sha])?;
-        let drifted = drifted.lines().map(str::to_string).collect::<BTreeSet<_>>();
-        let permitted = take_source.iter().cloned().collect::<BTreeSet<_>>();
-        let unexpected = drifted.difference(&permitted).collect::<Vec<_>>();
-        if !unexpected.is_empty() {
-            bail!(
-                "promote: overlay {overlay_sha} changes {unexpected:?} relative to swarm {swarm_sha}, which the resolution plan did not permit"
-            );
+        // The invariant that closes the silent-discard class. Every path in any of
+        // the three trees is checked by blob, not by name: a resolved path must
+        // hold the exact source blob (or be absent exactly as source has it), and
+        // every other path must hold the exact swarm blob. Comparing which names
+        // differ would accept a resolved path holding wrong content, since its
+        // name is permitted to differ. This fully specifies the overlay tree, so
+        // anything dropped, reverted, or reintroduced surfaces here no matter
+        // which step got it wrong.
+        let read_blobs = |revision: &str| -> Result<BTreeMap<String, String>> {
+            let listing = git(&["ls-tree", "-rz", "--full-tree", revision])?;
+            Ok(listing
+                .split('\0')
+                .filter(|entry| !entry.is_empty())
+                .filter_map(|entry| {
+                    // "<mode> <type> <oid>	<path>"
+                    let (meta, path) = entry.split_once('\t')?;
+                    Some((
+                        path.to_string(),
+                        meta.split_whitespace().nth(2)?.to_string(),
+                    ))
+                })
+                .collect())
+        };
+        let overlay_blobs = read_blobs(&overlay_sha)?;
+        let source_blobs = read_blobs(source_head)?;
+        let swarm_blobs = read_blobs(swarm_sha)?;
+        let resolved_to_source = take_source.iter().cloned().collect::<BTreeSet<_>>();
+        let mut paths = BTreeSet::new();
+        paths.extend(overlay_blobs.keys().cloned());
+        paths.extend(source_blobs.keys().cloned());
+        paths.extend(swarm_blobs.keys().cloned());
+        for path in paths {
+            let expected = if resolved_to_source.contains(&path) {
+                source_blobs.get(&path)
+            } else {
+                swarm_blobs.get(&path)
+            };
+            let actual = overlay_blobs.get(&path);
+            if actual != expected {
+                let side = if resolved_to_source.contains(&path) {
+                    "source"
+                } else {
+                    "swarm"
+                };
+                bail!(
+                    "promote: overlay {overlay_sha} holds {actual:?} at {path}, but the resolution plan requires the {side} blob {expected:?}"
+                );
+            }
         }
         Ok(overlay_sha)
     })();
@@ -2366,6 +2414,103 @@ merge-old source-parent another-swarm-head
         Ok(())
     }
 
+    /// A resolved receipt reconciles a divergence both sides made. It must not
+    /// keep applying once the shape changes: a later source-only change to an
+    /// already-reconciled path would otherwise be waved through as take-swarm and
+    /// silently reverted, which is the exact failure the unified planner exists
+    /// to remove.
+    #[test]
+    fn a_stale_resolved_receipt_does_not_cover_a_later_source_only_change() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let root = dir.path();
+        git_fixture(root, &["init", "--initial-branch=main"])?;
+        git_fixture(root, &["config", "user.email", "test@example.com"])?;
+        git_fixture(root, &["config", "user.name", "Promotion Test"])?;
+        fs::write(root.join("shared.toml"), "base\n")?;
+        git_fixture(root, &["add", "-A"])?;
+        git_fixture(root, &["commit", "-m", "base"])?;
+        let base = git_fixture(root, &["rev-parse", "HEAD"])?;
+
+        git_fixture(root, &["switch", "-c", "swarm"])?;
+        fs::write(root.join("unrelated.txt"), "swarm\n")?;
+        git_fixture(root, &["add", "-A"])?;
+        git_fixture(root, &["commit", "-m", "feat: unrelated swarm work"])?;
+        let swarm_sha = git_fixture(root, &["rev-parse", "HEAD"])?;
+
+        // Only source changes the already-reconciled path this time.
+        git_fixture(root, &["switch", "main"])?;
+        fs::write(root.join("shared.toml"), "later source change\n")?;
+        git_fixture(root, &["add", "-A"])?;
+        git_fixture(root, &["commit", "-m", "fix: later source change"])?;
+        let source_head = git_fixture(root, &["rev-parse", "HEAD"])?;
+
+        // A receipt that legitimately reconciled shared.toml previously.
+        let mut authority = super::super::transition::TransitionAuthority::default();
+        authority.two_sided.insert(
+            "shared.toml".to_string(),
+            super::super::transition::ResolvedReceipt {
+                source_pr: "EffortlessMetrics/shiplog#657".to_string(),
+                swarm_chain: vec!["EffortlessMetrics/shiplog-swarm#269".to_string()],
+                disposition: super::super::promotion_state::TransitionDisposition::Equivalent,
+            },
+        );
+
+        let error = resolve_paths(root, &source_head, &swarm_sha, &base, &[], &authority)
+            .expect_err("a stale receipt must not cover a later source-only change");
+        ensure!(
+            error.to_string().contains("would revert it"),
+            "unexpected error: {error}"
+        );
+        Ok(())
+    }
+
+    /// The construction proof checks content, not just which names differ. A
+    /// resolved path holding the wrong blob would pass a name-set comparison
+    /// because its name is permitted to differ from swarm.
+    #[test]
+    fn construction_is_verified_by_blob_not_by_path_name() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let root = dir.path();
+        git_fixture(root, &["init", "--initial-branch=main"])?;
+        git_fixture(root, &["config", "user.email", "test@example.com"])?;
+        git_fixture(root, &["config", "user.name", "Promotion Test"])?;
+        fs::write(root.join("owned.toml"), "source version\n")?;
+        fs::write(root.join("product.txt"), "base\n")?;
+        git_fixture(root, &["add", "-A"])?;
+        git_fixture(root, &["commit", "-m", "base"])?;
+        let source_head = git_fixture(root, &["rev-parse", "HEAD"])?;
+
+        git_fixture(root, &["switch", "-c", "swarm"])?;
+        fs::write(root.join("owned.toml"), "swarm version\n")?;
+        fs::write(root.join("product.txt"), "swarm\n")?;
+        git_fixture(root, &["add", "-A"])?;
+        git_fixture(root, &["commit", "-m", "feat: swarm changes both"])?;
+        let swarm_sha = git_fixture(root, &["rev-parse", "HEAD"])?;
+
+        // Resolve owned.toml to source; the overlay must hold source's exact blob
+        // there and swarm's exact blob everywhere else.
+        let overlay = prepare_source_overlay(
+            &SystemPort,
+            root,
+            &source_head,
+            &swarm_sha,
+            &["owned.toml".to_string()],
+            "1234567890abcdef1234567890abcdef12345678",
+            false,
+        )?;
+        let owned = git_fixture(root, &["show", &format!("{}:owned.toml", overlay.sha)])?;
+        ensure!(
+            owned.trim() == "source version",
+            "resolved path should hold the source blob, got {owned:?}"
+        );
+        let product = git_fixture(root, &["show", &format!("{}:product.txt", overlay.sha)])?;
+        ensure!(
+            product.trim() == "swarm",
+            "unresolved path should hold the swarm blob, got {product:?}"
+        );
+        Ok(())
+    }
+
     /// A file swarm deleted must not survive in the overlay. Construction used to
     /// copy the swarm tree over the source worktree, which never removed a path
     /// swarm had deleted, so the promotion silently dropped that deletion. Found
@@ -2631,6 +2776,7 @@ merge-old source-parent another-swarm-head
             &fixture.governance,
             &fixture.current,
             &source_only_paths,
+            "1234567890abcdef1234567890abcdef12345678",
             false,
         )?;
         git_fixture(root, &["switch", "--detach", &fixture.governance])?;
@@ -2698,9 +2844,11 @@ merge-old source-parent another-swarm-head
 
         let error = find_regular_merge_landing(&SystemPort, root, &merged, &fixture.current)
             .expect_err("a commit whose parent is not the checkpoint's must be rejected");
+        let message = error.to_string();
         ensure!(
-            error.to_string().contains("is parented on"),
-            "unexpected error: {error}"
+            // Either proof is enough to refuse it: wrong parent, or no plan.
+            message.contains("is parented on") || message.contains("carries no"),
+            "unexpected error: {message}"
         );
         Ok(())
     }
@@ -2722,7 +2870,7 @@ merge-old source-parent another-swarm-head
             &fixture.governance,
             &fixture.current,
             &source_only_paths,
-            "test-plan",
+            "1234567890abcdef1234567890abcdef12345678",
             false,
         )?;
         ensure!(
@@ -2981,7 +3129,7 @@ merge-old source-parent another-swarm-head
             &fixture.governance,
             &fixture.current,
             &source_only_paths,
-            "test-plan",
+            "1234567890abcdef1234567890abcdef12345678",
             false,
         )?;
         ensure!(overlay.cleanup_warnings.is_empty());
@@ -3144,7 +3292,7 @@ merge-old source-parent another-swarm-head
             &fixture.governance,
             "0000000000000000000000000000000000000000",
             &source_only_paths,
-            "test-plan",
+            "1234567890abcdef1234567890abcdef12345678",
             false,
         )
         .expect_err("overlay against a missing swarm sha should fail");
@@ -3681,7 +3829,7 @@ merge-old source-parent another-swarm-head
             &fixture.governance,
             &fixture.current,
             &source_only_paths,
-            "test-plan",
+            "1234567890abcdef1234567890abcdef12345678",
             true,
         )?;
         let after = repository_state(root)?;
@@ -3717,7 +3865,7 @@ merge-old source-parent another-swarm-head
             &fixture.governance,
             &fixture.current,
             &source_only_paths,
-            "test-plan",
+            "1234567890abcdef1234567890abcdef12345678",
             false,
         )?;
         ensure!(
@@ -3765,7 +3913,7 @@ merge-old source-parent another-swarm-head
             &source_head,
             &swarm_sha,
             &["retired.toml".to_string()],
-            "test-plan",
+            "1234567890abcdef1234567890abcdef12345678",
             false,
         )?;
         ensure!(overlay.cleanup_warnings.is_empty());
