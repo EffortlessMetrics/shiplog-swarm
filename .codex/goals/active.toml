@@ -30,13 +30,13 @@ spec = "SHIPLOG-SPEC-0011"
 adr = "SHIPLOG-ADR-0011"
 plan = "plans/shiplog-swarm/implementation-plan.md"
 commands = [
-  "rtk git fetch origin --prune",
-  "rtk git fetch swarm --prune",
-  "rtk git merge-base origin/main swarm/main",
-  "rtk git log --oneline origin/main..swarm/main",
-  "rtk cargo xtask promotion-state --check",
-  "rtk cargo xtask repo-contract-report",
-  "rtk git diff --check",
+  "git fetch origin --prune",
+  "git fetch swarm --prune",
+  "git merge-base origin/main swarm/main",
+  "git log --oneline origin/main..swarm/main",
+  "cargo xtask promotion-state --check",
+  "cargo xtask repo-contract-report",
+  "git diff --check",
 ]
 
 # Current promotion state is owned by the single bounded manifest
