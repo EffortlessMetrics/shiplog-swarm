@@ -22,3 +22,4 @@ pub mod promote;
 pub mod promotion_body;
 pub mod promotion_state;
 pub mod repo_contract_report;
+pub mod transition;
