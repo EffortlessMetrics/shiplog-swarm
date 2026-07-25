@@ -3,7 +3,7 @@
 
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -24,6 +24,10 @@ const SOURCE_ONLY_PATH_POLICY: &str = "policy/source-only-paths.toml";
 const OVERLAY_SOURCE_TRAILER: &str = "Shiplog-Source-Head:";
 const OVERLAY_SWARM_TRAILER: &str = "Shiplog-Swarm-Head:";
 /// Content hash of the per-path resolution plan the overlay was built from.
+///
+/// A correlation id, not a proof: the canonical plan is written to the local
+/// receipt rather than into git history, so closeout can confirm the trailer is
+/// present and well-formed but cannot recompute it from the landed commit.
 const OVERLAY_PLAN_TRAILER: &str = "Shiplog-Resolution-Plan:";
 
 #[derive(Debug, Deserialize)]
@@ -159,10 +163,10 @@ struct PreparedOverlay {
 struct PromotePlan {
     swarm_head: String,
     prepared_overlay_sha: String,
-    /// Paths the overlay resolved in source's favour. Enumerated because this is
-    /// the direction a reader cannot infer: every other differing path keeps
-    /// swarm content, and any path that would have discarded either side's work
-    /// blocks the promotion instead of appearing here.
+    /// Every differing path with the exact blobs it was resolved against, the
+    /// effect the overlay applied, and the basis that entitled it.
+    path_decisions: Vec<PathDecision>,
+    /// Paths the overlay resolved in source's favour, for quick reading.
     overlay_source_paths: Vec<String>,
     /// Differing paths that kept swarm content.
     overlay_swarm_path_count: usize,
@@ -358,7 +362,7 @@ fn run_with_port_to(
     // Resolved before the overlay is built, so a promotion that cannot be
     // resolved never materializes a commit, and so overlay construction and
     // acceptance are driven by the same decision.
-    let overlay_plan = resolve_overlay_paths(
+    let overlay_plan = plan_path_resolutions(
         port,
         &inputs.workspace_root,
         &source_head,
@@ -367,6 +371,9 @@ fn run_with_port_to(
         &source_only_paths,
         &transition_authority,
     )?;
+    ensure_no_blocked_paths(&overlay_plan, output)?;
+    let take_source = overlay_plan.take_source();
+    let plan_id = resolution_plan_id(&overlay_plan)?;
     let PreparedOverlay {
         sha: prepared_overlay_sha,
         cleanup_warnings: overlay_cleanup_warnings,
@@ -375,7 +382,8 @@ fn run_with_port_to(
         &inputs.workspace_root,
         &source_head,
         &swarm_sha,
-        &overlay_plan.take_source,
+        &take_source,
+        &plan_id,
         // A planning-only run must not leave the overlay commit in the object
         // database; an executing run has to keep it so the push has something to
         // send.
@@ -473,8 +481,9 @@ fn run_with_port_to(
     let mut plan = PromotePlan {
         swarm_head: swarm_sha.clone(),
         prepared_overlay_sha: prepared_overlay_sha.clone(),
-        overlay_source_paths: overlay_plan.take_source.clone(),
-        overlay_swarm_path_count: overlay_plan.take_swarm,
+        overlay_source_paths: take_source.clone(),
+        overlay_swarm_path_count: overlay_plan.take_swarm_count(),
+        path_decisions: overlay_plan.decisions.clone(),
         overlay_cleanup_warnings,
         source_ref: inputs.source_ref.clone(),
         source_head,
@@ -1084,24 +1093,136 @@ fn normalized_source_only_path(path: &str) -> Result<String> {
     Ok(path.to_string())
 }
 
-/// Per-path decisions for one promotion.
+/// What the overlay does with one differing path.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+enum PathEffect {
+    /// The overlay restores the source content, including its absence.
+    TakeSource,
+    /// The overlay keeps the swarm content.
+    TakeSwarm,
+    /// The promotion is refused.
+    Block,
+}
+
+/// Why an effect was earned.
+///
+/// Recorded alongside the effect so the receipt answers both questions a reader
+/// has: what happened to this path, and what entitled it. An effect without a
+/// basis is indistinguishable from a guess.
+#[derive(Clone, Debug, Serialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+enum ResolutionBasis {
+    /// Listed in `policy/source-only-paths.toml`. The only basis that may select
+    /// source content.
+    SourceOnlyPolicy,
+    /// Ordinary product content: swarm changed it and source did not.
+    SwarmProductChange,
+    /// A receipt proves the two changes are reconciled.
+    ResolvedTransition {
+        source_pr: String,
+        swarm_chain: Vec<String>,
+        disposition: String,
+    },
+    /// Swarm changed a path the policy reserves to source, so the overlay would
+    /// revert it.
+    SwarmChangedSourceAuthoritative,
+    /// Only source changed it, so keeping swarm content would revert it.
+    SourceChangeNotInSwarm {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        source_pr: Option<String>,
+    },
+    /// Both repositories changed it with no receipt proving reconciliation.
+    UnprovenTwoSided,
+}
+
+impl ResolutionBasis {
+    /// Operator-facing explanation for a refused path.
+    fn refusal(&self, path: &str) -> String {
+        match self {
+            Self::SwarmChangedSourceAuthoritative => format!(
+                "{path}: swarm changed a source-authoritative path; move it out of {SOURCE_ONLY_PATH_POLICY} or drop the swarm change"
+            ),
+            Self::SourceChangeNotInSwarm {
+                source_pr: Some(receipt),
+            } => format!(
+                "{path}: swarm does not carry {receipt}'s change; port it to swarm, or make the path source-authoritative in {SOURCE_ONLY_PATH_POLICY}"
+            ),
+            Self::SourceChangeNotInSwarm { source_pr: None } => format!(
+                "{path}: only source changed this, so promoting would revert it; record a transition receipt or make it source-authoritative"
+            ),
+            Self::UnprovenTwoSided => format!(
+                "{path}: both repositories changed this path with no receipt proving they are reconciled"
+            ),
+            Self::SourceOnlyPolicy | Self::SwarmProductChange | Self::ResolvedTransition { .. } => {
+                format!("{path}: resolved")
+            }
+        }
+    }
+}
+
+/// One path's exact state, the effect the overlay applies, and why.
+#[derive(Clone, Debug, Serialize)]
+struct PathDecision {
+    path: String,
+    /// Blob at the exact source head, or absent when the path is not there.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source_blob: Option<String>,
+    /// Blob at the exact swarm head, or absent when the path is not there.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    swarm_blob: Option<String>,
+    source_changed: bool,
+    swarm_changed: bool,
+    effect: PathEffect,
+    basis: ResolutionBasis,
+}
+
+/// Per-path plan for one promotion.
 ///
 /// Acceptance and content used to be decided independently: alignment consulted
 /// the policy list plus transition receipts, while overlay construction
 /// consulted the policy list alone. Every disagreement between them silently
-/// dropped one side's work. Both now come from this single resolution.
-#[derive(Debug, Default)]
+/// dropped one side's work. Both now come from these decisions.
+///
+/// Paths identical in both trees are absent by construction, since the plan is
+/// built from the diff between them.
+#[derive(Debug, Default, Serialize)]
 struct OverlayPlan {
-    /// Paths the overlay restores from source. Everything else keeps swarm.
-    take_source: Vec<String>,
-    /// Count of differing paths that keep swarm content, for the receipt.
-    take_swarm: usize,
+    decisions: Vec<PathDecision>,
 }
 
-/// Decide what happens to every path that differs between source and swarm, and
-/// refuse the promotion if any of them cannot be resolved without discarding
-/// work.
-fn resolve_overlay_paths(
+impl OverlayPlan {
+    /// Paths the overlay must restore from source.
+    fn take_source(&self) -> Vec<String> {
+        self.decisions
+            .iter()
+            .filter(|decision| decision.effect == PathEffect::TakeSource)
+            .map(|decision| decision.path.clone())
+            .collect()
+    }
+
+    fn blocked(&self) -> Vec<&PathDecision> {
+        self.decisions
+            .iter()
+            .filter(|decision| decision.effect == PathEffect::Block)
+            .collect()
+    }
+
+    fn take_swarm_count(&self) -> usize {
+        self.decisions
+            .iter()
+            .filter(|decision| decision.effect == PathEffect::TakeSwarm)
+            .count()
+    }
+}
+
+/// Decide what happens to every path that differs between source and swarm.
+///
+/// Only `policy/source-only-paths.toml` can select source content. A transition
+/// receipt may permit the overlay to keep swarm content on a path both sides
+/// changed, but can never manufacture source authority, which is what preserves
+/// swarm as the product mutation authority.
+fn plan_path_resolutions(
     port: &impl PromotePort,
     workspace_root: &Path,
     source_head: &str,
@@ -1113,68 +1234,113 @@ fn resolve_overlay_paths(
     let differing = git_diff_names(port, workspace_root, source_head, swarm_sha)?;
     let source_changed = git_diff_names_set(port, workspace_root, merge_base, source_head)?;
     let swarm_changed = git_diff_names_set(port, workspace_root, merge_base, swarm_sha)?;
+    let source_blobs = tree_blobs(port, workspace_root, source_head)?;
+    let swarm_blobs = tree_blobs(port, workspace_root, swarm_sha)?;
     let source_authoritative = source_only_paths
         .iter()
         .map(String::as_str)
         .collect::<BTreeSet<_>>();
 
-    let mut plan = OverlayPlan::default();
-    let mut blocked: Vec<String> = Vec::new();
+    let mut decisions = Vec::new();
     for path in differing {
-        let source_touched = source_changed.contains(path.as_str());
-        let swarm_touched = swarm_changed.contains(path.as_str());
-
-        if source_authoritative.contains(path.as_str()) {
-            if swarm_touched {
-                // The overlay resolves these in source's favour, so the swarm
-                // change would be reverted while the promotion claimed to carry
-                // it.
-                blocked.push(format!(
-                    "{path}: swarm changed a source-authoritative path; move it out of {SOURCE_ONLY_PATH_POLICY} or drop the swarm change"
-                ));
+        let touched_by_source = source_changed.contains(path.as_str());
+        let touched_by_swarm = swarm_changed.contains(path.as_str());
+        let (effect, basis) = if source_authoritative.contains(path.as_str()) {
+            if touched_by_swarm {
+                (
+                    PathEffect::Block,
+                    ResolutionBasis::SwarmChangedSourceAuthoritative,
+                )
             } else {
-                plan.take_source.push(path);
+                (PathEffect::TakeSource, ResolutionBasis::SourceOnlyPolicy)
             }
-            continue;
-        }
-
-        // Outside the policy list swarm is the product truth, so the overlay
-        // keeps swarm content. That is only safe when swarm is not missing
-        // something source has.
-        if source_touched && !swarm_touched {
-            let reason = match transition_authority.awaiting_swarm.get(path.as_str()) {
-                Some(receipt) => format!(
-                    "{path}: swarm does not carry {receipt}'s change; port it to swarm, or make the path source-authoritative in {SOURCE_ONLY_PATH_POLICY}"
-                ),
-                None => format!(
-                    "{path}: only source changed this, so promoting would revert it; record a transition receipt or make it source-authoritative"
-                ),
-            };
-            blocked.push(reason);
-            continue;
-        }
-        if source_touched
-            && swarm_touched
-            && !transition_authority.two_sided.contains(path.as_str())
-        {
-            blocked.push(format!(
-                "{path}: both repositories changed this path with no receipt proving they are reconciled"
-            ));
-            continue;
-        }
-        plan.take_swarm += 1;
+        } else if let Some(receipt) = transition_authority.two_sided.get(path.as_str()) {
+            (
+                PathEffect::TakeSwarm,
+                ResolutionBasis::ResolvedTransition {
+                    source_pr: receipt.source_pr.clone(),
+                    swarm_chain: receipt.swarm_chain.clone(),
+                    disposition: receipt.disposition.to_string(),
+                },
+            )
+        } else if touched_by_source && !touched_by_swarm {
+            (
+                PathEffect::Block,
+                ResolutionBasis::SourceChangeNotInSwarm {
+                    source_pr: transition_authority
+                        .awaiting_swarm
+                        .get(path.as_str())
+                        .cloned(),
+                },
+            )
+        } else if touched_by_source && touched_by_swarm {
+            (PathEffect::Block, ResolutionBasis::UnprovenTwoSided)
+        } else {
+            (PathEffect::TakeSwarm, ResolutionBasis::SwarmProductChange)
+        };
+        decisions.push(PathDecision {
+            source_blob: source_blobs.get(path.as_str()).cloned(),
+            swarm_blob: swarm_blobs.get(path.as_str()).cloned(),
+            path,
+            source_changed: touched_by_source,
+            swarm_changed: touched_by_swarm,
+            effect,
+            basis,
+        });
     }
+    Ok(OverlayPlan { decisions })
+}
 
-    if !blocked.is_empty() {
-        bail!(
-            "promote: cannot resolve {} path(s) between {source_head} and {swarm_sha} without discarding work:
-  {}",
-            blocked.len(),
-            blocked.join("
-  ")
-        );
+/// Refuse a plan that cannot be applied without discarding work.
+///
+/// Emits the machine-readable unresolved decisions so a caller gets an exact
+/// repair queue instead of a generic divergence message.
+fn ensure_no_blocked_paths(plan: &OverlayPlan, output: &mut dyn Write) -> Result<()> {
+    let blocked = plan.blocked();
+    if blocked.is_empty() {
+        return Ok(());
     }
-    Ok(plan)
+    let unresolved = OverlayPlan {
+        decisions: blocked.iter().map(|decision| (*decision).clone()).collect(),
+    };
+    let json = serde_json::to_string_pretty(&unresolved)
+        .context("promote: serialize unresolved path plan")?;
+    writeln!(output, "{json}").context("promote: write unresolved path plan")?;
+    bail!(
+        "promote: cannot resolve {} path(s) without discarding work:\n  {}",
+        blocked.len(),
+        blocked
+            .iter()
+            .map(|decision| decision.basis.refusal(&decision.path))
+            .collect::<Vec<_>>()
+            .join("\n  ")
+    );
+}
+
+/// `path -> blob oid` for every file in `revision`.
+///
+/// Read in one call per side rather than per path: a promotion can touch
+/// hundreds of files, and the blobs bind a decision to the exact tree state it
+/// was made against.
+fn tree_blobs(
+    port: &impl PromotePort,
+    workspace_root: &Path,
+    revision: &str,
+) -> Result<BTreeMap<String, String>> {
+    let output = port
+        .git_output(workspace_root, &["ls-tree", "-r", revision])
+        .with_context(|| format!("promote: read tree of {revision}"))?;
+    let mut blobs = BTreeMap::new();
+    for entry in output.lines() {
+        // "<mode> <type> <oid>\t<path>"
+        let Some((meta, path)) = entry.split_once('\t') else {
+            continue;
+        };
+        if let Some(oid) = meta.split_whitespace().nth(2) {
+            blobs.insert(path.to_string(), oid.to_string());
+        }
+    }
+    Ok(blobs)
 }
 
 fn git_diff_names(
@@ -1202,6 +1368,16 @@ fn git_diff_names_set(
         .collect())
 }
 
+/// Content hash of a resolution plan, via `git hash-object`.
+///
+/// Uses git's own object hashing rather than adding a digest dependency. The plan
+/// is fully determined by the promotion inputs, so a planning run and the
+/// executing run that follows it produce the same id.
+fn resolution_plan_id(plan: &OverlayPlan) -> Result<String> {
+    let json = serde_json::to_string(plan).context("promote: serialize resolution plan")?;
+    super::transition::git_hash_object(&json)
+}
+
 /// Build the source overlay commit: the swarm tree applied onto source head with
 /// policy-approved source-only paths taken from source.
 ///
@@ -1216,6 +1392,7 @@ fn prepare_source_overlay(
     source_head: &str,
     swarm_sha: &str,
     take_source: &[String],
+    plan_id: &str,
     isolate_objects: bool,
 ) -> Result<PreparedOverlay> {
     let workspace = OverlayWorkspace::claim(
@@ -1229,7 +1406,11 @@ fn prepare_source_overlay(
         let overlay_root = workspace.path();
         let env = workspace.git_env();
         let git = |args: &[&str]| port.git_output_with_env(overlay_root, args, &env);
-        git(&["checkout", swarm_sha, "--", "."])?;
+        // `read-tree -u --reset` makes the worktree exactly the swarm tree.
+        // `checkout <swarm> -- .` copies swarm's files over but never removes a
+        // file swarm deleted, so the overlay silently retained it and the
+        // promotion dropped that deletion.
+        git(&["read-tree", "-u", "--reset", swarm_sha])?;
         for path in take_source {
             // A resolved source path must match the source tree exactly, which
             // includes its absence. Restoring only when source still has the
@@ -1271,26 +1452,36 @@ fn prepare_source_overlay(
             ("GIT_AUTHOR_DATE", "2026-07-23T00:00:00+00:00"),
             ("GIT_COMMITTER_DATE", "2026-07-23T00:00:00+00:00"),
         ];
+        // Assembled with explicit newlines: a multi-line literal would carry its
+        // own source indentation into the commit body and mangle the trailers.
+        let message = format!(
+            "chore(promote): overlay source with swarm {short}\n\n{OVERLAY_SOURCE_TRAILER} {source_head}\n{OVERLAY_SWARM_TRAILER} {swarm_sha}\n{OVERLAY_PLAN_TRAILER} {plan_id}\n",
+            short = &swarm_sha[..12]
+        );
         let mut commit_env: Vec<(&str, &str)> = commit_env.to_vec();
         commit_env.extend(env.iter().copied());
         port.git_output_with_env(
             overlay_root,
-            &[
-                "commit",
-                "--no-gpg-sign",
-                "-m",
-                &format!(
-                    "chore(promote): overlay source with swarm {}
-
-                     {OVERLAY_SOURCE_TRAILER} {source_head}
-                     {OVERLAY_SWARM_TRAILER} {swarm_sha}
-",
-                    &swarm_sha[..12]
-                ),
-            ],
+            &["commit", "--no-gpg-sign", "-m", &message],
             &commit_env,
         )?;
-        git(&["rev-parse", "HEAD"])
+        let overlay_sha = git(&["rev-parse", "HEAD"])?;
+        // The invariant that closes the silent-discard class: the overlay may
+        // differ from the swarm tree only on paths the plan resolved to source.
+        // Anything else it dropped, reverted, or reintroduced surfaces here no
+        // matter which step got it wrong. Containment rather than equality,
+        // because a resolved path whose content already matches swarm correctly
+        // produces no difference at all.
+        let drifted = git(&["diff", "--name-only", &overlay_sha, swarm_sha])?;
+        let drifted = drifted.lines().map(str::to_string).collect::<BTreeSet<_>>();
+        let permitted = take_source.iter().cloned().collect::<BTreeSet<_>>();
+        let unexpected = drifted.difference(&permitted).collect::<Vec<_>>();
+        if !unexpected.is_empty() {
+            bail!(
+                "promote: overlay {overlay_sha} changes {unexpected:?} relative to swarm {swarm_sha}, which the resolution plan did not permit"
+            );
+        }
+        Ok(overlay_sha)
     })();
     let cleanup_warnings = workspace.release();
     match prepared {
@@ -2175,6 +2366,130 @@ merge-old source-parent another-swarm-head
         Ok(())
     }
 
+    /// A file swarm deleted must not survive in the overlay. Construction used to
+    /// copy the swarm tree over the source worktree, which never removed a path
+    /// swarm had deleted, so the promotion silently dropped that deletion. Found
+    /// by the post-construction invariant rather than by a test.
+    #[test]
+    fn overlay_honours_a_deletion_made_in_swarm() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let root = dir.path();
+        git_fixture(root, &["init", "--initial-branch=main"])?;
+        git_fixture(root, &["config", "user.email", "test@example.com"])?;
+        git_fixture(root, &["config", "user.name", "Promotion Test"])?;
+        fs::write(root.join("keep.txt"), "keep\n")?;
+        fs::write(root.join("removed-by-swarm.txt"), "doomed\n")?;
+        git_fixture(root, &["add", "-A"])?;
+        git_fixture(root, &["commit", "-m", "base"])?;
+        let source_head = git_fixture(root, &["rev-parse", "HEAD"])?;
+
+        git_fixture(root, &["switch", "-c", "swarm"])?;
+        git_fixture(root, &["rm", "--quiet", "removed-by-swarm.txt"])?;
+        git_fixture(root, &["commit", "-m", "chore: swarm removes a file"])?;
+        let swarm_sha = git_fixture(root, &["rev-parse", "HEAD"])?;
+
+        let overlay = prepare_source_overlay(
+            &SystemPort,
+            root,
+            &source_head,
+            &swarm_sha,
+            &[],
+            "1234567890abcdef1234567890abcdef12345678",
+            false,
+        )?;
+        let listed = git_fixture(root, &["ls-tree", "-r", "--name-only", &overlay.sha])?;
+        ensure!(
+            !listed.lines().any(|line| line == "removed-by-swarm.txt"),
+            "overlay retained a file swarm deleted: {listed}"
+        );
+        ensure!(listed.lines().any(|line| line == "keep.txt"));
+        Ok(())
+    }
+
+    /// A refused plan emits the unresolved decisions as JSON, so a caller gets an
+    /// exact repair queue with the blobs and basis rather than prose to parse.
+    #[test]
+    fn a_refused_plan_emits_the_unresolved_decisions() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let root = dir.path();
+        git_fixture(root, &["init", "--initial-branch=main"])?;
+        git_fixture(root, &["config", "user.email", "test@example.com"])?;
+        git_fixture(root, &["config", "user.name", "Promotion Test"])?;
+        fs::write(root.join("product.txt"), "base\n")?;
+        git_fixture(root, &["add", "-A"])?;
+        git_fixture(root, &["commit", "-m", "base"])?;
+        let base = git_fixture(root, &["rev-parse", "HEAD"])?;
+        git_fixture(root, &["switch", "-c", "swarm"])?;
+        fs::write(root.join("product.txt"), "swarm\n")?;
+        git_fixture(root, &["add", "-A"])?;
+        git_fixture(root, &["commit", "-m", "feat: swarm edit"])?;
+        let swarm_sha = git_fixture(root, &["rev-parse", "HEAD"])?;
+        git_fixture(root, &["switch", "main"])?;
+        fs::write(root.join("product.txt"), "source\n")?;
+        git_fixture(root, &["add", "-A"])?;
+        git_fixture(root, &["commit", "-m", "fix: source edit"])?;
+        let source_head = git_fixture(root, &["rev-parse", "HEAD"])?;
+
+        let plan = plan_path_resolutions(
+            &SystemPort,
+            root,
+            &source_head,
+            &swarm_sha,
+            &base,
+            &[],
+            &super::super::transition::TransitionAuthority::default(),
+        )?;
+        let mut emitted = Vec::new();
+        let error = ensure_no_blocked_paths(&plan, &mut emitted)
+            .expect_err("two-sided divergence with no receipt must be refused");
+        ensure!(error.to_string().contains("both repositories changed"));
+
+        let reported: serde_json::Value = serde_json::from_slice(&emitted)?;
+        let decision = &reported["decisions"][0];
+        ensure!(decision["path"] == "product.txt");
+        ensure!(decision["effect"] == "block");
+        ensure!(decision["basis"]["kind"] == "unproven-two-sided");
+        ensure!(decision["source_changed"] == true && decision["swarm_changed"] == true);
+        // The exact blobs bind the decision to the trees it was made against.
+        ensure!(decision["source_blob"].is_string() && decision["swarm_blob"].is_string());
+        ensure!(decision["source_blob"] != decision["swarm_blob"]);
+        Ok(())
+    }
+
+    /// The overlay records the plan it was built from, so closeout can bind a
+    /// landed overlay to the exact per-path decisions behind it.
+    #[test]
+    fn overlay_records_the_resolution_plan_it_was_built_from() -> Result<()> {
+        let fixture = fixture_git()?;
+        let root = fixture.dir.path();
+        // Materialized for real: a planning run isolates its objects, so the sha
+        // it reports is deliberately unresolvable afterwards.
+        let overlay = prepare_source_overlay(
+            &SystemPort,
+            root,
+            &fixture.governance,
+            &fixture.current,
+            &[],
+            "1234567890abcdef1234567890abcdef12345678",
+            false,
+        )?;
+        let message = git_fixture(root, &["show", "-s", "--format=%B", &overlay.sha])?;
+
+        let recorded = overlay_trailer(&message, OVERLAY_PLAN_TRAILER)
+            .context("overlay must record its resolution plan")?;
+        ensure!(recorded == "1234567890abcdef1234567890abcdef12345678");
+        // Trailers are unindented and separately readable.
+        ensure!(
+            message.contains(&format!("\n{OVERLAY_PLAN_TRAILER} {recorded}")),
+            "plan trailer should sit at the start of its own line: {message:?}"
+        );
+        ensure!(
+            overlay_trailer(&message, OVERLAY_SWARM_TRAILER).as_deref()
+                == Some(fixture.current.as_str())
+        );
+        Ok(())
+    }
+
     /// The mirror of the source-authoritative case. Outside the policy list the
     /// overlay keeps swarm content, so a path only source changed would be
     /// reverted. `missing_in_swarm` used to approve exactly this, discarding the
@@ -2206,8 +2521,7 @@ merge-old source-parent another-swarm-head
         let source_head = git_fixture(root, &["rev-parse", "HEAD"])?;
 
         // With no receipt at all.
-        let error = resolve_overlay_paths(
-            &SystemPort,
+        let error = resolve_paths(
             root,
             &source_head,
             &swarm_sha,
@@ -2228,16 +2542,8 @@ merge-old source-parent another-swarm-head
             "product.txt".to_string(),
             "EffortlessMetrics/shiplog#657".to_string(),
         );
-        let error = resolve_overlay_paths(
-            &SystemPort,
-            root,
-            &source_head,
-            &swarm_sha,
-            &base,
-            &[],
-            &authority,
-        )
-        .expect_err("missing_in_swarm must not authorize a revert");
+        let error = resolve_paths(root, &source_head, &swarm_sha, &base, &[], &authority)
+            .expect_err("missing_in_swarm must not authorize a revert");
         let message = error.to_string();
         ensure!(
             message.contains("does not carry EffortlessMetrics/shiplog#657's change"),
@@ -2250,8 +2556,7 @@ merge-old source-parent another-swarm-head
 
         // Making the path source-authoritative is the resolution, and then the
         // overlay restores it rather than reverting it.
-        let plan = resolve_overlay_paths(
-            &SystemPort,
+        let plan = resolve_paths(
             root,
             &source_head,
             &swarm_sha,
@@ -2259,7 +2564,7 @@ merge-old source-parent another-swarm-head
             &["product.txt".to_string()],
             &authority,
         )?;
-        ensure!(plan.take_source == vec!["product.txt".to_string()]);
+        ensure!(plan.take_source() == vec!["product.txt".to_string()]);
         Ok(())
     }
 
@@ -2290,8 +2595,7 @@ merge-old source-parent another-swarm-head
         )?;
         let swarm_sha = git_fixture(root, &["rev-parse", "HEAD"])?;
 
-        let error = resolve_overlay_paths(
-            &SystemPort,
+        let error = resolve_paths(
             root,
             &base,
             &swarm_sha,
@@ -2418,6 +2722,7 @@ merge-old source-parent another-swarm-head
             &fixture.governance,
             &fixture.current,
             &source_only_paths,
+            "test-plan",
             false,
         )?;
         ensure!(
@@ -2526,26 +2831,56 @@ merge-old source-parent another-swarm-head
     /// Build the overlay the way `promote` does. Deliberately does not clean up
     /// `target/` afterwards: `prepare_source_overlay` owns that now, so every
     /// caller of this helper also asserts cleanup left no residue.
+    /// The overlay sha the command itself produces, learned from a throwaway
+    /// planning run.
+    ///
+    /// Derived from the real pipeline rather than recomputed, so it cannot drift
+    /// from what the command does: the overlay commit now also carries the
+    /// resolution plan id, which depends on inputs only the command resolves.
+    /// The run is read-only and asserts it left no residue. The returned sha is
+    /// therefore not resolvable locally: planning isolates its objects, so this is
+    /// an identifier to compare, not a commit to read.
     fn fixture_overlay_sha(fixture: &GitFixture) -> Result<String> {
-        let source_only_paths = load_source_only_paths(fixture.dir.path())?;
-        let overlay = prepare_source_overlay(
-            &SystemPort,
-            fixture.dir.path(),
-            &fixture.governance,
-            &fixture.current,
-            &source_only_paths,
-            false,
-        )?;
-        ensure!(
-            overlay.cleanup_warnings.is_empty(),
-            "overlay cleanup left residue: {:?}",
-            overlay.cleanup_warnings
-        );
+        let port = stub_port(fixture, true, true);
+        let mut output = Vec::new();
+        run_with_port_to(&port, fixture_inputs(fixture), &mut output)?;
+        let plan: serde_json::Value = serde_json::from_slice(&output)?;
+        let overlay = plan["prepared_overlay_sha"]
+            .as_str()
+            .context("planning run did not report a prepared overlay")?
+            .to_string();
         ensure!(
             overlay_children(fixture.dir.path())?.is_empty(),
             "overlay parent still holds worktrees after cleanup"
         );
-        Ok(overlay.sha)
+        ensure!(
+            port.git_mutations.borrow().is_empty(),
+            "the probing run must stay read-only"
+        );
+        Ok(overlay)
+    }
+
+    /// Plan and refuse exactly as the command does, discarding the machine
+    /// readable plan the refusal emits.
+    fn resolve_paths(
+        root: &Path,
+        source_head: &str,
+        swarm_sha: &str,
+        merge_base: &str,
+        source_only_paths: &[String],
+        authority: &super::super::transition::TransitionAuthority,
+    ) -> Result<OverlayPlan> {
+        let plan = plan_path_resolutions(
+            &SystemPort,
+            root,
+            source_head,
+            swarm_sha,
+            merge_base,
+            source_only_paths,
+            authority,
+        )?;
+        ensure_no_blocked_paths(&plan, &mut Vec::new())?;
+        Ok(plan)
     }
 
     /// Overlay worktree directories currently present under the shared parent.
@@ -2646,6 +2981,7 @@ merge-old source-parent another-swarm-head
             &fixture.governance,
             &fixture.current,
             &source_only_paths,
+            "test-plan",
             false,
         )?;
         ensure!(overlay.cleanup_warnings.is_empty());
@@ -2808,6 +3144,7 @@ merge-old source-parent another-swarm-head
             &fixture.governance,
             "0000000000000000000000000000000000000000",
             &source_only_paths,
+            "test-plan",
             false,
         )
         .expect_err("overlay against a missing swarm sha should fail");
@@ -3344,6 +3681,7 @@ merge-old source-parent another-swarm-head
             &fixture.governance,
             &fixture.current,
             &source_only_paths,
+            "test-plan",
             true,
         )?;
         let after = repository_state(root)?;
@@ -3379,6 +3717,7 @@ merge-old source-parent another-swarm-head
             &fixture.governance,
             &fixture.current,
             &source_only_paths,
+            "test-plan",
             false,
         )?;
         ensure!(
@@ -3426,6 +3765,7 @@ merge-old source-parent another-swarm-head
             &source_head,
             &swarm_sha,
             &["retired.toml".to_string()],
+            "test-plan",
             false,
         )?;
         ensure!(overlay.cleanup_warnings.is_empty());
@@ -3456,6 +3796,7 @@ merge-old source-parent another-swarm-head
         let plan = PromotePlan {
             swarm_head: "c4fdba223d1c5c5b99a95b159ab8123d83d4b842".to_string(),
             prepared_overlay_sha: "abcdeffedcba9876543210fedcba1234567890abcd".to_string(),
+            path_decisions: Vec::new(),
             overlay_source_paths: vec!["policy/automation-authority.toml".to_string()],
             overlay_swarm_path_count: 3,
             overlay_cleanup_warnings: Vec::new(),
