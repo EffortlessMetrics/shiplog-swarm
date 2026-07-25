@@ -295,13 +295,28 @@ fn run_with_port_to(
         &["rev-parse", &format!("{}^{{commit}}", inputs.source_ref)],
     )?;
     let source_only_paths = load_source_only_paths(&inputs.workspace_root)?;
-    let governance_commits = approved_governance_commits(port, &state.latest_promotion)?;
+    let transition_authority = super::transition::derive_authority(
+        port,
+        &inputs.workspace_root,
+        &super::transition::TransitionRefs {
+            source_repo: SOURCE_REPO,
+            swarm_repo: SWARM_REPO,
+            source_ref: &inputs.source_ref,
+            swarm_ref: &inputs.swarm_ref,
+        },
+        &state.transition,
+    )?;
+    // Commits the ancestry walk may step over: approved governance, plus source
+    // merges an active transition receipt accounts for. Both are recorded
+    // evidence; anything else following the promotion merge is unapproved.
+    let mut recorded_commits = approved_governance_commits(port, &state.latest_promotion)?;
+    recorded_commits.extend(transition_authority.source_commits.iter().cloned());
     let promotion_merge = find_latest_promotion_merge(
         port,
         &inputs.workspace_root,
         &source_head,
         &state.latest_promotion.promoted_swarm_head,
-        &governance_commits,
+        &recorded_commits,
     )?;
     ensure_ancestor_with_port(
         port,
@@ -353,17 +368,6 @@ fn run_with_port_to(
     if merge_base.is_empty() {
         bail!("promote: merge-base returned no commit for the promotion plan");
     }
-    let transition_authority = super::transition::derive_authority(
-        port,
-        &inputs.workspace_root,
-        &super::transition::TransitionRefs {
-            source_repo: SOURCE_REPO,
-            swarm_repo: SWARM_REPO,
-            source_ref: &inputs.source_ref,
-            swarm_ref: &inputs.swarm_ref,
-        },
-        &state.transition,
-    )?;
     ensure_source_only_alignment(
         port,
         &inputs.workspace_root,

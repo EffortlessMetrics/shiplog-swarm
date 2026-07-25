@@ -42,6 +42,10 @@ pub struct TransitionAuthority {
     /// Paths both repositories changed, where a receipt proves the two changes
     /// are reconciled.
     pub two_sided: BTreeSet<String>,
+    /// Source merge commits an active receipt accounts for. A source commit that
+    /// followed the last promotion merge is otherwise unapproved divergence, so
+    /// without this the path-level authority above could never be reached.
+    pub source_commits: BTreeSet<String>,
 }
 
 /// Repository access the evidence checks need.
@@ -84,6 +88,12 @@ pub fn derive_authority(
             refs.source_ref,
         )
         .with_context(|| format!("transition {}: source merge evidence", entry.source_pr))?;
+
+        // Recorded only after the merge evidence above passed, so an unverified
+        // receipt cannot let a source commit through the ancestry walk.
+        authority
+            .source_commits
+            .insert(entry.source_merge_sha.clone());
 
         let source_patch = pull_request_patch(port, refs.source_repo, &entry.source_pr)?;
         for path in &entry.path {
@@ -605,6 +615,43 @@ mod tests {
             authority.source_only
         );
         Ok(())
+    }
+
+    /// The source merge a receipt accounts for must be reported, so the ancestry
+    /// walk can step over it. Without this the path-level authority is
+    /// unreachable: a source commit following the promotion merge is rejected as
+    /// unapproved divergence before alignment is ever consulted.
+    #[test]
+    fn active_receipt_accounts_for_its_source_merge_commit() -> Result<()> {
+        let patch = section(CARGO_LOCK, "1.52.3", "1.53.0", "tokio");
+        let sha = "e6a72ad11ab22d03b1cf434b237bf0fff9c145bf";
+        let port = StubPort::new().merged(&format!("{SOURCE}#657"), sha, &patch);
+        let mut entries = vec![entry(TransitionDisposition::MissingInSwarm, &[])];
+
+        let active = derive_authority(&port, Path::new("."), &refs(), &entries)?;
+        assert!(
+            active.source_commits.contains(sha),
+            "an active receipt must account for its source merge"
+        );
+
+        // A consumed receipt stops accounting for it, so the commit becomes
+        // unapproved divergence again rather than staying permanently waved through.
+        entries[0].consumed_by = format!("{SOURCE}#655");
+        let consumed = derive_authority(&port, Path::new("."), &refs(), &entries)?;
+        assert!(consumed.source_commits.is_empty());
+        Ok(())
+    }
+
+    /// Evidence must gate the commit-level allowance too, not just the paths.
+    #[test]
+    fn unverified_receipt_accounts_for_nothing() {
+        let patch = section(CARGO_LOCK, "1.52.3", "1.53.0", "tokio");
+        let port = StubPort::new().open(&format!("{SOURCE}#657"), &patch);
+        let entries = vec![entry(TransitionDisposition::MissingInSwarm, &[])];
+        assert!(
+            derive_authority(&port, Path::new("."), &refs(), &entries).is_err(),
+            "an unmerged receipt must not account for its source commit"
+        );
     }
 
     /// `missing_in_swarm` is the only disposition that earns one-sided source
