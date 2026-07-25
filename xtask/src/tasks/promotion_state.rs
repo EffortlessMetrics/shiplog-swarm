@@ -16,6 +16,7 @@
 
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
 
@@ -33,6 +34,80 @@ pub struct PromotionState {
     pub latest_promotion: LatestPromotion,
     #[serde(default)]
     pub pending: Pending,
+    /// Source changes that landed outside a promotion during the cutover. These
+    /// sit at the top level rather than under `latest_promotion` because their
+    /// lifetime is their own: an entry is retired by `consumed_by`, not by the
+    /// next promotion replacing the block.
+    #[serde(default)]
+    pub transition: Vec<Transition>,
+}
+
+/// One source PR that landed directly on source during the cutover.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Transition {
+    pub source_pr: String,
+    pub source_merge_sha: String,
+    /// The promotion that reconciled this receipt. While empty the receipt is
+    /// active; once set it is history and grants nothing.
+    #[serde(default)]
+    pub consumed_by: String,
+    /// Merge commit for each swarm PR named by a path's chain, as
+    /// `owner/repo#number = "<sha>"`.
+    #[serde(default)]
+    pub swarm_merge_sha: BTreeMap<String, String>,
+    /// Per-path disposition. A source PR is rarely uniform, so one status over
+    /// one path list would misdescribe part of it.
+    #[serde(default)]
+    pub path: Vec<TransitionPath>,
+}
+
+impl Transition {
+    /// The promotion that consumed this receipt, or `None` while it is active.
+    pub fn consumed_by(&self) -> Option<&str> {
+        (!self.consumed_by.is_empty()).then_some(self.consumed_by.as_str())
+    }
+
+    /// Recorded merge commit for a swarm PR named in a chain.
+    pub fn swarm_merge_sha(&self, receipt: &str) -> Option<&str> {
+        self.swarm_merge_sha.get(receipt).map(String::as_str)
+    }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TransitionPath {
+    pub path: String,
+    pub disposition: TransitionDisposition,
+    /// Ordered swarm PRs that carried this path. `equivalent` names exactly one;
+    /// `superseded_in_swarm` names the steps that continue the source history.
+    #[serde(default)]
+    pub swarm_chain: Vec<String>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TransitionDisposition {
+    /// Both sides made the same change to this path.
+    Equivalent,
+    /// The swarm side continued past what source landed.
+    SupersededInSwarm,
+    /// Source changed it and swarm has not caught up.
+    MissingInSwarm,
+    /// The two sides disagree; promotion must not proceed.
+    Conflicting,
+}
+
+impl std::fmt::Display for TransitionDisposition {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let name = match self {
+            Self::Equivalent => "equivalent",
+            Self::SupersededInSwarm => "superseded_in_swarm",
+            Self::MissingInSwarm => "missing_in_swarm",
+            Self::Conflicting => "conflicting",
+        };
+        formatter.write_str(name)
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -163,6 +238,92 @@ fn validate(state: &PromotionState) -> Result<()> {
     }
     for receipt in &state.pending.deferred_receipt_carry {
         validate_receipt("pending.deferred_receipt_carry", receipt)?;
+    }
+    validate_transitions(&state.transition)?;
+    Ok(())
+}
+
+/// Structural checks on transition receipts. Evidence checks (that the recorded
+/// merges exist, are reachable, and agree) need repository access and live in
+/// [`super::transition`].
+fn validate_transitions(transitions: &[Transition]) -> Result<()> {
+    let mut seen_source_prs = BTreeSet::new();
+    for entry in transitions {
+        validate_receipt("transition.source_pr", &entry.source_pr)?;
+        validate_sha("transition.source_merge_sha", &entry.source_merge_sha)?;
+        if !seen_source_prs.insert(entry.source_pr.as_str()) {
+            bail!(
+                "transition.source_pr {} appears more than once; use one entry with disjoint paths",
+                entry.source_pr
+            );
+        }
+        if !entry.consumed_by.is_empty() {
+            validate_receipt("transition.consumed_by", &entry.consumed_by)?;
+        }
+        for (receipt, sha) in &entry.swarm_merge_sha {
+            validate_receipt("transition.swarm_merge_sha key", receipt)?;
+            validate_sha("transition.swarm_merge_sha", sha)?;
+        }
+        if entry.path.is_empty() {
+            bail!(
+                "transition {} records no paths; an entry that grants nothing should be removed",
+                entry.source_pr
+            );
+        }
+        // Disjoint paths within an entry: two dispositions for one path would
+        // make the authority it grants ambiguous.
+        let mut seen_paths = BTreeSet::new();
+        for path in &entry.path {
+            if path.path.trim().is_empty() {
+                bail!("transition {} has an empty path", entry.source_pr);
+            }
+            if !seen_paths.insert(path.path.as_str()) {
+                bail!(
+                    "transition {} lists path {} more than once",
+                    entry.source_pr,
+                    path.path
+                );
+            }
+            match path.disposition {
+                TransitionDisposition::MissingInSwarm | TransitionDisposition::Conflicting => {
+                    if !path.swarm_chain.is_empty() {
+                        bail!(
+                            "transition {} path {} is {} and must not name swarm PRs",
+                            entry.source_pr,
+                            path.path,
+                            path.disposition
+                        );
+                    }
+                }
+                TransitionDisposition::Equivalent => {
+                    if path.swarm_chain.len() != 1 {
+                        bail!(
+                            "transition {} path {} is equivalent and must name exactly one swarm PR",
+                            entry.source_pr,
+                            path.path
+                        );
+                    }
+                }
+                TransitionDisposition::SupersededInSwarm => {
+                    if path.swarm_chain.is_empty() {
+                        bail!(
+                            "transition {} path {} is superseded_in_swarm and must name its chain",
+                            entry.source_pr,
+                            path.path
+                        );
+                    }
+                }
+            }
+            for receipt in &path.swarm_chain {
+                validate_receipt("transition.path.swarm_chain", receipt)?;
+                if !entry.swarm_merge_sha.contains_key(receipt) {
+                    bail!(
+                        "transition {} names {receipt} in a chain without a recorded swarm_merge_sha",
+                        entry.source_pr
+                    );
+                }
+            }
+        }
     }
     Ok(())
 }
@@ -332,6 +493,121 @@ deferred_receipt_carry = []
         let state: PromotionState = toml::from_str(text).expect("parse");
         validate(&state).expect("valid");
         state
+    }
+
+    fn manifest_with_transition(transition: &str) -> Result<PromotionState> {
+        let text = format!(
+            r#"
+schema_version = 1
+[latest_promotion]
+status = "completed"
+disposition = "completed-with-governance"
+source_promotion_pr = "EffortlessMetrics/shiplog#655"
+promoted_swarm_head = "c4fdba223d1c5c5b99a95b159ab8123d83d4b842"
+[pending]
+{transition}
+"#
+        );
+        let state: PromotionState = toml::from_str(&text)?;
+        validate(&state)?;
+        Ok(state)
+    }
+
+    /// A path both sides changed needs a named swarm counterpart. Accepting
+    /// `equivalent` without one would grant reconciliation authority from a
+    /// receipt that points at nothing.
+    #[test]
+    fn transition_equivalent_requires_exactly_one_swarm_pr() {
+        let error = manifest_with_transition(
+            r#"
+[[transition]]
+source_pr = "EffortlessMetrics/shiplog#666"
+source_merge_sha = "d88d59a1a5af338537e35ff98b8ddda14d4673cf"
+[[transition.path]]
+path = "AGENTS.md"
+disposition = "equivalent"
+"#,
+        )
+        .expect_err("equivalent without a swarm PR must be rejected");
+        assert!(
+            format!("{error:#}").contains("must name exactly one swarm PR"),
+            "unexpected error: {error:#}"
+        );
+    }
+
+    /// Naming a chain step without recording its merge commit would leave the
+    /// evidence check nothing to verify against.
+    #[test]
+    fn transition_chain_requires_a_recorded_merge_sha() {
+        let error = manifest_with_transition(
+            r#"
+[[transition]]
+source_pr = "EffortlessMetrics/shiplog#657"
+source_merge_sha = "e6a72ad11ab22d03b1cf434b237bf0fff9c145bf"
+[[transition.path]]
+path = "Cargo.lock"
+disposition = "superseded_in_swarm"
+swarm_chain = ["EffortlessMetrics/shiplog-swarm#265"]
+"#,
+        )
+        .expect_err("a chain step without a merge sha must be rejected");
+        assert!(
+            format!("{error:#}").contains("without a recorded swarm_merge_sha"),
+            "unexpected error: {error:#}"
+        );
+    }
+
+    /// Two dispositions for one path would make the authority it grants
+    /// ambiguous.
+    #[test]
+    fn transition_rejects_a_duplicated_path() {
+        let error = manifest_with_transition(
+            r#"
+[[transition]]
+source_pr = "EffortlessMetrics/shiplog#666"
+source_merge_sha = "d88d59a1a5af338537e35ff98b8ddda14d4673cf"
+[[transition.path]]
+path = "AGENTS.md"
+disposition = "missing_in_swarm"
+[[transition.path]]
+path = "AGENTS.md"
+disposition = "conflicting"
+"#,
+        )
+        .expect_err("a duplicated path must be rejected");
+        assert!(
+            format!("{error:#}").contains("more than once"),
+            "unexpected error: {error:#}"
+        );
+    }
+
+    /// A per-path manifest is the point: one source PR carries different
+    /// dispositions for different paths.
+    #[test]
+    fn transition_accepts_mixed_dispositions_across_paths() -> Result<()> {
+        let state = manifest_with_transition(
+            r#"
+[[transition]]
+source_pr = "EffortlessMetrics/shiplog#666"
+source_merge_sha = "d88d59a1a5af338537e35ff98b8ddda14d4673cf"
+swarm_merge_sha = { "EffortlessMetrics/shiplog-swarm#274" = "1ca35e97ba506062376e6f78b6633003e25db963" }
+[[transition.path]]
+path = "xtask/src/tasks/check_goals.rs"
+disposition = "equivalent"
+swarm_chain = ["EffortlessMetrics/shiplog-swarm#274"]
+[[transition.path]]
+path = ".codex/goals/active.toml"
+disposition = "missing_in_swarm"
+"#,
+        )?;
+        let entry = &state.transition[0];
+        assert_eq!(entry.path.len(), 2);
+        assert_eq!(entry.consumed_by(), None);
+        assert_eq!(
+            entry.swarm_merge_sha("EffortlessMetrics/shiplog-swarm#274"),
+            Some("1ca35e97ba506062376e6f78b6633003e25db963")
+        );
+        Ok(())
     }
 
     #[test]

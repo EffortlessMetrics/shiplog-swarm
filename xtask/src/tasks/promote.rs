@@ -89,6 +89,11 @@ struct PromotionState {
     schema_version: u32,
     latest_promotion: LatestPromotion,
     pending: PendingPromotion,
+    /// Reuses the canonical type rather than restating it: this struct is
+    /// `deny_unknown_fields`, so a field added to the manifest and not mirrored
+    /// here makes `promote` reject the manifest outright.
+    #[serde(default)]
+    transition: Vec<super::promotion_state::Transition>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -115,6 +120,10 @@ trait PromotePort {
     fn git_output(&self, workspace_root: &Path, args: &[&str]) -> Result<String>;
     fn git_status(&self, workspace_root: &Path, args: &[&str]) -> Result<()>;
     fn gh_output(&self, args: &[&str]) -> Result<Vec<u8>>;
+    /// `git patch-id --stable` over a patch supplied on stdin.
+    fn git_patch_id(&self, patch: &str) -> Result<String> {
+        super::transition::system_patch_id(patch)
+    }
     fn git_output_with_env(
         &self,
         workspace_root: &Path,
@@ -344,6 +353,17 @@ fn run_with_port_to(
     if merge_base.is_empty() {
         bail!("promote: merge-base returned no commit for the promotion plan");
     }
+    let transition_authority = super::transition::derive_authority(
+        port,
+        &inputs.workspace_root,
+        &super::transition::TransitionRefs {
+            source_repo: SOURCE_REPO,
+            swarm_repo: SWARM_REPO,
+            source_ref: &inputs.source_ref,
+            swarm_ref: &inputs.swarm_ref,
+        },
+        &state.transition,
+    )?;
     ensure_source_only_alignment(
         port,
         &inputs.workspace_root,
@@ -351,6 +371,7 @@ fn run_with_port_to(
         &swarm_sha,
         &merge_base,
         &source_only_paths,
+        &transition_authority,
     )?;
     let included_swarm_prs = included_swarm_prs(
         port,
@@ -890,18 +911,20 @@ fn ensure_source_only_alignment(
     swarm_sha: &str,
     merge_base: &str,
     source_only_paths: &[String],
+    transition_authority: &super::transition::TransitionAuthority,
 ) -> Result<()> {
     let differing = git_diff_names(port, workspace_root, source_head, swarm_sha)?;
     let source_changed = git_diff_names_set(port, workspace_root, merge_base, source_head)?;
     let swarm_changed = git_diff_names_set(port, workspace_root, merge_base, swarm_sha)?;
-    // `policy/source-only-paths.toml` is the only grant of divergence authority.
-    // Two-sided divergence has no approval mechanism at all and always blocks:
-    // reconciling a path both repositories changed needs recorded evidence that
-    // the two changes agree, which is not modelled yet.
-    let approved = source_only_paths
+    // One-sided source divergence is permanently allowed by
+    // `policy/source-only-paths.toml`, and temporarily by an unconsumed
+    // `missing_in_swarm` transition receipt. Two-sided divergence is allowed only
+    // where a transition receipt proves the two changes are reconciled.
+    let mut approved = source_only_paths
         .iter()
         .map(String::as_str)
         .collect::<BTreeSet<_>>();
+    approved.extend(transition_authority.source_only.iter().map(String::as_str));
     let mut unapproved: Vec<String> = Vec::new();
     let mut two_sided: Vec<String> = Vec::new();
     for path in differing {
@@ -909,7 +932,10 @@ fn ensure_source_only_alignment(
         let swarm_only = swarm_changed.contains(path.as_str());
         if source_only && !swarm_only && !approved.contains(path.as_str()) {
             unapproved.push(path);
-        } else if source_only && swarm_only {
+        } else if source_only
+            && swarm_only
+            && !transition_authority.two_sided.contains(path.as_str())
+        {
             two_sided.push(path);
         }
     }
@@ -1525,6 +1551,21 @@ fn ensure_ancestor_with_port(
 
 fn git_output(workspace_root: &Path, args: &[&str]) -> Result<String> {
     git_output_with_env(workspace_root, args, &[])
+}
+
+/// Bridge so every promote port can also serve the transition evidence checks.
+impl<P: PromotePort> super::transition::TransitionPort for P {
+    fn git_output(&self, workspace_root: &Path, args: &[&str]) -> Result<String> {
+        PromotePort::git_output(self, workspace_root, args)
+    }
+
+    fn gh_output(&self, args: &[&str]) -> Result<Vec<u8>> {
+        PromotePort::gh_output(self, args)
+    }
+
+    fn git_patch_id(&self, patch: &str) -> Result<String> {
+        PromotePort::git_patch_id(self, patch)
+    }
 }
 
 fn git_output_with_env(
