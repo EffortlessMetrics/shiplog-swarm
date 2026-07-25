@@ -126,20 +126,27 @@ fn check_path(
     source_patch: &str,
     authority: &mut TransitionAuthority,
 ) -> Result<()> {
-    match path.disposition {
-        TransitionDisposition::Conflicting => {
-            bail!("marked conflicting; resolve it before promoting");
+    if path.disposition == TransitionDisposition::Conflicting {
+        bail!("marked conflicting; resolve it before promoting");
+    }
+    // Established before any disposition grants anything. A receipt may only
+    // speak for paths its own source PR touched, otherwise one merged PR would
+    // authorize divergence on an unrelated file it never changed.
+    let source_section = patch_for_path(source_patch, &path.path).with_context(|| {
+        format!(
+            "source PR {} does not touch this path",
+            entry.source_pr.as_str()
+        )
+    })?;
+
+    if path.disposition == TransitionDisposition::MissingInSwarm {
+        if !path.swarm_chain.is_empty() {
+            bail!("missing_in_swarm must not name swarm PRs");
         }
-        TransitionDisposition::MissingInSwarm => {
-            if !path.swarm_chain.is_empty() {
-                bail!("missing_in_swarm must not name swarm PRs");
-            }
-            // Source changed it and swarm has not caught up yet, so the
-            // difference is one-sided until a promotion reconciles it.
-            authority.source_only.insert(path.path.clone());
-            return Ok(());
-        }
-        TransitionDisposition::Equivalent | TransitionDisposition::SupersededInSwarm => {}
+        // Source changed it and swarm has not caught up yet, so the difference
+        // is one-sided until a promotion reconciles it.
+        authority.source_only.insert(path.path.clone());
+        return Ok(());
     }
 
     if path.swarm_chain.is_empty() {
@@ -161,13 +168,6 @@ fn check_path(
         swarm_patches.push(pull_request_patch(port, refs.swarm_repo, swarm_pr)?);
     }
 
-    let source_section = patch_for_path(source_patch, &path.path).with_context(|| {
-        format!(
-            "source PR {} does not touch this path",
-            entry.source_pr.as_str()
-        )
-    })?;
-
     match path.disposition {
         TransitionDisposition::Equivalent => {
             if path.swarm_chain.len() != 1 {
@@ -186,6 +186,25 @@ fn check_path(
             }
         }
         TransitionDisposition::SupersededInSwarm => {
+            // The chain must begin by reproducing the source change, not merely
+            // by starting at the same version. Without this, a swarm step from
+            // the same old version to an unrelated new one satisfied the walk
+            // while never incorporating what source landed.
+            let first = patch_for_path(&swarm_patches[0], &path.path).with_context(|| {
+                format!(
+                    "chained swarm PR {} does not touch this path",
+                    path.swarm_chain[0]
+                )
+            })?;
+            let reproduces = port.git_patch_id(&source_section)? == port.git_patch_id(&first)?
+                || reaches_source_result(&source_section, &first);
+            if !reproduces {
+                bail!(
+                    "chain does not start by reproducing the source change: {} must be equivalent to {} for this path, or land the same resulting versions",
+                    path.swarm_chain[0],
+                    entry.source_pr
+                );
+            }
             check_supersession_chain(&source_section, &swarm_patches, &path.path)?;
         }
         _ => unreachable!("handled above"),
@@ -211,7 +230,7 @@ fn check_merged_at(
     merge_sha: &str,
     reachable_from: &str,
 ) -> Result<()> {
-    let number = receipt_number(receipt)?;
+    let number = receipt_number(receipt, repo)?;
     let raw = port.gh_output(&[
         "pr",
         "view",
@@ -432,21 +451,46 @@ pub fn system_patch_id(patch: &str) -> Result<String> {
 }
 
 fn pull_request_patch(port: &impl TransitionPort, repo: &str, receipt: &str) -> Result<String> {
-    let number = receipt_number(receipt)?;
+    let number = receipt_number(receipt, repo)?;
     let raw = port
         .gh_output(&["pr", "diff", &number, "--repo", repo, "--patch"])
         .with_context(|| format!("fetch patch for {receipt}"))?;
     Ok(String::from_utf8_lossy(&raw).into_owned())
 }
 
-fn receipt_number(receipt: &str) -> Result<String> {
-    let (_, number) = receipt
+/// PR number from `owner/repo#number`, rejecting a receipt that names a
+/// different repository than the one about to be queried.
+///
+/// Discarding the repository component would let a manifest record
+/// `OtherOrg/OtherRepo#657` while the verifier answered from the expected
+/// repository's #657 instead.
+fn receipt_number(receipt: &str, expected_repo: &str) -> Result<String> {
+    let (repo, number) = receipt
         .split_once('#')
         .with_context(|| format!("receipt {receipt:?} must be owner/repo#number"))?;
+    if repo != expected_repo {
+        bail!("receipt {receipt:?} names repository {repo:?}, expected {expected_repo:?}");
+    }
     if number.is_empty() || !number.chars().all(|c| c.is_ascii_digit()) {
         bail!("receipt {receipt:?} must end with a numeric PR id");
     }
     Ok(number.to_string())
+}
+
+/// Whether a swarm path patch lands the same resulting versions as the source
+/// patch, which is equivalence in effect even when the patch text differs
+/// because the two repositories started from different content.
+fn reaches_source_result(source_section: &str, swarm_section: &str) -> bool {
+    let source = lock_transitions(source_section);
+    let swarm = lock_transitions(swarm_section);
+    if source.is_empty() {
+        return false;
+    }
+    source.iter().all(|(package, (_, source_to))| {
+        swarm
+            .get(package)
+            .is_some_and(|(_, swarm_to)| swarm_to == source_to)
+    })
 }
 
 #[cfg(test)]
@@ -766,6 +810,100 @@ mod tests {
             system_patch_id(&elsewhere)?,
             "patch identity must include the file it applies to"
         );
+        Ok(())
+    }
+
+    /// A receipt may only speak for paths its own source PR touched. Granting
+    /// `missing_in_swarm` before checking that let one merged PR authorize
+    /// divergence on an unrelated file it never changed.
+    #[test]
+    fn missing_in_swarm_requires_the_source_pr_to_touch_the_path() {
+        let patch = section(CARGO_LOCK, "1.52.3", "1.53.0", "tokio");
+        let port = StubPort::new().merged(
+            &format!("{SOURCE}#657"),
+            "e6a72ad11ab22d03b1cf434b237bf0fff9c145bf",
+            &patch,
+        );
+        let mut entries = vec![entry(TransitionDisposition::MissingInSwarm, &[])];
+        entries[0].path[0].path = "some-unrelated-source-file".to_string();
+        let error = derive_authority(&port, Path::new("."), &refs(), &entries)
+            .expect_err("a path the source PR never touched must not be authorized");
+        assert!(
+            format!("{error:#}").contains("does not touch this path"),
+            "unexpected error: {error:#}"
+        );
+    }
+
+    /// A receipt naming a different repository must not be answered from the
+    /// expected repository's PR of the same number.
+    #[test]
+    fn receipt_repository_identity_is_enforced() {
+        assert!(receipt_number(&format!("{SOURCE}#657"), SOURCE).is_ok());
+        let error = receipt_number("OtherOrg/OtherRepo#657", SOURCE)
+            .expect_err("a foreign repository receipt must be rejected");
+        assert!(
+            error.to_string().contains("names repository"),
+            "unexpected error: {error}"
+        );
+    }
+
+    /// Starting at the right version is not enough. A swarm step from the same
+    /// old version to an unrelated new one advanced the walk while never
+    /// incorporating what source landed.
+    #[test]
+    fn supersession_rejects_a_divergent_step_from_the_source_start() {
+        let source_patch = section(CARGO_LOCK, "1.52.3", "1.53.0", "tokio");
+        // Same starting version, unrelated destination: contiguous, but not a
+        // continuation of the source change.
+        let divergent = section(CARGO_LOCK, "1.52.3", "9.9.9", "tokio");
+        let swarm = format!("{SWARM}#269");
+        let swarm_sha = "ba4aeaf78cb17f980f1da05d24d9638033b95f68";
+        let port = StubPort::new()
+            .merged(
+                &format!("{SOURCE}#657"),
+                "e6a72ad11ab22d03b1cf434b237bf0fff9c145bf",
+                &source_patch,
+            )
+            .merged(&swarm, swarm_sha, &divergent);
+        let entries = vec![entry(
+            TransitionDisposition::SupersededInSwarm,
+            &[(swarm.as_str(), swarm_sha)],
+        )];
+        let error = derive_authority(&port, Path::new("."), &refs(), &entries)
+            .expect_err("a divergent first step must not prove supersession");
+        assert!(
+            format!("{error:#}").contains("does not start by reproducing the source change"),
+            "unexpected error: {error:#}"
+        );
+    }
+
+    /// The Tokio chain the manifest actually needs: swarm reproduces the source
+    /// bump, then continues past it.
+    #[test]
+    fn supersession_accepts_a_chain_that_reproduces_then_advances() -> Result<()> {
+        let source_patch = section(CARGO_LOCK, "1.52.3", "1.53.0", "tokio");
+        let reproduce = section(CARGO_LOCK, "1.52.3", "1.53.0", "tokio");
+        let advance = section(CARGO_LOCK, "1.53.0", "1.53.1", "tokio");
+        let first = format!("{SWARM}#269");
+        let second = format!("{SWARM}#265");
+        let first_sha = "ba4aeaf78cb17f980f1da05d24d9638033b95f68";
+        let second_sha = "97239104cb2923e389749ac733755a955e4c6cc5";
+        let port = StubPort::new()
+            .merged(
+                &format!("{SOURCE}#657"),
+                "e6a72ad11ab22d03b1cf434b237bf0fff9c145bf",
+                &source_patch,
+            )
+            .merged(&first, first_sha, &reproduce)
+            .merged(&second, second_sha, &advance);
+        let entries = vec![entry(
+            TransitionDisposition::SupersededInSwarm,
+            &[(first.as_str(), first_sha), (second.as_str(), second_sha)],
+        )];
+
+        let authority = derive_authority(&port, Path::new("."), &refs(), &entries)?;
+        assert!(authority.two_sided.contains(CARGO_LOCK));
+        assert!(authority.source_only.is_empty());
         Ok(())
     }
 
