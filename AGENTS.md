@@ -58,7 +58,6 @@ When no actionable findings are emitted:
 
 ```
 No actionable findings emitted.
-
 Inspected surfaces:
 Checks performed:
 Why no comments:
@@ -115,7 +114,7 @@ Weekly Monday 08:00 UTC full repository security scan.
 - Trigger: Schedule + manual workflow dispatch
 - Permissions: `contents: write` (for scan report publication)
 - Model: `custom:MiniMax-M3-0`
-- Depth: `shallow`
+- Threshold: Medium
 - Secrets: `FACTORY_API_KEY` and `MINIMAX_API_KEY`; runs skip if either is unavailable
 - Critical issues block; High issues reported only
 
