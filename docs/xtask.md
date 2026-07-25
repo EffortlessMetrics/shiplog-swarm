@@ -264,9 +264,11 @@ Verifies an exact swarm head before preparing an idempotent source promotion
 branch. Run it from a release-maintainer checkout with origin=shiplog and
 swarm=shiplog-swarm:
 
-    cargo xtask promote --swarm-sha <exact-swarm-sha> --dry-run
-    cargo xtask promote --swarm-sha <exact-swarm-sha>
-    cargo xtask promote --swarm-sha <exact-swarm-sha> --verify-only
+```bash
+cargo xtask promote --swarm-sha <exact-swarm-sha> --dry-run
+cargo xtask promote --swarm-sha <exact-swarm-sha>
+cargo xtask promote --swarm-sha <exact-swarm-sha> --verify-only
+```
 
 The command checks shared ancestry and a completed successful
 Shiplog Rust Small Result run for the exact SHA, then creates or fast-forwards
