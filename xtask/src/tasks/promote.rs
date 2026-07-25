@@ -1132,7 +1132,16 @@ impl<'a, P: PromotePort> OverlayWorkspace<'a, P> {
             )
         })?;
         let (object_dir, env) = if isolate_objects {
-            let object_dir = path.with_extension("objects");
+            // A sibling of the worktree, never a child: anything inside the
+            // worktree would be picked up by `git add -A`. Named by appending
+            // rather than via `with_extension`, which would instead replace part
+            // of the claimed name if the name format ever gained a dot.
+            let mut object_name = path
+                .file_name()
+                .context("promote: overlay workspace has no file name")?
+                .to_os_string();
+            object_name.push(".objects");
+            let object_dir = parent.join(object_name);
             for sub in ["", "info", "pack"] {
                 fs::create_dir_all(object_dir.join(sub)).with_context(|| {
                     format!(
