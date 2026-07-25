@@ -250,7 +250,7 @@ fn validate_transitions(transitions: &[Transition]) -> Result<()> {
     let mut seen_source_prs = BTreeSet::new();
     for entry in transitions {
         validate_receipt("transition.source_pr", &entry.source_pr)?;
-        validate_sha("transition.source_merge_sha", &entry.source_merge_sha)?;
+        validate_full_sha("transition.source_merge_sha", &entry.source_merge_sha)?;
         if !seen_source_prs.insert(entry.source_pr.as_str()) {
             bail!(
                 "transition.source_pr {} appears more than once; use one entry with disjoint paths",
@@ -262,7 +262,7 @@ fn validate_transitions(transitions: &[Transition]) -> Result<()> {
         }
         for (receipt, sha) in &entry.swarm_merge_sha {
             validate_receipt("transition.swarm_merge_sha key", receipt)?;
-            validate_sha("transition.swarm_merge_sha", sha)?;
+            validate_full_sha("transition.swarm_merge_sha", sha)?;
         }
         if entry.path.is_empty() {
             bail!(
@@ -338,6 +338,16 @@ fn validate_receipt(field: &str, value: &str) -> Result<()> {
     }
     if number.is_empty() || !number.chars().all(|c| c.is_ascii_digit()) {
         bail!("{field} receipt {value:?} must end with a numeric issue/PR id");
+    }
+    Ok(())
+}
+
+/// Transition receipts name merge commits that gate divergence authority, so
+/// they must be unambiguous. An abbreviation could share a prefix with another
+/// commit, and the evidence check compares in full.
+fn validate_full_sha(field: &str, value: &str) -> Result<()> {
+    if value.len() != 40 || !value.chars().all(|c| c.is_ascii_hexdigit()) {
+        bail!("{field} {value:?} must be a full 40-character hex commit SHA");
     }
     Ok(())
 }
@@ -553,6 +563,27 @@ swarm_chain = ["EffortlessMetrics/shiplog-swarm#265"]
         .expect_err("a chain step without a merge sha must be rejected");
         assert!(
             format!("{error:#}").contains("without a recorded swarm_merge_sha"),
+            "unexpected error: {error:#}"
+        );
+    }
+
+    /// An abbreviated SHA could share a prefix with another commit, which is not
+    /// good enough to gate divergence authority.
+    #[test]
+    fn transition_requires_full_length_merge_shas() {
+        let error = manifest_with_transition(
+            r#"
+[[transition]]
+source_pr = "EffortlessMetrics/shiplog#666"
+source_merge_sha = "d88d59a"
+[[transition.path]]
+path = "AGENTS.md"
+disposition = "missing_in_swarm"
+"#,
+        )
+        .expect_err("an abbreviated merge sha must be rejected");
+        assert!(
+            format!("{error:#}").contains("full 40-character hex commit SHA"),
             "unexpected error: {error:#}"
         );
     }
