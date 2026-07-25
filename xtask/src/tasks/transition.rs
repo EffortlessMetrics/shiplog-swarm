@@ -69,11 +69,10 @@ pub fn derive_authority(
 ) -> Result<TransitionAuthority> {
     let mut authority = TransitionAuthority::default();
     for entry in transitions {
-        if let Some(consumed_by) = entry.consumed_by() {
-            // Retained as history. Re-validating a consumed receipt would make a
-            // migration record permanently load-bearing, which is the failure
-            // this field exists to prevent.
-            let _ = consumed_by;
+        // A consumed receipt is retained as history and skipped. Re-validating it
+        // would make a migration record permanently load-bearing, which is the
+        // failure `consumed_by` exists to prevent.
+        if entry.consumed_by().is_some() {
             continue;
         }
         check_merged_at(
@@ -223,7 +222,10 @@ fn check_merged_at(
         .and_then(|commit| commit.get("oid"))
         .and_then(|oid| oid.as_str())
         .with_context(|| format!("{receipt} reports no merge commit"))?;
-    if !merged.starts_with(merge_sha) && !merge_sha.starts_with(merged) {
+    // Compared in full rather than by prefix. This is a fail-closed authority
+    // boundary, so an abbreviation that merely happens to share a prefix must not
+    // pass as evidence.
+    if merged != merge_sha {
         bail!("{receipt} merged as {merged}, but the receipt records {merge_sha}");
     }
     // Reachability is checked locally: the forge can say what a PR merged as,
