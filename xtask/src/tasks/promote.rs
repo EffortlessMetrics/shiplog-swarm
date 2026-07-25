@@ -3,7 +3,7 @@
 
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -102,8 +102,6 @@ struct LatestPromotion {
     source_governance: Vec<String>,
     source_post_merge_proof: String,
     included_swarm_prs: Vec<String>,
-    #[serde(default)]
-    transition_source_mirror: Vec<TransitionSourceMirror>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -111,18 +109,6 @@ struct LatestPromotion {
 struct PendingPromotion {
     swarm_pr_range: Vec<String>,
     deferred_receipt_carry: Vec<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct TransitionSourceMirror {
-    source_pr: String,
-    source_merge_sha: String,
-    swarm_pr: String,
-    #[serde(default)]
-    swarm_merge_sha: String,
-    paths: Vec<String>,
-    status: String,
 }
 
 trait PromotePort {
@@ -300,8 +286,6 @@ fn run_with_port_to(
         &["rev-parse", &format!("{}^{{commit}}", inputs.source_ref)],
     )?;
     let source_only_paths = load_source_only_paths(&inputs.workspace_root)?;
-    let transition_policy =
-        validate_transition_mirror(port, &state.latest_promotion.transition_source_mirror)?;
     let governance_commits = approved_governance_commits(port, &state.latest_promotion)?;
     let promotion_merge = find_latest_promotion_merge(
         port,
@@ -329,6 +313,10 @@ fn run_with_port_to(
         &source_head,
         &swarm_sha,
         &source_only_paths,
+        // A planning-only run must not leave the overlay commit in the object
+        // database; an executing run has to keep it so the push has something to
+        // send.
+        inputs.dry_run,
     )?;
     let existing = port.git_output(
         &inputs.workspace_root,
@@ -340,7 +328,7 @@ fn run_with_port_to(
     )?;
     let existing_sha = existing.split_whitespace().next().unwrap_or_default();
     if !existing_sha.is_empty() && existing_sha != prepared_overlay_sha {
-        ensure_remote_fast_forward(port, existing_sha, &prepared_overlay_sha)?;
+        ensure_remote_fast_forward(port, existing_sha, &source_head, &prepared_overlay_sha)?;
     }
 
     let merge_base = port
@@ -363,7 +351,6 @@ fn run_with_port_to(
         &swarm_sha,
         &merge_base,
         &source_only_paths,
-        &transition_policy,
     )?;
     let included_swarm_prs = included_swarm_prs(
         port,
@@ -492,10 +479,15 @@ fn run_with_port_to(
         promotion_body::write_rendered(&inputs.workspace_root, &inputs.output, &promotion_body)?;
 
     if existing_sha != prepared_overlay_sha {
+        // Lease against exactly the target observed while planning, so a branch
+        // someone else moved in between is rejected instead of overwritten. An
+        // empty expectation asserts the ref does not exist yet.
+        let lease = format!("--force-with-lease=refs/heads/{branch}:{existing_sha}");
         port.git_status(
             &inputs.workspace_root,
             &[
                 "push",
+                &lease,
                 &inputs.source_remote,
                 &format!("{prepared_overlay_sha}:refs/heads/{branch}"),
             ],
@@ -679,24 +671,38 @@ fn included_swarm_prs(
     Ok(extract_swarm_pr_receipts(log.lines()))
 }
 
+/// Confirm the existing promotion branch can be fast-forwarded to the overlay
+/// this run prepared.
+///
+/// The comparison deliberately runs against `source_head`, not against the
+/// prepared overlay. The overlay is a local commit that has not been pushed, so
+/// the source repository cannot compare it: asking the compare API about an
+/// object it does not have fails outright. The substitution is exact rather than
+/// approximate, because the overlay is a single new commit whose parent is
+/// `source_head` (or is `source_head` itself when the trees already match). Its
+/// ancestors are therefore `source_head`'s ancestors plus itself, so
+/// `current_target` is an ancestor of the overlay exactly when it is an ancestor
+/// of `source_head`. Callers skip this check when the branch already points at
+/// the prepared overlay.
 fn ensure_remote_fast_forward(
     port: &impl PromotePort,
     current_target: &str,
+    source_head: &str,
     requested_target: &str,
 ) -> Result<()> {
-    let comparison = format!("{current_target}...{requested_target}");
+    let comparison = format!("{current_target}...{source_head}");
     let output = port
         .gh_output(&["api", &format!("repos/{SOURCE_REPO}/compare/{comparison}")])
         .with_context(|| {
             format!(
-                "promote: compare remote branch target {current_target} to requested overlay head {requested_target} in swarm authority"
+                "promote: compare remote branch target {current_target} to source head {source_head} in swarm authority"
             )
         })?;
     let receipt: CompareReceipt = serde_json::from_slice(&output)
         .context("promote: parse source branch ancestry comparison")?;
     if !matches!(receipt.status.as_str(), "ahead" | "identical") {
         bail!(
-            "promote: existing promotion branch target {current_target} is not fast-forwardable to {requested_target} (compare status {:?})",
+            "promote: existing promotion branch target {current_target} is not fast-forwardable to {requested_target} (compare status {:?} against source head {source_head})",
             receipt.status
         );
     }
@@ -877,329 +883,6 @@ fn normalized_source_only_path(path: &str) -> Result<String> {
     Ok(path.to_string())
 }
 
-#[derive(Default, Debug)]
-struct TransitionAlignmentPolicy {
-    source_only_paths: BTreeSet<String>,
-    two_sided_paths: BTreeSet<String>,
-}
-
-fn validate_transition_mirror(
-    port: &impl PromotePort,
-    entries: &[TransitionSourceMirror],
-) -> Result<TransitionAlignmentPolicy> {
-    let mut policy = TransitionAlignmentPolicy::default();
-    for entry in entries {
-        let (source_repo, source_pr) = parse_transition_pr_receipt("source", &entry.source_pr)?;
-        let (swarm_repo, swarm_pr) = parse_transition_pr_receipt("swarm", &entry.swarm_pr)?;
-        let _ = &entry.source_merge_sha;
-        if source_repo != SOURCE_REPO {
-            bail!(
-                "transition source PR {} must be in source repo {}",
-                entry.source_pr,
-                SOURCE_REPO
-            );
-        }
-        if swarm_repo != SWARM_REPO {
-            bail!(
-                "transition swarm PR {} must be in swarm repo {}",
-                entry.swarm_pr,
-                SWARM_REPO
-            );
-        }
-        let allowed_paths: Vec<&str> = entry.paths.iter().map(String::as_str).collect();
-        match entry.status.as_str() {
-            "equivalent" => {
-                let source_patch = source_pull_request_patch(port, &source_repo, source_pr)?;
-                let swarm_patch = source_pull_request_patch(port, &swarm_repo, swarm_pr)?;
-                if is_cargo_lock_equivalent_transition(&source_patch, &swarm_patch, &allowed_paths)?
-                {
-                    // Continue with policy collection after successful semantic equivalence.
-                } else {
-                    let source_identity = patch_fingerprint(&source_patch, &allowed_paths)?;
-                    let swarm_identity = patch_fingerprint(&swarm_patch, &allowed_paths)?;
-                    if source_identity != swarm_identity {
-                        bail!(
-                            "transition {} is not equivalent to {} for tracked paths {allowed_paths:?}: {source_identity} != {swarm_identity}",
-                            entry.source_pr,
-                            entry.swarm_pr
-                        );
-                    }
-                }
-            }
-            "superseded_in_swarm" => {
-                let source_patch = source_pull_request_patch(port, &source_repo, source_pr)?;
-                let swarm_patch = source_pull_request_patch(port, &swarm_repo, swarm_pr)?;
-                let source_identity = patch_fingerprint(&source_patch, &allowed_paths)?;
-                let swarm_identity = patch_fingerprint(&swarm_patch, &allowed_paths)?;
-                if source_identity == swarm_identity {
-                    bail!(
-                        "superseded transition {} to {} did not change tracked code compared to source",
-                        entry.source_pr,
-                        entry.swarm_pr
-                    );
-                }
-                validate_superseded_lockfile_transition(
-                    &source_patch,
-                    &swarm_patch,
-                    &allowed_paths,
-                )?;
-            }
-            "missing_in_swarm" => {
-                if !entry.swarm_merge_sha.is_empty() {
-                    bail!(
-                        "transition {} is missing_in_swarm but still has swarm_merge_sha {}",
-                        entry.source_pr,
-                        entry.swarm_merge_sha
-                    );
-                }
-            }
-            "conflicting" => {
-                bail!(
-                    "transition {} is marked conflicting; resolve before promotion",
-                    entry.source_pr
-                );
-            }
-            other => {
-                bail!(
-                    "transition {} has invalid status {other:?} (expected equivalent, superseded_in_swarm, missing_in_swarm, conflicting)",
-                    entry.source_pr
-                );
-            }
-        }
-        for path in &entry.paths {
-            if path.trim().is_empty() {
-                continue;
-            }
-            policy.source_only_paths.insert(path.clone());
-            if entry.status != "missing_in_swarm" {
-                policy.two_sided_paths.insert(path.clone());
-            }
-        }
-    }
-    Ok(policy)
-}
-
-fn parse_transition_pr_receipt(label: &str, value: &str) -> Result<(String, u64)> {
-    let Some((repo, number)) = value.split_once('#') else {
-        bail!("transition {label} receipt {value:?} must be owner/repo#number");
-    };
-    let number = number.parse().with_context(|| {
-        format!("transition {label} receipt {value:?} must parse as a PR number")
-    })?;
-    if repo.is_empty() || number == 0 {
-        bail!("transition {label} receipt {value:?} has empty repo/invalid PR number");
-    }
-    Ok((repo.to_string(), number))
-}
-
-fn source_pull_request_patch(port: &impl PromotePort, repo: &str, number: u64) -> Result<String> {
-    let output = port.gh_output(&["pr", "diff", "--repo", repo, &number.to_string()])?;
-    Ok(String::from_utf8(output)
-        .with_context(|| format!("promote: read PR diff for {repo}#{number}"))?
-        .trim_end_matches('\n')
-        .to_string())
-}
-
-fn is_cargo_lock_equivalent_transition(
-    source_patch: &str,
-    swarm_patch: &str,
-    allowed_paths: &[&str],
-) -> Result<bool> {
-    let allowed = if allowed_paths.is_empty() {
-        Vec::new()
-    } else {
-        allowed_paths.to_vec()
-    };
-    if !allowed.is_empty() && allowed != vec!["Cargo.lock"] {
-        return Ok(false);
-    }
-    let source = parse_cargo_lock_transitions(source_patch, &["Cargo.lock"])?;
-    let swarm = parse_cargo_lock_transitions(swarm_patch, &["Cargo.lock"])?;
-    if source.is_empty() || swarm.is_empty() {
-        return Ok(false);
-    }
-    Ok(source == swarm)
-}
-
-fn patch_fingerprint(patch: &str, allowed_paths: &[&str]) -> Result<String> {
-    let allowed = if allowed_paths.is_empty() {
-        None
-    } else {
-        Some(allowed_paths.iter().copied().collect::<BTreeSet<_>>())
-    };
-    let mut lines = Vec::new();
-    let mut current_path: Option<String> = None;
-    for line in patch.lines() {
-        if let Some(path) = parse_diff_path(line) {
-            current_path = Some(path);
-            continue;
-        }
-        if current_path.is_none() {
-            continue;
-        }
-        if let Some(selected) = &allowed
-            && !selected.is_empty()
-        {
-            let current = current_path
-                .as_deref()
-                .context("promote: missing path while parsing PR patch")?;
-            if !selected.contains(current) {
-                continue;
-            }
-        }
-        if line.starts_with("index ")
-            || line.starts_with("@@ ")
-            || line.starts_with("\\ No newline at end of file")
-            || line.starts_with("---")
-            || line.starts_with("+++")
-            || line.starts_with("diff --git")
-            || line.starts_with("new file mode")
-            || line.starts_with("deleted file mode")
-            || line.starts_with("old mode")
-            || line.starts_with("new mode")
-            || line.starts_with("similarity index")
-            || line.starts_with("rename from")
-            || line.starts_with("rename to")
-        {
-            continue;
-        }
-        if line.starts_with('+') || line.starts_with('-') {
-            lines.push(line);
-        }
-    }
-
-    let mut hash: u64 = 0xcbf29ce484222325;
-    for line in lines {
-        for byte in format!("{line}\n").bytes() {
-            hash ^= u64::from(byte);
-            hash = hash.wrapping_mul(0x100000001b3);
-        }
-    }
-    Ok(format!("{hash:016x}"))
-}
-
-fn parse_diff_path(line: &str) -> Option<String> {
-    if !line.starts_with("diff --git ") {
-        return None;
-    }
-    let parts: Vec<_> = line.split_whitespace().collect();
-    parts
-        .get(3)
-        .and_then(|path| path.strip_prefix("b/"))
-        .map(std::string::ToString::to_string)
-        .or_else(|| {
-            parts
-                .get(2)
-                .and_then(|path| path.strip_prefix("b/"))
-                .map(std::string::ToString::to_string)
-                .or_else(|| parts.get(2).map(|path| (*path).to_string()))
-        })
-}
-
-fn validate_superseded_lockfile_transition(
-    source_patch: &str,
-    swarm_patch: &str,
-    allowed_paths: &[&str],
-) -> Result<()> {
-    let source = parse_cargo_lock_transitions(source_patch, allowed_paths)?;
-    let swarm = parse_cargo_lock_transitions(swarm_patch, allowed_paths)?;
-    let mut overlapped = false;
-    let mut diverged = false;
-    for (name, (_, source_to)) in source {
-        if let Some((_, swarm_to)) = swarm.get(&name) {
-            overlapped = true;
-            if source_to.is_some()
-                && swarm_to.is_some()
-                && source_to.as_deref() != swarm_to.as_deref()
-            {
-                diverged = true;
-            }
-        }
-    }
-    if !overlapped {
-        bail!("superseded transition has no overlapping Cargo.lock dependency names");
-    }
-    if !diverged {
-        bail!("superseded transition did not move to a different version in swarm");
-    }
-    Ok(())
-}
-
-fn parse_cargo_lock_transitions(
-    patch: &str,
-    allowed_paths: &[&str],
-) -> Result<BTreeMap<String, (Option<String>, Option<String>)>> {
-    let mut transitions = BTreeMap::new();
-    let allowed = if allowed_paths.is_empty() {
-        None
-    } else {
-        Some(allowed_paths.iter().copied().collect::<BTreeSet<_>>())
-    };
-    let mut current_path: Option<String> = None;
-    let mut current_package: Option<String> = None;
-    for line in patch.lines() {
-        if let Some(path) = parse_diff_path(line) {
-            current_path = Some(path);
-            current_package = None;
-            continue;
-        }
-        if current_path.is_none() {
-            continue;
-        }
-        if let Some(selected) = &allowed
-            && !selected.is_empty()
-        {
-            let current = current_path
-                .as_deref()
-                .context("promote: missing path while parsing Cargo.lock patch")?;
-            if !selected.contains(current) {
-                continue;
-            }
-        }
-        if !line.starts_with('+') && !line.starts_with('-') && !line.starts_with(' ') {
-            continue;
-        }
-        if line.starts_with("---") || line.starts_with("+++") {
-            continue;
-        }
-        let content = line[1..].trim();
-        if let Some(name) = parse_toml_keyed_value(content, "name") {
-            current_package = Some(name);
-            continue;
-        }
-        if let Some(version) = parse_toml_keyed_value(content, "version") {
-            let Some(name) = current_package.clone() else {
-                continue;
-            };
-            let entry = transitions.entry(name).or_insert((None, None));
-            if line.starts_with('-') {
-                entry.0 = Some(version);
-            } else if line.starts_with('+') {
-                entry.1 = Some(version);
-            }
-            continue;
-        }
-    }
-    Ok(transitions)
-}
-
-/// Parse a single `key = "value"` line out of a `Cargo.lock` diff.
-///
-/// Delegates to the TOML parser instead of stripping quotes by hand so escapes,
-/// empty strings, and unterminated values are handled correctly. Hand-rolled
-/// quote stripping panicked on a lone `"`, which reached this code from any
-/// patch the transition manifest names.
-fn parse_toml_keyed_value(line: &str, key: &str) -> Option<String> {
-    let line = line.trim();
-    // Cheap reject so the TOML parser is not invoked for every diff line.
-    if !line.strip_prefix(key)?.trim_start().starts_with('=') {
-        return None;
-    }
-    let table = line.parse::<toml::Table>().ok()?;
-    let value = table.get(key)?.as_str()?;
-    (!value.is_empty()).then(|| value.to_string())
-}
-
 fn ensure_source_only_alignment(
     port: &impl PromotePort,
     workspace_root: &Path,
@@ -1207,21 +890,18 @@ fn ensure_source_only_alignment(
     swarm_sha: &str,
     merge_base: &str,
     source_only_paths: &[String],
-    transition_policy: &TransitionAlignmentPolicy,
 ) -> Result<()> {
     let differing = git_diff_names(port, workspace_root, source_head, swarm_sha)?;
     let source_changed = git_diff_names_set(port, workspace_root, merge_base, source_head)?;
     let swarm_changed = git_diff_names_set(port, workspace_root, merge_base, swarm_sha)?;
-    let mut approved = source_only_paths
+    // `policy/source-only-paths.toml` is the only grant of divergence authority.
+    // Two-sided divergence has no approval mechanism at all and always blocks:
+    // reconciling a path both repositories changed needs recorded evidence that
+    // the two changes agree, which is not modelled yet.
+    let approved = source_only_paths
         .iter()
         .map(String::as_str)
         .collect::<BTreeSet<_>>();
-    approved.extend(
-        transition_policy
-            .source_only_paths
-            .iter()
-            .map(String::as_str),
-    );
     let mut unapproved: Vec<String> = Vec::new();
     let mut two_sided: Vec<String> = Vec::new();
     for path in differing {
@@ -1229,10 +909,7 @@ fn ensure_source_only_alignment(
         let swarm_only = swarm_changed.contains(path.as_str());
         if source_only && !swarm_only && !approved.contains(path.as_str()) {
             unapproved.push(path);
-        } else if source_only
-            && swarm_only
-            && !transition_policy.two_sided_paths.contains(path.as_str())
-        {
+        } else if source_only && swarm_only {
             two_sided.push(path);
         }
     }
@@ -1273,17 +950,34 @@ fn git_diff_names_set(
         .collect())
 }
 
+/// Build the source overlay commit: the swarm tree applied onto source head with
+/// policy-approved source-only paths taken from source.
+///
+/// `isolate_objects` redirects newly written git objects into a throwaway store
+/// that cleanup deletes, so a planning-only run leaves the repository's object
+/// database untouched. The overlay commit is fully deterministic (fixed author,
+/// committer, and dates), so the sha reported from an isolated run is the same
+/// sha a later executing run materializes for real.
 fn prepare_source_overlay(
     port: &impl PromotePort,
     workspace_root: &Path,
     source_head: &str,
     swarm_sha: &str,
     source_only_paths: &[String],
+    isolate_objects: bool,
 ) -> Result<PreparedOverlay> {
-    let workspace = OverlayWorkspace::claim(port, workspace_root, source_head, swarm_sha)?;
+    let workspace = OverlayWorkspace::claim(
+        port,
+        workspace_root,
+        source_head,
+        swarm_sha,
+        isolate_objects,
+    )?;
     let prepared = (|| -> Result<String> {
         let overlay_root = workspace.path();
-        port.git_output(overlay_root, &["checkout", swarm_sha, "--", "."])?;
+        let env = workspace.git_env();
+        let git = |args: &[&str]| port.git_output_with_env(overlay_root, args, &env);
+        git(&["checkout", swarm_sha, "--", "."])?;
         for path in source_only_paths {
             // A source-only path must match the source tree exactly, which
             // includes its absence. Restoring only when source still has the
@@ -1291,29 +985,22 @@ fn prepare_source_overlay(
             // overlay via the swarm copy, and `ensure_source_only_alignment`
             // approves that difference, so nothing downstream would catch the
             // reintroduction.
-            if tree_has_path(port, overlay_root, source_head, path.as_str())? {
-                port.git_output(
-                    overlay_root,
-                    &["checkout", source_head, "--", path.as_str()],
-                )
-                .with_context(|| {
+            if tree_has_path_with_env(port, overlay_root, source_head, path.as_str(), &env)? {
+                git(&["checkout", source_head, "--", path.as_str()]).with_context(|| {
                     format!("promote: preserve source-only path {path} while applying {swarm_sha}")
                 })?;
             } else {
-                port.git_output(
-                    overlay_root,
-                    &["rm", "-r", "--force", "--ignore-unmatch", "--", path.as_str()],
-                )
-                .with_context(|| {
-                    format!(
-                        "promote: honour source deletion of source-only path {path} while applying {swarm_sha}"
-                    )
-                })?;
+                git(&["rm", "-r", "--force", "--ignore-unmatch", "--", path.as_str()]).with_context(
+                    || {
+                        format!(
+                            "promote: honour source deletion of source-only path {path} while applying {swarm_sha}"
+                        )
+                    },
+                )?;
             }
         }
-        port.git_output(overlay_root, &["add", "-A"])?;
-        let staged = port
-            .git_output(overlay_root, &["diff", "--cached", "--name-only"])
+        git(&["add", "-A"])?;
+        let staged = git(&["diff", "--cached", "--name-only"])
             .with_context(|| format!("promote: inspect staged overlay changes for {swarm_sha}"))?;
         if staged.is_empty() {
             return Ok(source_head.to_string());
@@ -1332,6 +1019,8 @@ fn prepare_source_overlay(
             ("GIT_AUTHOR_DATE", "2026-07-23T00:00:00+00:00"),
             ("GIT_COMMITTER_DATE", "2026-07-23T00:00:00+00:00"),
         ];
+        let mut commit_env: Vec<(&str, &str)> = commit_env.to_vec();
+        commit_env.extend(env.iter().copied());
         port.git_output_with_env(
             overlay_root,
             &[
@@ -1345,7 +1034,7 @@ fn prepare_source_overlay(
             ],
             &commit_env,
         )?;
-        port.git_output(overlay_root, &["rev-parse", "HEAD"])
+        git(&["rev-parse", "HEAD"])
     })();
     let cleanup_warnings = workspace.release();
     match prepared {
@@ -1380,6 +1069,13 @@ struct OverlayWorkspace<'a, P: PromotePort> {
     port: &'a P,
     workspace_root: &'a Path,
     path: PathBuf,
+    /// Throwaway object store for a planning-only run, held as a sibling of the
+    /// worktree so `git add -A` never sees it. `None` when the overlay must
+    /// persist because the run will push it.
+    object_dir: Option<PathBuf>,
+    /// Environment redirecting object writes into `object_dir`, with the real
+    /// object directory as an alternate so reads still resolve.
+    env: Vec<(String, String)>,
     warnings: Vec<String>,
     released: bool,
 }
@@ -1399,6 +1095,7 @@ impl<'a, P: PromotePort> OverlayWorkspace<'a, P> {
         workspace_root: &'a Path,
         source_head: &str,
         swarm_sha: &str,
+        isolate_objects: bool,
     ) -> Result<Self> {
         let parent = workspace_root.join("target").join("promotion-overlay");
         fs::create_dir_all(&parent).with_context(|| {
@@ -1434,10 +1131,44 @@ impl<'a, P: PromotePort> OverlayWorkspace<'a, P> {
                 parent.display()
             )
         })?;
+        let (object_dir, env) = if isolate_objects {
+            let object_dir = path.with_extension("objects");
+            for sub in ["", "info", "pack"] {
+                fs::create_dir_all(object_dir.join(sub)).with_context(|| {
+                    format!(
+                        "promote: create isolated object store {}",
+                        object_dir.display()
+                    )
+                })?;
+            }
+            let real_objects = port
+                .git_output(
+                    workspace_root,
+                    &[
+                        "rev-parse",
+                        "--path-format=absolute",
+                        "--git-path",
+                        "objects",
+                    ],
+                )
+                .context("promote: resolve repository object directory")?;
+            let env = vec![
+                (
+                    "GIT_OBJECT_DIRECTORY".to_string(),
+                    object_dir.to_string_lossy().into_owned(),
+                ),
+                ("GIT_ALTERNATE_OBJECT_DIRECTORIES".to_string(), real_objects),
+            ];
+            (Some(object_dir), env)
+        } else {
+            (None, Vec::new())
+        };
         let workspace = Self {
             port,
             workspace_root,
             path,
+            object_dir,
+            env,
             warnings: Vec::new(),
             released: false,
         };
@@ -1456,6 +1187,15 @@ impl<'a, P: PromotePort> OverlayWorkspace<'a, P> {
 
     fn path_arg(&self) -> String {
         self.path.to_string_lossy().into_owned()
+    }
+
+    /// Environment for git calls inside this overlay. Empty when objects are not
+    /// isolated, so callers can pass it unconditionally.
+    fn git_env(&self) -> Vec<(&str, &str)> {
+        self.env
+            .iter()
+            .map(|(key, value)| (key.as_str(), value.as_str()))
+            .collect()
     }
 
     /// Clean up and surface any residue that survived, so the caller can record
@@ -1484,6 +1224,15 @@ impl<'a, P: PromotePort> OverlayWorkspace<'a, P> {
         {
             self.warnings.push(format!(
                 "failed to remove overlay workspace {path_arg}: {error}"
+            ));
+        }
+        if let Some(object_dir) = &self.object_dir
+            && let Err(error) = fs::remove_dir_all(object_dir)
+            && object_dir.exists()
+        {
+            self.warnings.push(format!(
+                "failed to remove isolated object store {}: {error}",
+                object_dir.display()
             ));
         }
         if let Err(error) = self
@@ -1516,16 +1265,18 @@ fn overlay_nonce(attempt: u32) -> u64 {
     nanos.wrapping_add(u64::from(attempt).wrapping_mul(0x9E37_79B9_7F4A_7C15))
 }
 
-fn tree_has_path(
+fn tree_has_path_with_env(
     port: &impl PromotePort,
     workspace_root: &Path,
     revision: &str,
     path: &str,
+    env: &[(&str, &str)],
 ) -> Result<bool> {
     let output = port
-        .git_output(
+        .git_output_with_env(
             workspace_root,
             &["ls-tree", "-r", "--name-only", revision, "--", path],
+            env,
         )
         .with_context(|| format!("promote: inspect path {path} in {revision}"))?;
     let output = output.trim().to_string();
@@ -2190,6 +1941,7 @@ merge-old source-parent another-swarm-head
             &fixture.governance,
             &fixture.current,
             &source_only_paths,
+            false,
         )?;
         ensure!(
             overlay.cleanup_warnings.is_empty(),
@@ -2301,6 +2053,7 @@ merge-old source-parent another-swarm-head
             &fixture.governance,
             &fixture.current,
             &source_only_paths,
+            false,
         )?;
         ensure!(overlay.cleanup_warnings.is_empty());
         ensure!(overlay_children(fixture.dir.path())?.is_empty());
@@ -2338,12 +2091,22 @@ merge-old source-parent another-swarm-head
         let fixture = fixture_git()?;
         let root = fixture.dir.path();
 
-        let first =
-            OverlayWorkspace::claim(&SystemPort, root, &fixture.governance, &fixture.current)?;
+        let first = OverlayWorkspace::claim(
+            &SystemPort,
+            root,
+            &fixture.governance,
+            &fixture.current,
+            false,
+        )?;
         let first_path = first.path().to_path_buf();
 
-        let second =
-            OverlayWorkspace::claim(&SystemPort, root, &fixture.governance, &fixture.current)?;
+        let second = OverlayWorkspace::claim(
+            &SystemPort,
+            root,
+            &fixture.governance,
+            &fixture.current,
+            false,
+        )?;
         let second_path = second.path().to_path_buf();
         ensure!(first_path != second_path, "overlay paths must be unique");
         ensure!(
@@ -2377,8 +2140,13 @@ merge-old source-parent another-swarm-head
     fn overlay_cleanup_reconciles_stale_registered_worktree() -> Result<()> {
         let fixture = fixture_git()?;
         let root = fixture.dir.path();
-        let stale =
-            OverlayWorkspace::claim(&SystemPort, root, &fixture.governance, &fixture.current)?;
+        let stale = OverlayWorkspace::claim(
+            &SystemPort,
+            root,
+            &fixture.governance,
+            &fixture.current,
+            false,
+        )?;
         let stale_path = stale.path().to_path_buf();
         std::mem::forget(stale);
         fs::remove_dir_all(&stale_path)?;
@@ -2409,8 +2177,13 @@ merge-old source-parent another-swarm-head
         fs::create_dir_all(&orphan)?;
         fs::write(orphan.join("leftover.txt"), b"residue")?;
 
-        let workspace =
-            OverlayWorkspace::claim(&SystemPort, root, &fixture.governance, &fixture.current)?;
+        let workspace = OverlayWorkspace::claim(
+            &SystemPort,
+            root,
+            &fixture.governance,
+            &fixture.current,
+            false,
+        )?;
         ensure!(
             workspace.path() != orphan,
             "claim adopted a stale directory instead of a fresh one"
@@ -2442,6 +2215,7 @@ merge-old source-parent another-swarm-head
             &fixture.governance,
             "0000000000000000000000000000000000000000",
             &source_only_paths,
+            false,
         )
         .expect_err("overlay against a missing swarm sha should fail");
         ensure!(!error.to_string().is_empty());
@@ -2513,6 +2287,21 @@ merge-old source-parent another-swarm-head
         let mut output = Vec::new();
         run_with_port_to(&port, inputs, &mut output)?;
         ensure!(port.git_mutations.borrow().len() == 1);
+        // The push must be leased against the target observed while planning, so
+        // a branch moved by someone else in between is rejected, not overwritten.
+        // Here no branch existed yet, so the lease asserts exactly that.
+        let branch = format!("promote/swarm-current-{}", &fixture.current[..12]);
+        ensure!(
+            port.git_mutations.borrow()[0]
+                == vec![
+                    "push".to_string(),
+                    format!("--force-with-lease=refs/heads/{branch}:"),
+                    "origin".to_string(),
+                    format!("{overlay}:refs/heads/{branch}"),
+                ],
+            "unexpected push invocation: {:?}",
+            port.git_mutations.borrow()[0]
+        );
         ensure!(
             port.gh_calls
                 .borrow()
@@ -2692,10 +2481,25 @@ merge-old source-parent another-swarm-head
             .err()
             .context("expected non-fast-forward rejection")?;
         ensure!(error.to_string().contains("not fast-forwardable"));
-        ensure!(port.gh_calls.borrow().iter().any(|call| {
-            call.get(1)
-                .is_some_and(|path| path.starts_with("repos/EffortlessMetrics/shiplog/compare/"))
-        }));
+        // The comparison must name the existing remote target and the source
+        // head. Comparing against the prepared overlay asks the source
+        // repository about a local commit it has never received, which fails
+        // outright rather than yielding a fast-forward decision.
+        let expected = format!(
+            "repos/EffortlessMetrics/shiplog/compare/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa...{}",
+            fixture.governance
+        );
+        let compared = port
+            .gh_calls
+            .borrow()
+            .iter()
+            .filter_map(|call| call.get(1).cloned())
+            .find(|path| path.starts_with("repos/EffortlessMetrics/shiplog/compare/"))
+            .context("expected a compare call")?;
+        ensure!(
+            compared == expected,
+            "compared {compared} but expected {expected}"
+        );
         ensure!(port.git_mutations.borrow().is_empty());
         ensure!(overlay_children(fixture.dir.path())?.is_empty());
         Ok(())
@@ -2904,6 +2708,96 @@ merge-old source-parent another-swarm-head
         );
     }
 
+    /// Every loose object, ref, and worktree registration in the repository,
+    /// so a planning-only run can be proven not to have written to any of them.
+    fn repository_state(root: &Path) -> Result<(Vec<String>, String, String)> {
+        let mut objects = Vec::new();
+        let objects_root = root.join(".git").join("objects");
+        let mut stack = vec![objects_root.clone()];
+        while let Some(dir) = stack.pop() {
+            if !dir.exists() {
+                continue;
+            }
+            for entry in fs::read_dir(&dir)? {
+                let path = entry?.path();
+                if path.is_dir() {
+                    stack.push(path);
+                } else {
+                    objects.push(path.to_string_lossy().into_owned());
+                }
+            }
+        }
+        objects.sort();
+        let refs = git_fixture(root, &["show-ref"]).unwrap_or_default();
+        let worktrees = git_fixture(root, &["worktree", "list", "--porcelain"])?;
+        Ok((objects, refs, worktrees))
+    }
+
+    /// `--dry-run` must mutate nothing. The overlay is a real commit, so building
+    /// it in the repository wrote a tree, a commit, and blobs into
+    /// `.git/objects` that cleanup could not undo. It is now built in a
+    /// throwaway object store, and the reported sha still matches what an
+    /// executing run materializes because the commit is fully deterministic.
+    #[test]
+    fn dry_run_reports_overlay_without_writing_to_the_object_database() -> Result<()> {
+        let fixture = fixture_git()?;
+        let root = fixture.dir.path();
+        let source_only_paths = load_source_only_paths(root)?;
+
+        let before = repository_state(root)?;
+        let planned = prepare_source_overlay(
+            &SystemPort,
+            root,
+            &fixture.governance,
+            &fixture.current,
+            &source_only_paths,
+            true,
+        )?;
+        let after = repository_state(root)?;
+
+        ensure!(
+            planned.cleanup_warnings.is_empty(),
+            "cleanup residue: {:?}",
+            planned.cleanup_warnings
+        );
+        ensure!(
+            before.0 == after.0,
+            "dry run wrote {} new object file(s) into .git/objects",
+            after.0.len().saturating_sub(before.0.len())
+        );
+        ensure!(before.1 == after.1, "dry run changed refs");
+        ensure!(
+            before.2 == after.2,
+            "dry run left worktree registrations changed:\n{}",
+            after.2
+        );
+        ensure!(overlay_children(root)?.is_empty());
+        // The planned sha is not resolvable, because its objects are gone.
+        ensure!(
+            git_fixture(root, &["cat-file", "-e", &planned.sha]).is_err(),
+            "dry-run overlay {} survived in the object database",
+            planned.sha
+        );
+
+        // Executing for real produces the same sha and keeps it resolvable.
+        let executed = prepare_source_overlay(
+            &SystemPort,
+            root,
+            &fixture.governance,
+            &fixture.current,
+            &source_only_paths,
+            false,
+        )?;
+        ensure!(
+            executed.sha == planned.sha,
+            "dry run reported {} but execution produced {}",
+            planned.sha,
+            executed.sha
+        );
+        git_fixture(root, &["cat-file", "-e", &executed.sha])?;
+        Ok(())
+    }
+
     /// A source-authoritative path must match source exactly, including when
     /// source deleted it. Restoring only when source still had the path let the
     /// swarm copy survive, and `ensure_source_only_alignment` approves that
@@ -2939,6 +2833,7 @@ merge-old source-parent another-swarm-head
             &source_head,
             &swarm_sha,
             &["retired.toml".to_string()],
+            false,
         )?;
         ensure!(overlay.cleanup_warnings.is_empty());
 
@@ -2952,238 +2847,6 @@ merge-old source-parent another-swarm-head
             product.trim() == "v2",
             "overlay lost swarm product content: {product:?}"
         );
-        Ok(())
-    }
-
-    /// A lone `"` satisfied both the quote-prefix and quote-suffix tests, then
-    /// panicked on the `1..0` slice. Malformed and escaped values must be
-    /// rejected, not sliced.
-    #[test]
-    fn parse_toml_keyed_value_rejects_malformed_values_without_panicking() {
-        for malformed in [
-            "name = \"",
-            "name = \"\"",
-            "name = ",
-            "name =",
-            "name",
-            "name = \"unterminated",
-            "name = [\"tokio\"]",
-            "name = 1",
-            "version = \"",
-        ] {
-            assert_eq!(
-                parse_toml_keyed_value(malformed, "name"),
-                None,
-                "expected no value from {malformed:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn parse_toml_keyed_value_reads_well_formed_package_lines() {
-        assert_eq!(
-            parse_toml_keyed_value("name = \"tokio\"", "name").as_deref(),
-            Some("tokio")
-        );
-        assert_eq!(
-            parse_toml_keyed_value("version = \"1.53.1\"", "version").as_deref(),
-            Some("1.53.1")
-        );
-        // A different key on the same line must not be adopted.
-        assert_eq!(parse_toml_keyed_value("version = \"1.53.1\"", "name"), None);
-        // Escapes are handled by the TOML parser rather than mis-sliced.
-        assert_eq!(
-            parse_toml_keyed_value("name = \"a\\\"b\"", "name").as_deref(),
-            Some("a\"b")
-        );
-    }
-
-    #[test]
-    fn transition_patch_fingerprint_normalizes_pr_metadata() {
-        let regular_merge_patch = r#"diff --git a/Cargo.lock b/Cargo.lock
-index eecb0e2..abc1234 100644
---- a/Cargo.lock
-+++ b/Cargo.lock
-@@ -10,7 +10,7 @@
--name = "clap"
--version = "4.6.1"
-+name = "clap"
-+version = "4.6.2"
-diff --git a/other.txt b/other.txt
-index 111111..222222 100644
---- a/other.txt
-+++ b/other.txt
-@@ -1 +1 @@
--a
-+b
-"#;
-        let squash_merge_patch = r#"diff --git a/Cargo.lock b/Cargo.lock
-index 999999..abcdef0 100644
---- a/Cargo.lock
-+++ b/Cargo.lock
-@@ -10,7 +10,7 @@
--name = "clap"
--version = "4.6.1"
-+name = "clap"
-+version = "4.6.2"
-"#;
-        let regular = patch_fingerprint(regular_merge_patch, &["Cargo.lock"]).expect("fingerprint");
-        let squash = patch_fingerprint(squash_merge_patch, &["Cargo.lock"]).expect("fingerprint");
-        assert_eq!(regular, squash);
-        assert!(!regular.is_empty());
-    }
-
-    #[test]
-    fn cargo_lock_transition_parses_versions() {
-        let source_patch = r#"diff --git a/Cargo.lock b/Cargo.lock
-index 123..456 100644
---- a/Cargo.lock
-+++ b/Cargo.lock
-@@ -1,10 +1,10 @@
-  [[package]]
--name = "tokio"
--version = "1.52.3"
-+name = "tokio"
-+version = "1.53.0"
-diff --git a/src/lib.rs b/src/lib.rs
-index 10..20 100644
-"#;
-        let transitions = parse_cargo_lock_transitions(source_patch, &["Cargo.lock"])
-            .expect("parse source patch");
-        assert!(
-            transitions
-                .get("tokio")
-                .is_some_and(|transition| transition.0.as_deref() == Some("1.52.3"))
-        );
-        assert!(
-            transitions
-                .get("tokio")
-                .is_some_and(|transition| transition.1.as_deref() == Some("1.53.0"))
-        );
-    }
-
-    #[test]
-    fn validate_superseded_lockfile_transition_detects_version_progress() {
-        let source_patch = r#"diff --git a/Cargo.lock b/Cargo.lock
-index 123..456 100644
---- a/Cargo.lock
-+++ b/Cargo.lock
-@@ -1,6 +1,6 @@
-  [[package]]
--name = "tokio"
--version = "1.52.3"
-+name = "tokio"
-+version = "1.53.0"
-"#;
-        let swarm_patch = r#"diff --git a/Cargo.lock b/Cargo.lock
-index 999..abc 100644
---- a/Cargo.lock
-+++ b/Cargo.lock
-@@ -1,6 +1,6 @@
-  [[package]]
--name = "tokio"
--version = "1.53.0"
-+name = "tokio"
-+version = "1.53.1"
-"#;
-        validate_superseded_lockfile_transition(source_patch, swarm_patch, &["Cargo.lock"])
-            .expect("superseded transition should pass");
-    }
-
-    #[test]
-    fn transition_policy_allows_declared_paths_and_two_sided_files() -> Result<()> {
-        let source_patch = r#"diff --git a/Cargo.lock b/Cargo.lock
-index 123..456 100644
---- a/Cargo.lock
-+++ b/Cargo.lock
-@@ -1,6 +1,6 @@
-  [[package]]
--name = "clap"
--version = "4.6.1"
-+name = "clap"
-+version = "4.6.2"
-"#;
-        let swarm_patch = r#"diff --git a/Cargo.lock b/Cargo.lock
-index 123..456 100644
---- a/Cargo.lock
-+++ b/Cargo.lock
-@@ -1,6 +1,6 @@
-  [[package]]
--name = "clap"
--version = "4.6.1"
-+name = "clap"
-+version = "4.6.2"
-"#;
-        let transition = TransitionSourceMirror {
-            source_pr: "EffortlessMetrics/shiplog#659".to_string(),
-            source_merge_sha: "1111111111111111111111111111111111111111".to_string(),
-            swarm_pr: "EffortlessMetrics/shiplog-swarm#248".to_string(),
-            swarm_merge_sha: "2222222222222222222222222222222222222222".to_string(),
-            paths: vec!["Cargo.lock".to_string()],
-            status: "equivalent".to_string(),
-        };
-        let port = StubPort {
-            gh: RefCell::new(VecDeque::from([
-                Ok(source_patch.as_bytes().to_vec()),
-                Ok(swarm_patch.as_bytes().to_vec()),
-            ])),
-            gh_calls: RefCell::new(Vec::new()),
-            git_mutations: RefCell::new(Vec::new()),
-            remote_target: None,
-            fail_merge_base: false,
-        };
-        let policy = validate_transition_mirror(&port, std::slice::from_ref(&transition))?;
-        ensure!(policy.source_only_paths.contains("Cargo.lock"));
-        ensure!(policy.two_sided_paths.contains("Cargo.lock"));
-        ensure!(port.gh_calls.borrow().len() == 2);
-        Ok(())
-    }
-
-    #[test]
-    fn validate_transition_mirror_rejects_equivalent_mismatch() -> Result<()> {
-        let source_patch = r#"diff --git a/Cargo.lock b/Cargo.lock
-index 123..456 100644
---- a/Cargo.lock
-+++ b/Cargo.lock
-@@ -1,6 +1,6 @@
-  [[package]]
--name = "clap"
--version = "4.6.1"
-+name = "clap"
-+version = "4.6.2"
-"#;
-        let swarm_patch = r#"diff --git a/Cargo.lock b/Cargo.lock
-index 123..456 100644
---- a/Cargo.lock
-+++ b/Cargo.lock
-@@ -1,6 +1,6 @@
-  [[package]]
--name = "clap"
--version = "4.6.1"
-+name = "clap"
-+version = "4.7.0"
-"#;
-        let transition = TransitionSourceMirror {
-            source_pr: "EffortlessMetrics/shiplog#659".to_string(),
-            source_merge_sha: "1111111111111111111111111111111111111111".to_string(),
-            swarm_pr: "EffortlessMetrics/shiplog-swarm#248".to_string(),
-            swarm_merge_sha: "2222222222222222222222222222222222222222".to_string(),
-            paths: vec!["Cargo.lock".to_string()],
-            status: "equivalent".to_string(),
-        };
-        let port = StubPort {
-            gh: RefCell::new(VecDeque::from([
-                Ok(source_patch.as_bytes().to_vec()),
-                Ok(swarm_patch.as_bytes().to_vec()),
-            ])),
-            gh_calls: RefCell::new(Vec::new()),
-            git_mutations: RefCell::new(Vec::new()),
-            remote_target: None,
-            fail_merge_base: false,
-        };
-        let error = validate_transition_mirror(&port, std::slice::from_ref(&transition))
-            .expect_err("mismatch");
-        ensure!(error.to_string().contains("not equivalent"));
         Ok(())
     }
 
