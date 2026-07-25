@@ -1183,21 +1183,21 @@ fn parse_cargo_lock_transitions(
     Ok(transitions)
 }
 
+/// Parse a single `key = "value"` line out of a `Cargo.lock` diff.
+///
+/// Delegates to the TOML parser instead of stripping quotes by hand so escapes,
+/// empty strings, and unterminated values are handled correctly. Hand-rolled
+/// quote stripping panicked on a lone `"`, which reached this code from any
+/// patch the transition manifest names.
 fn parse_toml_keyed_value(line: &str, key: &str) -> Option<String> {
-    let needle = format!("{key} = ");
-    if !line.starts_with(&needle) {
+    let line = line.trim();
+    // Cheap reject so the TOML parser is not invoked for every diff line.
+    if !line.strip_prefix(key)?.trim_start().starts_with('=') {
         return None;
     }
-    let value = line[needle.len()..].trim();
-    if value.is_empty() || !value.starts_with('"') || !value.ends_with('"') {
-        return None;
-    }
-    let value = &value[1..value.len().saturating_sub(1)];
-    if value.is_empty() {
-        None
-    } else {
-        Some(value.to_string())
-    }
+    let table = line.parse::<toml::Table>().ok()?;
+    let value = table.get(key)?.as_str()?;
+    (!value.is_empty()).then(|| value.to_string())
 }
 
 fn ensure_source_only_alignment(
@@ -1285,16 +1285,31 @@ fn prepare_source_overlay(
         let overlay_root = workspace.path();
         port.git_output(overlay_root, &["checkout", swarm_sha, "--", "."])?;
         for path in source_only_paths {
-            if !tree_has_path(port, overlay_root, source_head, path.as_str())? {
-                continue;
+            // A source-only path must match the source tree exactly, which
+            // includes its absence. Restoring only when source still has the
+            // path would let a file source deliberately deleted survive in the
+            // overlay via the swarm copy, and `ensure_source_only_alignment`
+            // approves that difference, so nothing downstream would catch the
+            // reintroduction.
+            if tree_has_path(port, overlay_root, source_head, path.as_str())? {
+                port.git_output(
+                    overlay_root,
+                    &["checkout", source_head, "--", path.as_str()],
+                )
+                .with_context(|| {
+                    format!("promote: preserve source-only path {path} while applying {swarm_sha}")
+                })?;
+            } else {
+                port.git_output(
+                    overlay_root,
+                    &["rm", "-r", "--force", "--ignore-unmatch", "--", path.as_str()],
+                )
+                .with_context(|| {
+                    format!(
+                        "promote: honour source deletion of source-only path {path} while applying {swarm_sha}"
+                    )
+                })?;
             }
-            port.git_output(
-                overlay_root,
-                &["checkout", source_head, "--", path.as_str()],
-            )
-            .with_context(|| {
-                format!("promote: preserve source-only path {path} while applying {swarm_sha}")
-            })?;
         }
         port.git_output(overlay_root, &["add", "-A"])?;
         let staged = port
@@ -2886,6 +2901,100 @@ merge-old source-parent another-swarm-head
                 "EffortlessMetrics/shiplog-swarm#251".to_string(),
                 "EffortlessMetrics/shiplog-swarm#248".to_string(),
             ]
+        );
+    }
+
+    /// A source-authoritative path must match source exactly, including when
+    /// source deleted it. Restoring only when source still had the path let the
+    /// swarm copy survive, and `ensure_source_only_alignment` approves that
+    /// difference, so nothing downstream caught the reintroduction.
+    #[test]
+    fn overlay_honours_source_deletion_of_source_only_path() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let root = dir.path();
+        git_fixture(root, &["init", "--initial-branch=main"])?;
+        git_fixture(root, &["config", "user.email", "test@example.com"])?;
+        git_fixture(root, &["config", "user.name", "Promotion Test"])?;
+        fs::write(root.join("product.txt"), "v1\n")?;
+        fs::write(root.join("retired.toml"), "retired\n")?;
+        git_fixture(root, &["add", "-A"])?;
+        git_fixture(root, &["commit", "-m", "base"])?;
+
+        // Swarm still carries the retired path and moves the product forward.
+        git_fixture(root, &["switch", "-c", "swarm"])?;
+        fs::write(root.join("product.txt"), "v2\n")?;
+        git_fixture(root, &["add", "-A"])?;
+        git_fixture(root, &["commit", "-m", "feat: swarm change (#300)"])?;
+        let swarm_sha = git_fixture(root, &["rev-parse", "HEAD"])?;
+
+        // Source deliberately deletes the retired path.
+        git_fixture(root, &["switch", "main"])?;
+        git_fixture(root, &["rm", "--quiet", "retired.toml"])?;
+        git_fixture(root, &["commit", "-m", "chore: retire source-only path"])?;
+        let source_head = git_fixture(root, &["rev-parse", "HEAD"])?;
+
+        let overlay = prepare_source_overlay(
+            &SystemPort,
+            root,
+            &source_head,
+            &swarm_sha,
+            &["retired.toml".to_string()],
+        )?;
+        ensure!(overlay.cleanup_warnings.is_empty());
+
+        let listed = git_fixture(root, &["ls-tree", "-r", "--name-only", &overlay.sha])?;
+        ensure!(
+            !listed.lines().any(|line| line == "retired.toml"),
+            "overlay reintroduced a path source deleted: {listed}"
+        );
+        let product = git_fixture(root, &["show", &format!("{}:product.txt", overlay.sha)])?;
+        ensure!(
+            product.trim() == "v2",
+            "overlay lost swarm product content: {product:?}"
+        );
+        Ok(())
+    }
+
+    /// A lone `"` satisfied both the quote-prefix and quote-suffix tests, then
+    /// panicked on the `1..0` slice. Malformed and escaped values must be
+    /// rejected, not sliced.
+    #[test]
+    fn parse_toml_keyed_value_rejects_malformed_values_without_panicking() {
+        for malformed in [
+            "name = \"",
+            "name = \"\"",
+            "name = ",
+            "name =",
+            "name",
+            "name = \"unterminated",
+            "name = [\"tokio\"]",
+            "name = 1",
+            "version = \"",
+        ] {
+            assert_eq!(
+                parse_toml_keyed_value(malformed, "name"),
+                None,
+                "expected no value from {malformed:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_toml_keyed_value_reads_well_formed_package_lines() {
+        assert_eq!(
+            parse_toml_keyed_value("name = \"tokio\"", "name").as_deref(),
+            Some("tokio")
+        );
+        assert_eq!(
+            parse_toml_keyed_value("version = \"1.53.1\"", "version").as_deref(),
+            Some("1.53.1")
+        );
+        // A different key on the same line must not be adopted.
+        assert_eq!(parse_toml_keyed_value("version = \"1.53.1\"", "name"), None);
+        // Escapes are handled by the TOML parser rather than mis-sliced.
+        assert_eq!(
+            parse_toml_keyed_value("name = \"a\\\"b\"", "name").as_deref(),
+            Some("a\"b")
         );
     }
 
