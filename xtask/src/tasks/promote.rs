@@ -159,6 +159,13 @@ struct PreparedOverlay {
 struct PromotePlan {
     swarm_head: String,
     prepared_overlay_sha: String,
+    /// Paths the overlay resolved in source's favour. Enumerated because this is
+    /// the direction a reader cannot infer: every other differing path keeps
+    /// swarm content, and any path that would have discarded either side's work
+    /// blocks the promotion instead of appearing here.
+    overlay_source_paths: Vec<String>,
+    /// Differing paths that kept swarm content.
+    overlay_swarm_path_count: usize,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     overlay_cleanup_warnings: Vec<String>,
     source_ref: String,
@@ -335,6 +342,31 @@ fn run_with_port_to(
     let (receipt, job) = green_swarm_receipt(port, &swarm_sha)?;
 
     let branch = format!("promote/swarm-current-{}", &swarm_sha[..12]);
+    let merge_base = port
+        .git_output(
+            &inputs.workspace_root,
+            &["merge-base", &promotion_merge, &swarm_sha],
+        )
+        .with_context(|| {
+            format!(
+                "promote: determine merge base between promotion checkpoint {promotion_merge} and swarm head {swarm_sha}"
+            )
+        })?;
+    if merge_base.is_empty() {
+        bail!("promote: merge-base returned no commit for the promotion plan");
+    }
+    // Resolved before the overlay is built, so a promotion that cannot be
+    // resolved never materializes a commit, and so overlay construction and
+    // acceptance are driven by the same decision.
+    let overlay_plan = resolve_overlay_paths(
+        port,
+        &inputs.workspace_root,
+        &source_head,
+        &swarm_sha,
+        &merge_base,
+        &source_only_paths,
+        &transition_authority,
+    )?;
     let PreparedOverlay {
         sha: prepared_overlay_sha,
         cleanup_warnings: overlay_cleanup_warnings,
@@ -343,7 +375,7 @@ fn run_with_port_to(
         &inputs.workspace_root,
         &source_head,
         &swarm_sha,
-        &source_only_paths,
+        &overlay_plan.take_source,
         // A planning-only run must not leave the overlay commit in the object
         // database; an executing run has to keep it so the push has something to
         // send.
@@ -362,28 +394,6 @@ fn run_with_port_to(
         ensure_remote_fast_forward(port, existing_sha, &source_head, &prepared_overlay_sha)?;
     }
 
-    let merge_base = port
-        .git_output(
-            &inputs.workspace_root,
-            &["merge-base", &promotion_merge, &swarm_sha],
-        )
-        .with_context(|| {
-            format!(
-                "promote: determine merge base between promotion checkpoint {promotion_merge} and swarm head {swarm_sha}"
-            )
-        })?;
-    if merge_base.is_empty() {
-        bail!("promote: merge-base returned no commit for the promotion plan");
-    }
-    ensure_source_only_alignment(
-        port,
-        &inputs.workspace_root,
-        &source_head,
-        &swarm_sha,
-        &merge_base,
-        &source_only_paths,
-        &transition_authority,
-    )?;
     let included_swarm_prs = included_swarm_prs(
         port,
         &inputs.workspace_root,
@@ -463,6 +473,8 @@ fn run_with_port_to(
     let mut plan = PromotePlan {
         swarm_head: swarm_sha.clone(),
         prepared_overlay_sha: prepared_overlay_sha.clone(),
+        overlay_source_paths: overlay_plan.take_source.clone(),
+        overlay_swarm_path_count: overlay_plan.take_swarm,
         overlay_cleanup_warnings,
         source_ref: inputs.source_ref.clone(),
         source_head,
@@ -1072,7 +1084,24 @@ fn normalized_source_only_path(path: &str) -> Result<String> {
     Ok(path.to_string())
 }
 
-fn ensure_source_only_alignment(
+/// Per-path decisions for one promotion.
+///
+/// Acceptance and content used to be decided independently: alignment consulted
+/// the policy list plus transition receipts, while overlay construction
+/// consulted the policy list alone. Every disagreement between them silently
+/// dropped one side's work. Both now come from this single resolution.
+#[derive(Debug, Default)]
+struct OverlayPlan {
+    /// Paths the overlay restores from source. Everything else keeps swarm.
+    take_source: Vec<String>,
+    /// Count of differing paths that keep swarm content, for the receipt.
+    take_swarm: usize,
+}
+
+/// Decide what happens to every path that differs between source and swarm, and
+/// refuse the promotion if any of them cannot be resolved without discarding
+/// work.
+fn resolve_overlay_paths(
     port: &impl PromotePort,
     workspace_root: &Path,
     source_head: &str,
@@ -1080,56 +1109,72 @@ fn ensure_source_only_alignment(
     merge_base: &str,
     source_only_paths: &[String],
     transition_authority: &super::transition::TransitionAuthority,
-) -> Result<()> {
+) -> Result<OverlayPlan> {
     let differing = git_diff_names(port, workspace_root, source_head, swarm_sha)?;
     let source_changed = git_diff_names_set(port, workspace_root, merge_base, source_head)?;
     let swarm_changed = git_diff_names_set(port, workspace_root, merge_base, swarm_sha)?;
-    // One-sided source divergence is permanently allowed by
-    // `policy/source-only-paths.toml`, and temporarily by an unconsumed
-    // `missing_in_swarm` transition receipt. Two-sided divergence is allowed only
-    // where a transition receipt proves the two changes are reconciled.
-    let mut approved = source_only_paths
-        .iter()
-        .map(String::as_str)
-        .collect::<BTreeSet<_>>();
-    approved.extend(transition_authority.source_only.iter().map(String::as_str));
-    // Paths the overlay resolves in source's favour. A swarm change to one of
-    // these is silently reverted by overlay construction, so promoting it would
-    // claim to carry a swarm commit while dropping part of it.
     let source_authoritative = source_only_paths
         .iter()
         .map(String::as_str)
         .collect::<BTreeSet<_>>();
-    let mut unapproved: Vec<String> = Vec::new();
-    let mut two_sided: Vec<String> = Vec::new();
-    let mut swarm_mutated_source_only: Vec<String> = Vec::new();
+
+    let mut plan = OverlayPlan::default();
+    let mut blocked: Vec<String> = Vec::new();
     for path in differing {
         let source_touched = source_changed.contains(path.as_str());
         let swarm_touched = swarm_changed.contains(path.as_str());
-        if source_authoritative.contains(path.as_str()) && swarm_touched {
-            swarm_mutated_source_only.push(path);
+
+        if source_authoritative.contains(path.as_str()) {
+            if swarm_touched {
+                // The overlay resolves these in source's favour, so the swarm
+                // change would be reverted while the promotion claimed to carry
+                // it.
+                blocked.push(format!(
+                    "{path}: swarm changed a source-authoritative path; move it out of {SOURCE_ONLY_PATH_POLICY} or drop the swarm change"
+                ));
+            } else {
+                plan.take_source.push(path);
+            }
             continue;
         }
-        if source_touched && !swarm_touched && !approved.contains(path.as_str()) {
-            unapproved.push(path);
-        } else if source_touched
+
+        // Outside the policy list swarm is the product truth, so the overlay
+        // keeps swarm content. That is only safe when swarm is not missing
+        // something source has.
+        if source_touched && !swarm_touched {
+            let reason = match transition_authority.awaiting_swarm.get(path.as_str()) {
+                Some(receipt) => format!(
+                    "{path}: swarm does not carry {receipt}'s change; port it to swarm, or make the path source-authoritative in {SOURCE_ONLY_PATH_POLICY}"
+                ),
+                None => format!(
+                    "{path}: only source changed this, so promoting would revert it; record a transition receipt or make it source-authoritative"
+                ),
+            };
+            blocked.push(reason);
+            continue;
+        }
+        if source_touched
             && swarm_touched
             && !transition_authority.two_sided.contains(path.as_str())
         {
-            two_sided.push(path);
+            blocked.push(format!(
+                "{path}: both repositories changed this path with no receipt proving they are reconciled"
+            ));
+            continue;
         }
+        plan.take_swarm += 1;
     }
-    if !unapproved.is_empty() || !two_sided.is_empty() || !swarm_mutated_source_only.is_empty() {
+
+    if !blocked.is_empty() {
         bail!(
-            "promote: unapproved source-only overlay at {}..{}: unapproved {:?}, two-sided {:?}, swarm changed source-authoritative {:?}",
-            source_head,
-            swarm_sha,
-            unapproved,
-            two_sided,
-            swarm_mutated_source_only
+            "promote: cannot resolve {} path(s) between {source_head} and {swarm_sha} without discarding work:
+  {}",
+            blocked.len(),
+            blocked.join("
+  ")
         );
     }
-    Ok(())
+    Ok(plan)
 }
 
 fn git_diff_names(
@@ -1170,7 +1215,7 @@ fn prepare_source_overlay(
     workspace_root: &Path,
     source_head: &str,
     swarm_sha: &str,
-    source_only_paths: &[String],
+    take_source: &[String],
     isolate_objects: bool,
 ) -> Result<PreparedOverlay> {
     let workspace = OverlayWorkspace::claim(
@@ -1185,8 +1230,8 @@ fn prepare_source_overlay(
         let env = workspace.git_env();
         let git = |args: &[&str]| port.git_output_with_env(overlay_root, args, &env);
         git(&["checkout", swarm_sha, "--", "."])?;
-        for path in source_only_paths {
-            // A source-only path must match the source tree exactly, which
+        for path in take_source {
+            // A resolved source path must match the source tree exactly, which
             // includes its absence. Restoring only when source still has the
             // path would let a file source deliberately deleted survive in the
             // overlay via the swarm copy, and `ensure_source_only_alignment`
@@ -2130,6 +2175,94 @@ merge-old source-parent another-swarm-head
         Ok(())
     }
 
+    /// The mirror of the source-authoritative case. Outside the policy list the
+    /// overlay keeps swarm content, so a path only source changed would be
+    /// reverted. `missing_in_swarm` used to approve exactly this, discarding the
+    /// source change the receipt existed to record.
+    #[test]
+    fn resolution_blocks_a_source_change_swarm_does_not_carry() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let root = dir.path();
+        git_fixture(root, &["init", "--initial-branch=main"])?;
+        git_fixture(root, &["config", "user.email", "test@example.com"])?;
+        git_fixture(root, &["config", "user.name", "Promotion Test"])?;
+        fs::write(root.join("product.txt"), "base\n")?;
+        git_fixture(root, &["add", "-A"])?;
+        git_fixture(root, &["commit", "-m", "base"])?;
+        let base = git_fixture(root, &["rev-parse", "HEAD"])?;
+
+        // Swarm moves on without touching product.txt.
+        git_fixture(root, &["switch", "-c", "swarm"])?;
+        fs::write(root.join("other.txt"), "swarm\n")?;
+        git_fixture(root, &["add", "-A"])?;
+        git_fixture(root, &["commit", "-m", "feat: unrelated swarm work"])?;
+        let swarm_sha = git_fixture(root, &["rev-parse", "HEAD"])?;
+
+        // Source alone changes product.txt.
+        git_fixture(root, &["switch", "main"])?;
+        fs::write(root.join("product.txt"), "source hotfix\n")?;
+        git_fixture(root, &["add", "-A"])?;
+        git_fixture(root, &["commit", "-m", "fix: source hotfix"])?;
+        let source_head = git_fixture(root, &["rev-parse", "HEAD"])?;
+
+        // With no receipt at all.
+        let error = resolve_overlay_paths(
+            &SystemPort,
+            root,
+            &source_head,
+            &swarm_sha,
+            &base,
+            &[],
+            &super::super::transition::TransitionAuthority::default(),
+        )
+        .expect_err("a source-only change swarm lacks must block");
+        ensure!(
+            error.to_string().contains("would revert it"),
+            "unexpected error: {error}"
+        );
+
+        // A `missing_in_swarm` receipt does not authorize it either; it only
+        // makes the refusal name the receipt and say what to do.
+        let mut authority = super::super::transition::TransitionAuthority::default();
+        authority.awaiting_swarm.insert(
+            "product.txt".to_string(),
+            "EffortlessMetrics/shiplog#657".to_string(),
+        );
+        let error = resolve_overlay_paths(
+            &SystemPort,
+            root,
+            &source_head,
+            &swarm_sha,
+            &base,
+            &[],
+            &authority,
+        )
+        .expect_err("missing_in_swarm must not authorize a revert");
+        let message = error.to_string();
+        ensure!(
+            message.contains("does not carry EffortlessMetrics/shiplog#657's change"),
+            "refusal should name the receipt: {message}"
+        );
+        ensure!(
+            message.contains("port it to swarm"),
+            "refusal should say what to do: {message}"
+        );
+
+        // Making the path source-authoritative is the resolution, and then the
+        // overlay restores it rather than reverting it.
+        let plan = resolve_overlay_paths(
+            &SystemPort,
+            root,
+            &source_head,
+            &swarm_sha,
+            &base,
+            &["product.txt".to_string()],
+            &authority,
+        )?;
+        ensure!(plan.take_source == vec!["product.txt".to_string()]);
+        Ok(())
+    }
+
     /// Overlay construction resolves a policy-listed source-only path in
     /// source's favour, so a swarm change to one would be reverted while the
     /// promotion still claimed to carry that swarm commit. The alignment check
@@ -2157,7 +2290,7 @@ merge-old source-parent another-swarm-head
         )?;
         let swarm_sha = git_fixture(root, &["rev-parse", "HEAD"])?;
 
-        let error = ensure_source_only_alignment(
+        let error = resolve_overlay_paths(
             &SystemPort,
             root,
             &base,
@@ -2170,7 +2303,7 @@ merge-old source-parent another-swarm-head
         ensure!(
             error
                 .to_string()
-                .contains("swarm changed source-authoritative"),
+                .contains("swarm changed a source-authoritative path"),
             "unexpected error: {error}"
         );
         Ok(())
@@ -3323,6 +3456,8 @@ merge-old source-parent another-swarm-head
         let plan = PromotePlan {
             swarm_head: "c4fdba223d1c5c5b99a95b159ab8123d83d4b842".to_string(),
             prepared_overlay_sha: "abcdeffedcba9876543210fedcba1234567890abcd".to_string(),
+            overlay_source_paths: vec!["policy/automation-authority.toml".to_string()],
+            overlay_swarm_path_count: 3,
             overlay_cleanup_warnings: Vec::new(),
             source_ref: "origin/main".to_string(),
             source_head: "ee4c7e0b628e4495f3044397b0566fe06f1e567c".to_string(),
