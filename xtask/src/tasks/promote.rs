@@ -1333,10 +1333,21 @@ fn prepare_source_overlay(
         port.git_output(overlay_root, &["rev-parse", "HEAD"])
     })();
     let cleanup_warnings = workspace.release();
-    Ok(PreparedOverlay {
-        sha: prepared?,
-        cleanup_warnings,
-    })
+    match prepared {
+        Ok(sha) => Ok(PreparedOverlay {
+            sha,
+            cleanup_warnings,
+        }),
+        Err(error) => {
+            // A run that failed mid-overlay is the case most likely to leave
+            // residue, so surface the warnings here: there is no receipt to
+            // carry them on this path.
+            for warning in &cleanup_warnings {
+                eprintln!("promote: warning: {warning}");
+            }
+            Err(error)
+        }
+    }
 }
 
 /// A promotion overlay worktree that this process exclusively owns.
