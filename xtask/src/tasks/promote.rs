@@ -3,11 +3,13 @@
 
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::process::id as process_id;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::promotion_body;
 
@@ -15,6 +17,35 @@ const SWARM_REPO: &str = "EffortlessMetrics/shiplog-swarm";
 const SOURCE_REPO: &str = "EffortlessMetrics/shiplog";
 const ROUTED_WORKFLOW: &str = "EM CI Routed Shiplog Rust";
 const REQUIRED_RESULT: &str = "Shiplog Rust Small Result";
+const SOURCE_ONLY_PATH_POLICY: &str = "policy/source-only-paths.toml";
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SourceOnlyPathsPolicy {
+    schema_version: u32,
+    policy: String,
+    #[serde(default)]
+    owner: String,
+    status: String,
+    #[serde(default)]
+    allow: Vec<SourceOnlyPathEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SourceOnlyPathEntry {
+    path: String,
+    #[serde(default)]
+    owner: String,
+    #[serde(default)]
+    reason: String,
+    #[serde(default)]
+    classification: String,
+    #[serde(default)]
+    created: String,
+    #[serde(default)]
+    review_after: String,
+}
 
 pub struct PromoteInputs {
     pub workspace_root: PathBuf,
@@ -71,6 +102,8 @@ struct LatestPromotion {
     source_governance: Vec<String>,
     source_post_merge_proof: String,
     included_swarm_prs: Vec<String>,
+    #[serde(default)]
+    transition_source_mirror: Vec<TransitionSourceMirror>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -80,19 +113,52 @@ struct PendingPromotion {
     deferred_receipt_carry: Vec<String>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TransitionSourceMirror {
+    source_pr: String,
+    source_merge_sha: String,
+    swarm_pr: String,
+    #[serde(default)]
+    swarm_merge_sha: String,
+    paths: Vec<String>,
+    status: String,
+}
+
 trait PromotePort {
     fn git_output(&self, workspace_root: &Path, args: &[&str]) -> Result<String>;
     fn git_status(&self, workspace_root: &Path, args: &[&str]) -> Result<()>;
     fn gh_output(&self, args: &[&str]) -> Result<Vec<u8>>;
+    fn git_output_with_env(
+        &self,
+        workspace_root: &Path,
+        args: &[&str],
+        _env: &[(&str, &str)],
+    ) -> Result<String> {
+        self.git_output(workspace_root, args)
+    }
 }
 
 struct SystemPort;
+
+/// Result of building the source overlay commit.
+#[derive(Debug)]
+struct PreparedOverlay {
+    sha: String,
+    /// Overlay residue that cleanup could not remove. Recorded in the receipt so
+    /// a partially cleaned workspace is visible rather than silently inherited
+    /// by the next promotion.
+    cleanup_warnings: Vec<String>,
+}
 
 /// Machine-readable plan/receipt for the prepared promotion. Emitted for agents
 /// and `repo-contract-report`; deterministic for a given repository state.
 #[derive(Debug, Serialize)]
 struct PromotePlan {
     swarm_head: String,
+    prepared_overlay_sha: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    overlay_cleanup_warnings: Vec<String>,
     source_ref: String,
     source_head: String,
     merge_base: String,
@@ -168,7 +234,10 @@ struct SourcePullRequest {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 struct RepositoryIdentity {
     #[serde(rename = "nameWithOwner")]
+    #[serde(default)]
     name_with_owner: String,
+    #[serde(default)]
+    name: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -230,6 +299,9 @@ fn run_with_port_to(
         &inputs.workspace_root,
         &["rev-parse", &format!("{}^{{commit}}", inputs.source_ref)],
     )?;
+    let source_only_paths = load_source_only_paths(&inputs.workspace_root)?;
+    let transition_policy =
+        validate_transition_mirror(port, &state.latest_promotion.transition_source_mirror)?;
     let governance_commits = approved_governance_commits(port, &state.latest_promotion)?;
     let promotion_merge = find_latest_promotion_merge(
         port,
@@ -248,6 +320,16 @@ fn run_with_port_to(
     let (receipt, job) = green_swarm_receipt(port, &swarm_sha)?;
 
     let branch = format!("promote/swarm-current-{}", &swarm_sha[..12]);
+    let PreparedOverlay {
+        sha: prepared_overlay_sha,
+        cleanup_warnings: overlay_cleanup_warnings,
+    } = prepare_source_overlay(
+        port,
+        &inputs.workspace_root,
+        &source_head,
+        &swarm_sha,
+        &source_only_paths,
+    )?;
     let existing = port.git_output(
         &inputs.workspace_root,
         &[
@@ -257,8 +339,8 @@ fn run_with_port_to(
         ],
     )?;
     let existing_sha = existing.split_whitespace().next().unwrap_or_default();
-    if !existing_sha.is_empty() && existing_sha != swarm_sha {
-        ensure_remote_fast_forward(port, existing_sha, &swarm_sha)?;
+    if !existing_sha.is_empty() && existing_sha != prepared_overlay_sha {
+        ensure_remote_fast_forward(port, existing_sha, &prepared_overlay_sha)?;
     }
 
     let merge_base = port
@@ -274,6 +356,15 @@ fn run_with_port_to(
     if merge_base.is_empty() {
         bail!("promote: merge-base returned no commit for the promotion plan");
     }
+    ensure_source_only_alignment(
+        port,
+        &inputs.workspace_root,
+        &source_head,
+        &swarm_sha,
+        &merge_base,
+        &source_only_paths,
+        &transition_policy,
+    )?;
     let included_swarm_prs = included_swarm_prs(
         port,
         &inputs.workspace_root,
@@ -318,7 +409,7 @@ fn run_with_port_to(
 
     let next_actions = vec![
         format!(
-            "Push {swarm_sha}:refs/heads/{branch} to {}.",
+            "Push {prepared_overlay_sha}:refs/heads/{branch} to {}.",
             inputs.source_remote
         ),
         "Open a regular-merge source promotion PR from the branch; do not squash.".to_string(),
@@ -335,9 +426,9 @@ fn run_with_port_to(
         PlannedMutation::PushBranch {
             remote: inputs.source_remote.clone(),
             ref_name: format!("refs/heads/{branch}"),
-            refspec: format!("{swarm_sha}:refs/heads/{branch}"),
+            refspec: format!("{prepared_overlay_sha}:refs/heads/{branch}"),
             current_target: (!existing_sha.is_empty()).then(|| existing_sha.to_string()),
-            disposition: if existing_sha == swarm_sha {
+            disposition: if existing_sha == prepared_overlay_sha {
                 MutationDisposition::AlreadyCurrent
             } else {
                 MutationDisposition::Required
@@ -352,6 +443,8 @@ fn run_with_port_to(
     ];
     let mut plan = PromotePlan {
         swarm_head: swarm_sha.clone(),
+        prepared_overlay_sha: prepared_overlay_sha.clone(),
+        overlay_cleanup_warnings,
         source_ref: inputs.source_ref.clone(),
         source_head,
         merge_base,
@@ -379,6 +472,10 @@ fn run_with_port_to(
         receipt.database_id
     )?;
     writeln!(output, "promote: source ref {}", inputs.source_ref)?;
+    writeln!(output, "promote: prepared overlay {prepared_overlay_sha}")?;
+    for warning in &plan.overlay_cleanup_warnings {
+        writeln!(output, "promote: warning: {warning}")?;
+    }
     writeln!(output, "promote: branch {branch}")?;
     writeln!(
         output,
@@ -394,13 +491,13 @@ fn run_with_port_to(
     let body_path =
         promotion_body::write_rendered(&inputs.workspace_root, &inputs.output, &promotion_body)?;
 
-    if existing_sha != swarm_sha {
+    if existing_sha != prepared_overlay_sha {
         port.git_status(
             &inputs.workspace_root,
             &[
                 "push",
                 &inputs.source_remote,
-                &format!("{swarm_sha}:refs/heads/{branch}"),
+                &format!("{prepared_overlay_sha}:refs/heads/{branch}"),
             ],
         )
         .with_context(|| format!("promote: push {branch}"))?;
@@ -413,7 +510,7 @@ fn run_with_port_to(
         pr_action,
         source_pr.as_ref(),
         &branch,
-        &swarm_sha,
+        &prepared_overlay_sha,
         &title,
         &promotion_body,
         &body_path,
@@ -589,10 +686,10 @@ fn ensure_remote_fast_forward(
 ) -> Result<()> {
     let comparison = format!("{current_target}...{requested_target}");
     let output = port
-        .gh_output(&["api", &format!("repos/{SWARM_REPO}/compare/{comparison}")])
+        .gh_output(&["api", &format!("repos/{SOURCE_REPO}/compare/{comparison}")])
         .with_context(|| {
             format!(
-                "promote: compare remote branch target {current_target} to requested swarm head {requested_target} in swarm authority"
+                "promote: compare remote branch target {current_target} to requested overlay head {requested_target} in swarm authority"
             )
         })?;
     let receipt: CompareReceipt = serde_json::from_slice(&output)
@@ -626,10 +723,7 @@ fn discover_source_pr(port: &impl PromotePort, branch: &str) -> Result<Option<So
     }
     let pr = prs.pop();
     if let Some(pr) = pr.as_ref()
-        && (pr.head_ref_name != branch
-            || pr.base_ref_name != "main"
-            || pr.head_repository.name_with_owner != SOURCE_REPO
-            || pr.head_repository_owner.login != "EffortlessMetrics")
+        && !promote_source_pr_matches_identity(pr, branch)
     {
         bail!(
             "promote: open source PR #{} is incompatible with deterministic {branch:?} -> main identity",
@@ -639,12 +733,28 @@ fn discover_source_pr(port: &impl PromotePort, branch: &str) -> Result<Option<So
     Ok(pr)
 }
 
+fn promote_source_pr_matches_identity(pr: &SourcePullRequest, branch: &str) -> bool {
+    if pr.head_ref_name != branch {
+        return false;
+    }
+    if pr.base_ref_name != "main" {
+        return false;
+    }
+    if pr.head_repository_owner.login != "EffortlessMetrics" {
+        return false;
+    }
+    if !pr.head_repository.name_with_owner.is_empty() {
+        return pr.head_repository.name_with_owner == SOURCE_REPO;
+    }
+    !pr.head_repository.name.is_empty() && pr.head_repository.name == "shiplog"
+}
+
 fn execute_source_pr(
     port: &impl PromotePort,
     action: PullRequestAction,
     existing: Option<&SourcePullRequest>,
     branch: &str,
-    swarm_sha: &str,
+    prepared_overlay_sha: &str,
     title: &str,
     body: &str,
     body_path: &Path,
@@ -681,10 +791,11 @@ fn execute_source_pr(
                 number,
                 url,
                 head_ref_name: branch.to_string(),
-                head_ref_oid: swarm_sha.to_string(),
+                head_ref_oid: prepared_overlay_sha.to_string(),
                 base_ref_name: "main".to_string(),
                 head_repository: RepositoryIdentity {
                     name_with_owner: SOURCE_REPO.to_string(),
+                    name: "shiplog".to_string(),
                 },
                 head_repository_owner: RepositoryOwner {
                     login: "EffortlessMetrics".to_string(),
@@ -707,7 +818,7 @@ fn execute_source_pr(
                 body_path,
             ])?;
             let mut updated = pr.clone();
-            updated.head_ref_oid = swarm_sha.to_string();
+            updated.head_ref_oid = prepared_overlay_sha.to_string();
             updated.title = title.to_string();
             updated.body = body.to_string();
             Ok(updated)
@@ -716,6 +827,683 @@ fn execute_source_pr(
             .cloned()
             .context("promote: already-current action lacks source PR"),
     }
+}
+
+fn load_source_only_paths(workspace_root: &Path) -> Result<Vec<String>> {
+    let path = workspace_root.join(SOURCE_ONLY_PATH_POLICY);
+    let text =
+        fs::read_to_string(&path).with_context(|| format!("promote: read {}", path.display()))?;
+    let policy: SourceOnlyPathsPolicy =
+        toml::from_str(&text).with_context(|| format!("promote: parse {}", path.display()))?;
+    let _ = &policy.owner;
+    if policy.schema_version != 1
+        || policy.policy != "source-only-paths"
+        || policy.status != "blocking"
+    {
+        bail!(
+            "{} requires schema_version=1, policy=source-only-paths, status=blocking",
+            path.display()
+        );
+    }
+    let mut allow = Vec::new();
+    let mut seen = BTreeSet::new();
+    for entry in policy.allow {
+        let _ = (
+            &entry.owner,
+            &entry.reason,
+            &entry.classification,
+            &entry.created,
+            &entry.review_after,
+        );
+        let normalized = normalized_source_only_path(&entry.path)?;
+        if seen.insert(normalized.clone()) {
+            allow.push(normalized);
+        }
+    }
+    Ok(allow)
+}
+
+fn normalized_source_only_path(path: &str) -> Result<String> {
+    let path = path.trim();
+    if path.is_empty()
+        || path.starts_with('/')
+        || path.contains('\\')
+        || path
+            .split('/')
+            .any(|part| part.is_empty() || part == "." || part == "..")
+    {
+        bail!("source-only path must be a normalized repository-relative path: {path:?}");
+    }
+    Ok(path.to_string())
+}
+
+#[derive(Default, Debug)]
+struct TransitionAlignmentPolicy {
+    source_only_paths: BTreeSet<String>,
+    two_sided_paths: BTreeSet<String>,
+}
+
+fn validate_transition_mirror(
+    port: &impl PromotePort,
+    entries: &[TransitionSourceMirror],
+) -> Result<TransitionAlignmentPolicy> {
+    let mut policy = TransitionAlignmentPolicy::default();
+    for entry in entries {
+        let (source_repo, source_pr) = parse_transition_pr_receipt("source", &entry.source_pr)?;
+        let (swarm_repo, swarm_pr) = parse_transition_pr_receipt("swarm", &entry.swarm_pr)?;
+        let _ = &entry.source_merge_sha;
+        if source_repo != SOURCE_REPO {
+            bail!(
+                "transition source PR {} must be in source repo {}",
+                entry.source_pr,
+                SOURCE_REPO
+            );
+        }
+        if swarm_repo != SWARM_REPO {
+            bail!(
+                "transition swarm PR {} must be in swarm repo {}",
+                entry.swarm_pr,
+                SWARM_REPO
+            );
+        }
+        let allowed_paths: Vec<&str> = entry.paths.iter().map(String::as_str).collect();
+        match entry.status.as_str() {
+            "equivalent" => {
+                let source_patch = source_pull_request_patch(port, &source_repo, source_pr)?;
+                let swarm_patch = source_pull_request_patch(port, &swarm_repo, swarm_pr)?;
+                if is_cargo_lock_equivalent_transition(&source_patch, &swarm_patch, &allowed_paths)?
+                {
+                    // Continue with policy collection after successful semantic equivalence.
+                } else {
+                    let source_identity = patch_fingerprint(&source_patch, &allowed_paths)?;
+                    let swarm_identity = patch_fingerprint(&swarm_patch, &allowed_paths)?;
+                    if source_identity != swarm_identity {
+                        bail!(
+                            "transition {} is not equivalent to {} for tracked paths {allowed_paths:?}: {source_identity} != {swarm_identity}",
+                            entry.source_pr,
+                            entry.swarm_pr
+                        );
+                    }
+                }
+            }
+            "superseded_in_swarm" => {
+                let source_patch = source_pull_request_patch(port, &source_repo, source_pr)?;
+                let swarm_patch = source_pull_request_patch(port, &swarm_repo, swarm_pr)?;
+                let source_identity = patch_fingerprint(&source_patch, &allowed_paths)?;
+                let swarm_identity = patch_fingerprint(&swarm_patch, &allowed_paths)?;
+                if source_identity == swarm_identity {
+                    bail!(
+                        "superseded transition {} to {} did not change tracked code compared to source",
+                        entry.source_pr,
+                        entry.swarm_pr
+                    );
+                }
+                validate_superseded_lockfile_transition(
+                    &source_patch,
+                    &swarm_patch,
+                    &allowed_paths,
+                )?;
+            }
+            "missing_in_swarm" => {
+                if !entry.swarm_merge_sha.is_empty() {
+                    bail!(
+                        "transition {} is missing_in_swarm but still has swarm_merge_sha {}",
+                        entry.source_pr,
+                        entry.swarm_merge_sha
+                    );
+                }
+            }
+            "conflicting" => {
+                bail!(
+                    "transition {} is marked conflicting; resolve before promotion",
+                    entry.source_pr
+                );
+            }
+            other => {
+                bail!(
+                    "transition {} has invalid status {other:?} (expected equivalent, superseded_in_swarm, missing_in_swarm, conflicting)",
+                    entry.source_pr
+                );
+            }
+        }
+        for path in &entry.paths {
+            if path.trim().is_empty() {
+                continue;
+            }
+            policy.source_only_paths.insert(path.clone());
+            if entry.status != "missing_in_swarm" {
+                policy.two_sided_paths.insert(path.clone());
+            }
+        }
+    }
+    Ok(policy)
+}
+
+fn parse_transition_pr_receipt(label: &str, value: &str) -> Result<(String, u64)> {
+    let Some((repo, number)) = value.split_once('#') else {
+        bail!("transition {label} receipt {value:?} must be owner/repo#number");
+    };
+    let number = number.parse().with_context(|| {
+        format!("transition {label} receipt {value:?} must parse as a PR number")
+    })?;
+    if repo.is_empty() || number == 0 {
+        bail!("transition {label} receipt {value:?} has empty repo/invalid PR number");
+    }
+    Ok((repo.to_string(), number))
+}
+
+fn source_pull_request_patch(port: &impl PromotePort, repo: &str, number: u64) -> Result<String> {
+    let output = port.gh_output(&["pr", "diff", "--repo", repo, &number.to_string()])?;
+    Ok(String::from_utf8(output)
+        .with_context(|| format!("promote: read PR diff for {repo}#{number}"))?
+        .trim_end_matches('\n')
+        .to_string())
+}
+
+fn is_cargo_lock_equivalent_transition(
+    source_patch: &str,
+    swarm_patch: &str,
+    allowed_paths: &[&str],
+) -> Result<bool> {
+    let allowed = if allowed_paths.is_empty() {
+        Vec::new()
+    } else {
+        allowed_paths.to_vec()
+    };
+    if !allowed.is_empty() && allowed != vec!["Cargo.lock"] {
+        return Ok(false);
+    }
+    let source = parse_cargo_lock_transitions(source_patch, &["Cargo.lock"])?;
+    let swarm = parse_cargo_lock_transitions(swarm_patch, &["Cargo.lock"])?;
+    if source.is_empty() || swarm.is_empty() {
+        return Ok(false);
+    }
+    Ok(source == swarm)
+}
+
+fn patch_fingerprint(patch: &str, allowed_paths: &[&str]) -> Result<String> {
+    let allowed = if allowed_paths.is_empty() {
+        None
+    } else {
+        Some(allowed_paths.iter().copied().collect::<BTreeSet<_>>())
+    };
+    let mut lines = Vec::new();
+    let mut current_path: Option<String> = None;
+    for line in patch.lines() {
+        if let Some(path) = parse_diff_path(line) {
+            current_path = Some(path);
+            continue;
+        }
+        if current_path.is_none() {
+            continue;
+        }
+        if let Some(selected) = &allowed
+            && !selected.is_empty()
+        {
+            let current = current_path
+                .as_deref()
+                .context("promote: missing path while parsing PR patch")?;
+            if !selected.contains(current) {
+                continue;
+            }
+        }
+        if line.starts_with("index ")
+            || line.starts_with("@@ ")
+            || line.starts_with("\\ No newline at end of file")
+            || line.starts_with("---")
+            || line.starts_with("+++")
+            || line.starts_with("diff --git")
+            || line.starts_with("new file mode")
+            || line.starts_with("deleted file mode")
+            || line.starts_with("old mode")
+            || line.starts_with("new mode")
+            || line.starts_with("similarity index")
+            || line.starts_with("rename from")
+            || line.starts_with("rename to")
+        {
+            continue;
+        }
+        if line.starts_with('+') || line.starts_with('-') {
+            lines.push(line);
+        }
+    }
+
+    let mut hash: u64 = 0xcbf29ce484222325;
+    for line in lines {
+        for byte in format!("{line}\n").bytes() {
+            hash ^= u64::from(byte);
+            hash = hash.wrapping_mul(0x100000001b3);
+        }
+    }
+    Ok(format!("{hash:016x}"))
+}
+
+fn parse_diff_path(line: &str) -> Option<String> {
+    if !line.starts_with("diff --git ") {
+        return None;
+    }
+    let parts: Vec<_> = line.split_whitespace().collect();
+    parts
+        .get(3)
+        .and_then(|path| path.strip_prefix("b/"))
+        .map(std::string::ToString::to_string)
+        .or_else(|| {
+            parts
+                .get(2)
+                .and_then(|path| path.strip_prefix("b/"))
+                .map(std::string::ToString::to_string)
+                .or_else(|| parts.get(2).map(|path| (*path).to_string()))
+        })
+}
+
+fn validate_superseded_lockfile_transition(
+    source_patch: &str,
+    swarm_patch: &str,
+    allowed_paths: &[&str],
+) -> Result<()> {
+    let source = parse_cargo_lock_transitions(source_patch, allowed_paths)?;
+    let swarm = parse_cargo_lock_transitions(swarm_patch, allowed_paths)?;
+    let mut overlapped = false;
+    let mut diverged = false;
+    for (name, (_, source_to)) in source {
+        if let Some((_, swarm_to)) = swarm.get(&name) {
+            overlapped = true;
+            if source_to.is_some()
+                && swarm_to.is_some()
+                && source_to.as_deref() != swarm_to.as_deref()
+            {
+                diverged = true;
+            }
+        }
+    }
+    if !overlapped {
+        bail!("superseded transition has no overlapping Cargo.lock dependency names");
+    }
+    if !diverged {
+        bail!("superseded transition did not move to a different version in swarm");
+    }
+    Ok(())
+}
+
+fn parse_cargo_lock_transitions(
+    patch: &str,
+    allowed_paths: &[&str],
+) -> Result<BTreeMap<String, (Option<String>, Option<String>)>> {
+    let mut transitions = BTreeMap::new();
+    let allowed = if allowed_paths.is_empty() {
+        None
+    } else {
+        Some(allowed_paths.iter().copied().collect::<BTreeSet<_>>())
+    };
+    let mut current_path: Option<String> = None;
+    let mut current_package: Option<String> = None;
+    for line in patch.lines() {
+        if let Some(path) = parse_diff_path(line) {
+            current_path = Some(path);
+            current_package = None;
+            continue;
+        }
+        if current_path.is_none() {
+            continue;
+        }
+        if let Some(selected) = &allowed
+            && !selected.is_empty()
+        {
+            let current = current_path
+                .as_deref()
+                .context("promote: missing path while parsing Cargo.lock patch")?;
+            if !selected.contains(current) {
+                continue;
+            }
+        }
+        if !line.starts_with('+') && !line.starts_with('-') && !line.starts_with(' ') {
+            continue;
+        }
+        if line.starts_with("---") || line.starts_with("+++") {
+            continue;
+        }
+        let content = line[1..].trim();
+        if let Some(name) = parse_toml_keyed_value(content, "name") {
+            current_package = Some(name);
+            continue;
+        }
+        if let Some(version) = parse_toml_keyed_value(content, "version") {
+            let Some(name) = current_package.clone() else {
+                continue;
+            };
+            let entry = transitions.entry(name).or_insert((None, None));
+            if line.starts_with('-') {
+                entry.0 = Some(version);
+            } else if line.starts_with('+') {
+                entry.1 = Some(version);
+            }
+            continue;
+        }
+    }
+    Ok(transitions)
+}
+
+fn parse_toml_keyed_value(line: &str, key: &str) -> Option<String> {
+    let needle = format!("{key} = ");
+    if !line.starts_with(&needle) {
+        return None;
+    }
+    let value = line[needle.len()..].trim();
+    if value.is_empty() || !value.starts_with('"') || !value.ends_with('"') {
+        return None;
+    }
+    let value = &value[1..value.len().saturating_sub(1)];
+    if value.is_empty() {
+        None
+    } else {
+        Some(value.to_string())
+    }
+}
+
+fn ensure_source_only_alignment(
+    port: &impl PromotePort,
+    workspace_root: &Path,
+    source_head: &str,
+    swarm_sha: &str,
+    merge_base: &str,
+    source_only_paths: &[String],
+    transition_policy: &TransitionAlignmentPolicy,
+) -> Result<()> {
+    let differing = git_diff_names(port, workspace_root, source_head, swarm_sha)?;
+    let source_changed = git_diff_names_set(port, workspace_root, merge_base, source_head)?;
+    let swarm_changed = git_diff_names_set(port, workspace_root, merge_base, swarm_sha)?;
+    let mut approved = source_only_paths
+        .iter()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    approved.extend(
+        transition_policy
+            .source_only_paths
+            .iter()
+            .map(String::as_str),
+    );
+    let mut unapproved: Vec<String> = Vec::new();
+    let mut two_sided: Vec<String> = Vec::new();
+    for path in differing {
+        let source_only = source_changed.contains(path.as_str());
+        let swarm_only = swarm_changed.contains(path.as_str());
+        if source_only && !swarm_only && !approved.contains(path.as_str()) {
+            unapproved.push(path);
+        } else if source_only
+            && swarm_only
+            && !transition_policy.two_sided_paths.contains(path.as_str())
+        {
+            two_sided.push(path);
+        }
+    }
+    if !unapproved.is_empty() || !two_sided.is_empty() {
+        bail!(
+            "promote: unapproved source-only overlay at {}..{}: unapproved {:?}, two-sided {:?}",
+            source_head,
+            swarm_sha,
+            unapproved,
+            two_sided
+        );
+    }
+    Ok(())
+}
+
+fn git_diff_names(
+    port: &impl PromotePort,
+    workspace_root: &Path,
+    left: &str,
+    right: &str,
+) -> Result<Vec<String>> {
+    let output = port.git_output(workspace_root, &["diff", "--name-only", left, right])?;
+    Ok(output
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| line.to_string())
+        .collect())
+}
+
+fn git_diff_names_set(
+    port: &impl PromotePort,
+    workspace_root: &Path,
+    left: &str,
+    right: &str,
+) -> Result<BTreeSet<String>> {
+    Ok(git_diff_names(port, workspace_root, left, right)?
+        .into_iter()
+        .collect())
+}
+
+fn prepare_source_overlay(
+    port: &impl PromotePort,
+    workspace_root: &Path,
+    source_head: &str,
+    swarm_sha: &str,
+    source_only_paths: &[String],
+) -> Result<PreparedOverlay> {
+    let workspace = OverlayWorkspace::claim(port, workspace_root, source_head, swarm_sha)?;
+    let prepared = (|| -> Result<String> {
+        let overlay_root = workspace.path();
+        port.git_output(overlay_root, &["checkout", swarm_sha, "--", "."])?;
+        for path in source_only_paths {
+            if !tree_has_path(port, overlay_root, source_head, path.as_str())? {
+                continue;
+            }
+            port.git_output(
+                overlay_root,
+                &["checkout", source_head, "--", path.as_str()],
+            )
+            .with_context(|| {
+                format!("promote: preserve source-only path {path} while applying {swarm_sha}")
+            })?;
+        }
+        port.git_output(overlay_root, &["add", "-A"])?;
+        let staged = port
+            .git_output(overlay_root, &["diff", "--cached", "--name-only"])
+            .with_context(|| format!("promote: inspect staged overlay changes for {swarm_sha}"))?;
+        if staged.is_empty() {
+            return Ok(source_head.to_string());
+        }
+        let commit_env = [
+            ("GIT_AUTHOR_NAME", "shiplog-promote[bot]"),
+            (
+                "GIT_AUTHOR_EMAIL",
+                "shiplog-promote[bot]@users.noreply.github.com",
+            ),
+            ("GIT_COMMITTER_NAME", "shiplog-promote[bot]"),
+            (
+                "GIT_COMMITTER_EMAIL",
+                "shiplog-promote[bot]@users.noreply.github.com",
+            ),
+            ("GIT_AUTHOR_DATE", "2026-07-23T00:00:00+00:00"),
+            ("GIT_COMMITTER_DATE", "2026-07-23T00:00:00+00:00"),
+        ];
+        port.git_output_with_env(
+            overlay_root,
+            &[
+                "commit",
+                "--no-gpg-sign",
+                "-m",
+                &format!(
+                    "chore(promote): overlay source with swarm {}",
+                    &swarm_sha[..12]
+                ),
+            ],
+            &commit_env,
+        )?;
+        port.git_output(overlay_root, &["rev-parse", "HEAD"])
+    })();
+    let cleanup_warnings = workspace.release();
+    Ok(PreparedOverlay {
+        sha: prepared?,
+        cleanup_warnings,
+    })
+}
+
+/// A promotion overlay worktree that this process exclusively owns.
+///
+/// Overlay worktrees live under a shared `target/promotion-overlay` parent that
+/// concurrent promotions and every other `target/` consumer also use, so the
+/// parent is never removed and only the exact child claimed here is ever
+/// deleted. Cleanup runs on every exit path, including `?` returns and panics,
+/// because an abandoned overlay leaves residue in two independent places: a
+/// directory git no longer tracks, and a worktree registration whose directory
+/// is gone. Removing the registration, removing the directory, and pruning are
+/// therefore attempted independently rather than short-circuiting on the first
+/// success.
+struct OverlayWorkspace<'a, P: PromotePort> {
+    port: &'a P,
+    workspace_root: &'a Path,
+    path: PathBuf,
+    warnings: Vec<String>,
+    released: bool,
+}
+
+impl<'a, P: PromotePort> OverlayWorkspace<'a, P> {
+    /// Claim a uniquely named overlay directory and register it as a detached
+    /// worktree at `source_head`.
+    ///
+    /// The name carries the swarm sha for diagnosability plus a pid and a
+    /// time-derived nonce, and `fs::create_dir` is what actually establishes
+    /// exclusivity: it fails when the name is taken, so a collision retries
+    /// instead of adopting a directory another promotion may still be using.
+    /// The pid alone is not enough, because pids are reused after a crash that
+    /// left residue behind.
+    fn claim(
+        port: &'a P,
+        workspace_root: &'a Path,
+        source_head: &str,
+        swarm_sha: &str,
+    ) -> Result<Self> {
+        let parent = workspace_root.join("target").join("promotion-overlay");
+        fs::create_dir_all(&parent).with_context(|| {
+            format!(
+                "promote: create overlay parent directory {}",
+                parent.display()
+            )
+        })?;
+        let pid = process_id();
+        let mut path = None;
+        for attempt in 0..64u32 {
+            let candidate = parent.join(format!(
+                "{}-{pid}-{:x}",
+                &swarm_sha[..12],
+                overlay_nonce(attempt)
+            ));
+            match fs::create_dir(&candidate) {
+                Ok(()) => {
+                    path = Some(candidate);
+                    break;
+                }
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+                Err(error) => {
+                    return Err(error).with_context(|| {
+                        format!("promote: claim overlay workspace {}", candidate.display())
+                    });
+                }
+            }
+        }
+        let path = path.with_context(|| {
+            format!(
+                "promote: could not claim a unique overlay workspace under {}",
+                parent.display()
+            )
+        })?;
+        let workspace = Self {
+            port,
+            workspace_root,
+            path,
+            warnings: Vec::new(),
+            released: false,
+        };
+        let path_arg = workspace.path_arg();
+        port.git_output(
+            workspace_root,
+            &["worktree", "add", "--detach", &path_arg, source_head],
+        )
+        .with_context(|| format!("promote: add overlay worktree at {path_arg}"))?;
+        Ok(workspace)
+    }
+
+    fn path(&self) -> &Path {
+        &self.path
+    }
+
+    fn path_arg(&self) -> String {
+        self.path.to_string_lossy().into_owned()
+    }
+
+    /// Clean up and surface any residue that survived, so the caller can record
+    /// it in the receipt instead of leaving the workspace in an unknown state.
+    fn release(mut self) -> Vec<String> {
+        self.cleanup();
+        std::mem::take(&mut self.warnings)
+    }
+
+    fn cleanup(&mut self) {
+        if self.released {
+            return;
+        }
+        self.released = true;
+        let path_arg = self.path_arg();
+        // Deregistration failing is not itself a problem: the directory may have
+        // been claimed but never registered, or already removed by hand. What
+        // matters is the end state, which the directory check and the prune below
+        // establish independently.
+        let _ = self.port.git_output(
+            self.workspace_root,
+            &["worktree", "remove", "--force", &path_arg],
+        );
+        if let Err(error) = fs::remove_dir_all(&self.path)
+            && self.path.exists()
+        {
+            self.warnings.push(format!(
+                "failed to remove overlay workspace {path_arg}: {error}"
+            ));
+        }
+        if let Err(error) = self
+            .port
+            .git_output(self.workspace_root, &["worktree", "prune"])
+        {
+            self.warnings.push(format!(
+                "failed to prune stale worktree registrations: {error}"
+            ));
+        }
+    }
+}
+
+impl<P: PromotePort> Drop for OverlayWorkspace<'_, P> {
+    fn drop(&mut self) {
+        self.cleanup();
+        for warning in &self.warnings {
+            eprintln!("promote: warning: {warning}");
+        }
+    }
+}
+
+/// Nonce for overlay directory names. Mixed with the attempt counter so a
+/// same-nanosecond retry picks a different name.
+fn overlay_nonce(attempt: u32) -> u64 {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_nanos() as u64)
+        .unwrap_or_default();
+    nanos.wrapping_add(u64::from(attempt).wrapping_mul(0x9E37_79B9_7F4A_7C15))
+}
+
+fn tree_has_path(
+    port: &impl PromotePort,
+    workspace_root: &Path,
+    revision: &str,
+    path: &str,
+) -> Result<bool> {
+    let output = port
+        .git_output(
+            workspace_root,
+            &["ls-tree", "-r", "--name-only", revision, "--", path],
+        )
+        .with_context(|| format!("promote: inspect path {path} in {revision}"))?;
+    let output = output.trim().to_string();
+    Ok(output.lines().any(|line| line == path))
 }
 
 /// Extract `owner/repo#N` receipts from squash-merge commit subjects, keeping
@@ -785,6 +1573,7 @@ fn load_promotion_state(workspace_root: &Path) -> Result<PromotionState> {
     }
     if state.latest_promotion.source_promotion_pr.is_empty()
         || state.latest_promotion.disposition.is_empty()
+        || state.latest_promotion.source_merge_sha.is_empty()
     {
         bail!("promote: completed promotion state is missing source identity");
     }
@@ -949,9 +1738,18 @@ fn ensure_ancestor_with_port(
 }
 
 fn git_output(workspace_root: &Path, args: &[&str]) -> Result<String> {
+    git_output_with_env(workspace_root, args, &[])
+}
+
+fn git_output_with_env(
+    workspace_root: &Path,
+    args: &[&str],
+    env: &[(&str, &str)],
+) -> Result<String> {
     let output = Command::new("git")
         .args(args)
         .current_dir(workspace_root)
+        .envs(env.iter().map(|(key, value)| (*key, *value)))
         .output()
         .with_context(|| format!("promote: run git {}", args.join(" ")))?;
     if !output.status.success() {
@@ -979,6 +1777,15 @@ fn git_status(workspace_root: &Path, args: &[&str]) -> Result<()> {
 impl PromotePort for SystemPort {
     fn git_output(&self, workspace_root: &Path, args: &[&str]) -> Result<String> {
         git_output(workspace_root, args)
+    }
+
+    fn git_output_with_env(
+        &self,
+        workspace_root: &Path,
+        args: &[&str],
+        env: &[(&str, &str)],
+    ) -> Result<String> {
+        git_output_with_env(workspace_root, args, env)
     }
 
     fn git_status(&self, workspace_root: &Path, args: &[&str]) -> Result<()> {
@@ -1039,6 +1846,25 @@ mod tests {
                 bail!("stub merge-base failure");
             }
             SystemPort.git_output(workspace_root, args)
+        }
+
+        fn git_output_with_env(
+            &self,
+            workspace_root: &Path,
+            args: &[&str],
+            env: &[(&str, &str)],
+        ) -> Result<String> {
+            if args.first() == Some(&"ls-remote") {
+                return Ok(self
+                    .remote_target
+                    .as_ref()
+                    .map(|target| format!("{target}\t{}", args.last().unwrap_or(&"")))
+                    .unwrap_or_default());
+            }
+            if self.fail_merge_base && args.first() == Some(&"merge-base") {
+                bail!("stub merge-base failure");
+            }
+            SystemPort.git_output_with_env(workspace_root, args, env)
         }
 
         fn git_status(&self, workspace_root: &Path, args: &[&str]) -> Result<()> {
@@ -1124,11 +1950,16 @@ mod tests {
             git_fixture(dir.path(), &["commit", "-m", "chore: governance (#656)"])?;
         }
         let governance = git_fixture(dir.path(), &["rev-parse", "HEAD"])?;
+        fs::create_dir_all(dir.path().join("policy"))?;
+        fs::write(
+            dir.path().join("policy/source-only-paths.toml"),
+            "schema_version = 1\npolicy = \"source-only-paths\"\nowner = \"repo-infra/release\"\nstatus = \"blocking\"\n\n[[allow]]\npath = \"promoted.txt\"\nowner = \"repo-infra/release\"\nreason = \"fixture source-only path\"\nclassification = \"release-governance\"\ncreated = \"2026-07-14\"\nreview_after = \"2027-01-14\"\n\n[[allow]]\npath = \"governance.txt\"\nowner = \"repo-infra/release\"\nreason = \"fixture source-only path\"\nclassification = \"release-governance\"\ncreated = \"2026-07-14\"\nreview_after = \"2027-01-14\"\n",
+        )?;
         fs::create_dir_all(dir.path().join("plans/shiplog-swarm"))?;
         fs::write(
             dir.path().join("plans/shiplog-swarm/promotion-state.toml"),
             format!(
-                "schema_version = 1\n[latest_promotion]\nstatus = \"completed\"\ndisposition = \"completed-with-governance\"\nsource_promotion_pr = \"EffortlessMetrics/shiplog#655\"\nsource_merge_sha = \"\"\npromoted_swarm_head = \"{promoted}\"\nsource_governance = [\"EffortlessMetrics/shiplog#656\"]\nsource_post_merge_proof = \"\"\nincluded_swarm_prs = [\"EffortlessMetrics/shiplog-swarm#238\"]\n[pending]\nswarm_pr_range = []\ndeferred_receipt_carry = []\n"
+                "schema_version = 1\n[latest_promotion]\nstatus = \"completed\"\ndisposition = \"completed-with-governance\"\nsource_promotion_pr = \"EffortlessMetrics/shiplog#655\"\nsource_merge_sha = \"160d430f1a5af338537e35ff98b8ddda14d4673c\"\npromoted_swarm_head = \"{promoted}\"\nsource_governance = [\"EffortlessMetrics/shiplog#656\"]\nsource_post_merge_proof = \"\"\nincluded_swarm_prs = [\"EffortlessMetrics/shiplog-swarm#238\"]\n[pending]\nswarm_pr_range = []\ndeferred_receipt_carry = []\n"
             ),
         )?;
         Ok(GitFixture {
@@ -1322,6 +2153,44 @@ merge-old source-parent another-swarm-head
         }
     }
 
+    /// Build the overlay the way `promote` does. Deliberately does not clean up
+    /// `target/` afterwards: `prepare_source_overlay` owns that now, so every
+    /// caller of this helper also asserts cleanup left no residue.
+    fn fixture_overlay_sha(fixture: &GitFixture) -> Result<String> {
+        let source_only_paths = load_source_only_paths(fixture.dir.path())?;
+        let overlay = prepare_source_overlay(
+            &SystemPort,
+            fixture.dir.path(),
+            &fixture.governance,
+            &fixture.current,
+            &source_only_paths,
+        )?;
+        ensure!(
+            overlay.cleanup_warnings.is_empty(),
+            "overlay cleanup left residue: {:?}",
+            overlay.cleanup_warnings
+        );
+        ensure!(
+            overlay_children(fixture.dir.path())?.is_empty(),
+            "overlay parent still holds worktrees after cleanup"
+        );
+        Ok(overlay.sha)
+    }
+
+    /// Overlay worktree directories currently present under the shared parent.
+    fn overlay_children(workspace_root: &Path) -> Result<Vec<PathBuf>> {
+        let parent = workspace_root.join("target").join("promotion-overlay");
+        if !parent.exists() {
+            return Ok(Vec::new());
+        }
+        let mut children = Vec::new();
+        for entry in fs::read_dir(&parent)? {
+            children.push(entry?.path());
+        }
+        children.sort();
+        Ok(children)
+    }
+
     fn replace_pr_list(port: &StubPort, prs: serde_json::Value) -> Result<()> {
         let mut responses = port.gh.borrow_mut();
         let _previous = responses
@@ -1342,7 +2211,7 @@ merge-old source-parent another-swarm-head
         let fixture = fixture_git()?;
         let port = stub_port(&fixture, true, true);
         let inputs = fixture_inputs(&fixture);
-        let target = fixture.dir.path().join("target");
+        let overlay = fixture_overlay_sha(&fixture)?;
         let mut output = Vec::new();
         run_with_port_to(&port, inputs, &mut output)?;
         let plan: serde_json::Value = serde_json::from_slice(&output)?;
@@ -1362,7 +2231,7 @@ merge-old source-parent another-swarm-head
                         "kind": "push-branch",
                         "remote": "origin",
                         "ref_name": format!("refs/heads/{branch}"),
-                        "refspec": format!("{}:refs/heads/{branch}", fixture.current),
+                        "refspec": format!("{overlay}:refs/heads/{branch}"),
                         "current_target": null,
                         "disposition": "required"
                     },
@@ -1375,12 +2244,206 @@ merge-old source-parent another-swarm-head
                     }
                 ])
         );
-        ensure!(!target.exists());
+        ensure!(overlay_children(fixture.dir.path())?.is_empty());
         ensure!(port.git_mutations.borrow().is_empty());
         ensure!(!port.gh_calls.borrow().iter().any(|call| {
             call.get(1)
                 .is_some_and(|action| action == "create" || action == "edit")
         }));
+        Ok(())
+    }
+
+    #[test]
+    fn planner_allows_missing_source_only_paths_during_overlay() -> Result<()> {
+        let fixture = fixture_git()?;
+        let policy_path = fixture.dir.path().join("policy/source-only-paths.toml");
+        let mut policy = fs::read_to_string(&policy_path)?;
+        policy.push_str(
+            "\n[[allow]]\npath = \"not-present-in-source.txt\"\nowner = \"repo-infra/release\"\nreason = \"missing path should be ignored\"\nclassification = \"release-governance\"\ncreated = \"2026-07-23\"\nreview_after = \"2027-01-23\"\n",
+        );
+        fs::write(&policy_path, policy)?;
+
+        let source_only_paths = load_source_only_paths(fixture.dir.path())?;
+        ensure!(
+            source_only_paths
+                .iter()
+                .any(|path| path == "not-present-in-source.txt")
+        );
+        let overlay = prepare_source_overlay(
+            &SystemPort,
+            fixture.dir.path(),
+            &fixture.governance,
+            &fixture.current,
+            &source_only_paths,
+        )?;
+        ensure!(overlay.cleanup_warnings.is_empty());
+        ensure!(overlay_children(fixture.dir.path())?.is_empty());
+        Ok(())
+    }
+
+    /// The overlay parent is shared with every other `target/` consumer, so
+    /// preparing an overlay must not disturb unrelated build artifacts. An
+    /// earlier implementation recursively removed `target/` on each run, which
+    /// deleted dependency files out from under a concurrent Cargo build.
+    #[test]
+    fn overlay_preparation_preserves_unrelated_target_contents() -> Result<()> {
+        let fixture = fixture_git()?;
+        let root = fixture.dir.path();
+        let artifact = root.join("target/debug/build-artifact.bin");
+        fs::create_dir_all(artifact.parent().context("artifact parent")?)?;
+        fs::write(&artifact, b"cargo output")?;
+
+        let _overlay = fixture_overlay_sha(&fixture)?;
+
+        ensure!(artifact.exists(), "overlay preparation deleted target/");
+        ensure!(fs::read(&artifact)? == b"cargo output");
+        ensure!(
+            root.join("target/promotion-overlay").exists(),
+            "shared overlay parent should survive cleanup"
+        );
+        Ok(())
+    }
+
+    /// Two overlay preparations must not be able to delete each other's active
+    /// worktree. Holding one workspace open while a second is claimed and
+    /// released proves the shared parent is never cleared wholesale.
+    #[test]
+    fn concurrent_overlay_workspaces_do_not_delete_each_other() -> Result<()> {
+        let fixture = fixture_git()?;
+        let root = fixture.dir.path();
+
+        let first =
+            OverlayWorkspace::claim(&SystemPort, root, &fixture.governance, &fixture.current)?;
+        let first_path = first.path().to_path_buf();
+
+        let second =
+            OverlayWorkspace::claim(&SystemPort, root, &fixture.governance, &fixture.current)?;
+        let second_path = second.path().to_path_buf();
+        ensure!(first_path != second_path, "overlay paths must be unique");
+        ensure!(
+            first_path.exists(),
+            "claiming a second overlay removed the first"
+        );
+
+        let warnings = second.release();
+        ensure!(
+            warnings.is_empty(),
+            "unexpected cleanup residue: {warnings:?}"
+        );
+        ensure!(!second_path.exists());
+        ensure!(
+            first_path.exists(),
+            "releasing the second overlay removed the first"
+        );
+
+        let warnings = first.release();
+        ensure!(
+            warnings.is_empty(),
+            "unexpected cleanup residue: {warnings:?}"
+        );
+        ensure!(!first_path.exists());
+        Ok(())
+    }
+
+    /// A registered worktree whose directory was removed by hand left the repo
+    /// unusable before cleanup pruned registrations. Cleanup must reconcile it.
+    #[test]
+    fn overlay_cleanup_reconciles_stale_registered_worktree() -> Result<()> {
+        let fixture = fixture_git()?;
+        let root = fixture.dir.path();
+        let stale =
+            OverlayWorkspace::claim(&SystemPort, root, &fixture.governance, &fixture.current)?;
+        let stale_path = stale.path().to_path_buf();
+        std::mem::forget(stale);
+        fs::remove_dir_all(&stale_path)?;
+        ensure!(
+            git_fixture(root, &["worktree", "list", "--porcelain"])?.contains("prunable"),
+            "fixture should present a prunable registration"
+        );
+
+        let _overlay = fixture_overlay_sha(&fixture)?;
+
+        let listed = git_fixture(root, &["worktree", "list", "--porcelain"])?;
+        ensure!(
+            !listed.contains("prunable"),
+            "cleanup left stale worktree registrations: {listed}"
+        );
+        Ok(())
+    }
+
+    /// A leftover directory git no longer tracks must not block a later
+    /// promotion, and must not be adopted as this run's workspace.
+    #[test]
+    fn overlay_preparation_tolerates_stale_unregistered_directory() -> Result<()> {
+        let fixture = fixture_git()?;
+        let root = fixture.dir.path();
+        let orphan = root
+            .join("target/promotion-overlay")
+            .join(format!("{}-0-orphan", &fixture.current[..12]));
+        fs::create_dir_all(&orphan)?;
+        fs::write(orphan.join("leftover.txt"), b"residue")?;
+
+        let workspace =
+            OverlayWorkspace::claim(&SystemPort, root, &fixture.governance, &fixture.current)?;
+        ensure!(
+            workspace.path() != orphan,
+            "claim adopted a stale directory instead of a fresh one"
+        );
+        let warnings = workspace.release();
+        ensure!(
+            warnings.is_empty(),
+            "unexpected cleanup residue: {warnings:?}"
+        );
+        ensure!(
+            orphan.exists(),
+            "cleanup removed a directory this run did not own"
+        );
+        Ok(())
+    }
+
+    /// Failure after the worktree is registered must still deregister and
+    /// remove it, or the next run inherits an unusable repository.
+    #[test]
+    fn overlay_preparation_cleans_up_after_failure() -> Result<()> {
+        let fixture = fixture_git()?;
+        let root = fixture.dir.path();
+        let before = overlay_children(root)?;
+
+        let source_only_paths = load_source_only_paths(root)?;
+        let error = prepare_source_overlay(
+            &SystemPort,
+            root,
+            &fixture.governance,
+            "0000000000000000000000000000000000000000",
+            &source_only_paths,
+        )
+        .expect_err("overlay against a missing swarm sha should fail");
+        ensure!(!error.to_string().is_empty());
+
+        ensure!(
+            overlay_children(root)? == before,
+            "failed overlay left a workspace behind"
+        );
+        let listed = git_fixture(root, &["worktree", "list", "--porcelain"])?;
+        ensure!(
+            !listed.contains("prunable"),
+            "failed overlay left a stale registration: {listed}"
+        );
+        Ok(())
+    }
+
+    /// Sequential preparations are idempotent: the same inputs yield the same
+    /// overlay commit and leave no residue behind.
+    #[test]
+    fn repeated_overlay_preparation_is_idempotent() -> Result<()> {
+        let fixture = fixture_git()?;
+        let first = fixture_overlay_sha(&fixture)?;
+        let second = fixture_overlay_sha(&fixture)?;
+        let third = fixture_overlay_sha(&fixture)?;
+        ensure!(
+            first == second && second == third,
+            "overlay sha drifted across runs: {first} {second} {third}"
+        );
         Ok(())
     }
 
@@ -1398,15 +2461,16 @@ merge-old source-parent another-swarm-head
     #[test]
     fn planner_records_already_current_branch_target() -> Result<()> {
         let fixture = fixture_git()?;
+        let overlay = fixture_overlay_sha(&fixture)?;
         let mut port = stub_port(&fixture, true, true);
-        port.remote_target = Some(fixture.current.clone());
+        port.remote_target = Some(overlay.clone());
         let mut output = Vec::new();
         run_with_port_to(&port, fixture_inputs(&fixture), &mut output)?;
         let plan: serde_json::Value = serde_json::from_slice(&output)?;
         let push = &plan["planned_mutations"][2];
-        ensure!(push["current_target"] == fixture.current);
+        ensure!(push["current_target"] == serde_json::json!(overlay));
         ensure!(push["disposition"] == "already-current");
-        ensure!(!fixture.dir.path().join("target").exists());
+        ensure!(overlay_children(fixture.dir.path())?.is_empty());
         Ok(())
     }
 
@@ -1414,6 +2478,7 @@ merge-old source-parent another-swarm-head
     fn execution_creates_once_then_exact_rerun_is_a_noop() -> Result<()> {
         let fixture = fixture_git()?;
         let port = stub_port(&fixture, true, true);
+        let overlay = fixture_overlay_sha(&fixture)?;
         port.gh.borrow_mut().push_back(Ok(
             b"https://github.com/EffortlessMetrics/shiplog/pull/700\n".to_vec(),
         ));
@@ -1447,7 +2512,7 @@ merge-old source-parent another-swarm-head
         ensure!(promotion_body.contains("This tool does not perform rollback"));
 
         let mut rerun = stub_port(&fixture, true, true);
-        rerun.remote_target = Some(fixture.current.clone());
+        rerun.remote_target = Some(overlay);
         replace_pr_list(&rerun, serde_json::json!([recorded_pr(&first)?]))?;
         let mut inputs = fixture_inputs(&fixture);
         inputs.dry_run = false;
@@ -1467,8 +2532,9 @@ merge-old source-parent another-swarm-head
     #[test]
     fn execution_updates_one_compatible_stale_pr() -> Result<()> {
         let fixture = fixture_git()?;
+        let overlay = fixture_overlay_sha(&fixture)?;
         let mut port = stub_port(&fixture, true, true);
-        port.remote_target = Some(fixture.current.clone());
+        port.remote_target = Some(overlay.clone());
         let branch = format!("promote/swarm-current-{}", &fixture.current[..12]);
         replace_pr_list(
             &port,
@@ -1476,7 +2542,7 @@ merge-old source-parent another-swarm-head
                 "number": 701,
                 "url": "https://github.com/EffortlessMetrics/shiplog/pull/701",
                 "headRefName": branch,
-                "headRefOid": fixture.current,
+                "headRefOid": overlay,
                 "baseRefName": "main",
                 "headRepository": {"nameWithOwner": "EffortlessMetrics/shiplog"},
                 "headRepositoryOwner": {"login": "EffortlessMetrics"},
@@ -1506,14 +2572,15 @@ merge-old source-parent another-swarm-head
     #[test]
     fn planner_rejects_duplicate_or_wrong_base_source_prs() -> Result<()> {
         let fixture = fixture_git()?;
+        let overlay = fixture_overlay_sha(&fixture)?;
         let mut port = stub_port(&fixture, true, true);
-        port.remote_target = Some(fixture.current.clone());
+        port.remote_target = Some(overlay.clone());
         let branch = format!("promote/swarm-current-{}", &fixture.current[..12]);
         let candidate = serde_json::json!({
             "number": 702,
             "url": "https://github.com/EffortlessMetrics/shiplog/pull/702",
             "headRefName": branch,
-            "headRefOid": fixture.current,
+            "headRefOid": overlay.clone(),
             "baseRefName": "main",
             "headRepository": {"nameWithOwner": "EffortlessMetrics/shiplog"},
             "headRepositoryOwner": {"login": "EffortlessMetrics"},
@@ -1527,8 +2594,9 @@ merge-old source-parent another-swarm-head
         ensure!(error.to_string().contains("multiple open source PRs"));
 
         let fixture = fixture_git()?;
+        let overlay = fixture_overlay_sha(&fixture)?;
         let mut port = stub_port(&fixture, true, true);
-        port.remote_target = Some(fixture.current.clone());
+        port.remote_target = Some(overlay.clone());
         let branch = format!("promote/swarm-current-{}", &fixture.current[..12]);
         replace_pr_list(
             &port,
@@ -1536,7 +2604,7 @@ merge-old source-parent another-swarm-head
                 "number": 703,
                 "url": "https://github.com/EffortlessMetrics/shiplog/pull/703",
                 "headRefName": branch,
-                "headRefOid": fixture.current,
+                "headRefOid": overlay,
                 "baseRefName": "release",
                 "headRepository": {"nameWithOwner": "EffortlessMetrics/shiplog"},
                 "headRepositoryOwner": {"login": "EffortlessMetrics"},
@@ -1554,8 +2622,9 @@ merge-old source-parent another-swarm-head
     #[test]
     fn planner_rejects_fork_pr_with_matching_branch_base_and_oid() -> Result<()> {
         let fixture = fixture_git()?;
+        let overlay = fixture_overlay_sha(&fixture)?;
         let mut port = stub_port(&fixture, true, true);
-        port.remote_target = Some(fixture.current.clone());
+        port.remote_target = Some(overlay.clone());
         let branch = format!("promote/swarm-current-{}", &fixture.current[..12]);
         replace_pr_list(
             &port,
@@ -1563,7 +2632,7 @@ merge-old source-parent another-swarm-head
                 "number": 704,
                 "url": "https://github.com/EffortlessMetrics/shiplog/pull/704",
                 "headRefName": branch,
-                "headRefOid": fixture.current,
+                "headRefOid": overlay,
                 "baseRefName": "main",
                 "headRepository": {"nameWithOwner": "fork-owner/shiplog"},
                 "headRepositoryOwner": {"login": "fork-owner"},
@@ -1580,7 +2649,7 @@ merge-old source-parent another-swarm-head
             call.get(1)
                 .is_some_and(|action| action == "create" || action == "edit")
         }));
-        ensure!(!fixture.dir.path().join("target").exists());
+        ensure!(overlay_children(fixture.dir.path())?.is_empty());
         Ok(())
     }
 
@@ -1598,12 +2667,11 @@ merge-old source-parent another-swarm-head
             .context("expected non-fast-forward rejection")?;
         ensure!(error.to_string().contains("not fast-forwardable"));
         ensure!(port.gh_calls.borrow().iter().any(|call| {
-            call.get(1).is_some_and(|path| {
-                path.starts_with("repos/EffortlessMetrics/shiplog-swarm/compare/")
-            })
+            call.get(1)
+                .is_some_and(|path| path.starts_with("repos/EffortlessMetrics/shiplog/compare/"))
         }));
         ensure!(port.git_mutations.borrow().is_empty());
-        ensure!(!fixture.dir.path().join("target").exists());
+        ensure!(overlay_children(fixture.dir.path())?.is_empty());
         Ok(())
     }
 
@@ -1621,7 +2689,7 @@ merge-old source-parent another-swarm-head
             .context("expected absent remote-head rejection")?;
         ensure!(error.to_string().contains("in swarm authority"));
         ensure!(port.git_mutations.borrow().is_empty());
-        ensure!(!fixture.dir.path().join("target").exists());
+        ensure!(overlay_children(fixture.dir.path())?.is_empty());
         Ok(())
     }
 
@@ -1714,14 +2782,13 @@ merge-old source-parent another-swarm-head
         let fixture = fixture_git()?;
         let mut port = stub_port(&fixture, true, true);
         port.fail_merge_base = true;
-        let target = fixture.dir.path().join("target");
         let mut output = Vec::new();
         let error = run_with_port_to(&port, fixture_inputs(&fixture), &mut output)
             .err()
             .context("expected merge-base rejection")?;
         ensure!(error.to_string().contains("determine merge base"));
         ensure!(output.is_empty());
-        ensure!(!target.exists());
+        ensure!(overlay_children(fixture.dir.path())?.is_empty());
         Ok(())
     }
 
@@ -1812,6 +2879,195 @@ merge-old source-parent another-swarm-head
     }
 
     #[test]
+    fn transition_patch_fingerprint_normalizes_pr_metadata() {
+        let regular_merge_patch = r#"diff --git a/Cargo.lock b/Cargo.lock
+index eecb0e2..abc1234 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -10,7 +10,7 @@
+-name = "clap"
+-version = "4.6.1"
++name = "clap"
++version = "4.6.2"
+diff --git a/other.txt b/other.txt
+index 111111..222222 100644
+--- a/other.txt
++++ b/other.txt
+@@ -1 +1 @@
+-a
++b
+"#;
+        let squash_merge_patch = r#"diff --git a/Cargo.lock b/Cargo.lock
+index 999999..abcdef0 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -10,7 +10,7 @@
+-name = "clap"
+-version = "4.6.1"
++name = "clap"
++version = "4.6.2"
+"#;
+        let regular = patch_fingerprint(regular_merge_patch, &["Cargo.lock"]).expect("fingerprint");
+        let squash = patch_fingerprint(squash_merge_patch, &["Cargo.lock"]).expect("fingerprint");
+        assert_eq!(regular, squash);
+        assert!(!regular.is_empty());
+    }
+
+    #[test]
+    fn cargo_lock_transition_parses_versions() {
+        let source_patch = r#"diff --git a/Cargo.lock b/Cargo.lock
+index 123..456 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -1,10 +1,10 @@
+  [[package]]
+-name = "tokio"
+-version = "1.52.3"
++name = "tokio"
++version = "1.53.0"
+diff --git a/src/lib.rs b/src/lib.rs
+index 10..20 100644
+"#;
+        let transitions = parse_cargo_lock_transitions(source_patch, &["Cargo.lock"])
+            .expect("parse source patch");
+        assert!(
+            transitions
+                .get("tokio")
+                .is_some_and(|transition| transition.0.as_deref() == Some("1.52.3"))
+        );
+        assert!(
+            transitions
+                .get("tokio")
+                .is_some_and(|transition| transition.1.as_deref() == Some("1.53.0"))
+        );
+    }
+
+    #[test]
+    fn validate_superseded_lockfile_transition_detects_version_progress() {
+        let source_patch = r#"diff --git a/Cargo.lock b/Cargo.lock
+index 123..456 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -1,6 +1,6 @@
+  [[package]]
+-name = "tokio"
+-version = "1.52.3"
++name = "tokio"
++version = "1.53.0"
+"#;
+        let swarm_patch = r#"diff --git a/Cargo.lock b/Cargo.lock
+index 999..abc 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -1,6 +1,6 @@
+  [[package]]
+-name = "tokio"
+-version = "1.53.0"
++name = "tokio"
++version = "1.53.1"
+"#;
+        validate_superseded_lockfile_transition(source_patch, swarm_patch, &["Cargo.lock"])
+            .expect("superseded transition should pass");
+    }
+
+    #[test]
+    fn transition_policy_allows_declared_paths_and_two_sided_files() -> Result<()> {
+        let source_patch = r#"diff --git a/Cargo.lock b/Cargo.lock
+index 123..456 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -1,6 +1,6 @@
+  [[package]]
+-name = "clap"
+-version = "4.6.1"
++name = "clap"
++version = "4.6.2"
+"#;
+        let swarm_patch = r#"diff --git a/Cargo.lock b/Cargo.lock
+index 123..456 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -1,6 +1,6 @@
+  [[package]]
+-name = "clap"
+-version = "4.6.1"
++name = "clap"
++version = "4.6.2"
+"#;
+        let transition = TransitionSourceMirror {
+            source_pr: "EffortlessMetrics/shiplog#659".to_string(),
+            source_merge_sha: "1111111111111111111111111111111111111111".to_string(),
+            swarm_pr: "EffortlessMetrics/shiplog-swarm#248".to_string(),
+            swarm_merge_sha: "2222222222222222222222222222222222222222".to_string(),
+            paths: vec!["Cargo.lock".to_string()],
+            status: "equivalent".to_string(),
+        };
+        let port = StubPort {
+            gh: RefCell::new(VecDeque::from([
+                Ok(source_patch.as_bytes().to_vec()),
+                Ok(swarm_patch.as_bytes().to_vec()),
+            ])),
+            gh_calls: RefCell::new(Vec::new()),
+            git_mutations: RefCell::new(Vec::new()),
+            remote_target: None,
+            fail_merge_base: false,
+        };
+        let policy = validate_transition_mirror(&port, std::slice::from_ref(&transition))?;
+        ensure!(policy.source_only_paths.contains("Cargo.lock"));
+        ensure!(policy.two_sided_paths.contains("Cargo.lock"));
+        ensure!(port.gh_calls.borrow().len() == 2);
+        Ok(())
+    }
+
+    #[test]
+    fn validate_transition_mirror_rejects_equivalent_mismatch() -> Result<()> {
+        let source_patch = r#"diff --git a/Cargo.lock b/Cargo.lock
+index 123..456 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -1,6 +1,6 @@
+  [[package]]
+-name = "clap"
+-version = "4.6.1"
++name = "clap"
++version = "4.6.2"
+"#;
+        let swarm_patch = r#"diff --git a/Cargo.lock b/Cargo.lock
+index 123..456 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -1,6 +1,6 @@
+  [[package]]
+-name = "clap"
+-version = "4.6.1"
++name = "clap"
++version = "4.7.0"
+"#;
+        let transition = TransitionSourceMirror {
+            source_pr: "EffortlessMetrics/shiplog#659".to_string(),
+            source_merge_sha: "1111111111111111111111111111111111111111".to_string(),
+            swarm_pr: "EffortlessMetrics/shiplog-swarm#248".to_string(),
+            swarm_merge_sha: "2222222222222222222222222222222222222222".to_string(),
+            paths: vec!["Cargo.lock".to_string()],
+            status: "equivalent".to_string(),
+        };
+        let port = StubPort {
+            gh: RefCell::new(VecDeque::from([
+                Ok(source_patch.as_bytes().to_vec()),
+                Ok(swarm_patch.as_bytes().to_vec()),
+            ])),
+            gh_calls: RefCell::new(Vec::new()),
+            git_mutations: RefCell::new(Vec::new()),
+            remote_target: None,
+            fail_merge_base: false,
+        };
+        let error = validate_transition_mirror(&port, std::slice::from_ref(&transition))
+            .expect_err("mismatch");
+        ensure!(error.to_string().contains("not equivalent"));
+        Ok(())
+    }
+
+    #[test]
     fn extract_swarm_pr_receipts_empty_for_no_prs() {
         let subjects = ["chore: no marker", "another plain subject"];
         assert!(extract_swarm_pr_receipts(subjects.into_iter()).is_empty());
@@ -1823,6 +3079,8 @@ merge-old source-parent another-swarm-head
         let output = dir.path().join("target/source-of-truth/promotion-body.md");
         let plan = PromotePlan {
             swarm_head: "c4fdba223d1c5c5b99a95b159ab8123d83d4b842".to_string(),
+            prepared_overlay_sha: "abcdeffedcba9876543210fedcba1234567890abcd".to_string(),
+            overlay_cleanup_warnings: Vec::new(),
             source_ref: "origin/main".to_string(),
             source_head: "ee4c7e0b628e4495f3044397b0566fe06f1e567c".to_string(),
             merge_base: "df611d5".to_string(),

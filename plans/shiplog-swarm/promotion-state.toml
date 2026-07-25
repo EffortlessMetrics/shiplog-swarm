@@ -27,7 +27,7 @@ status = "completed"
 disposition = "completed-with-governance"
 source_promotion_pr = "EffortlessMetrics/shiplog#655"
 # Regular-merge commit SHA on source main, once known. Empty until observed.
-source_merge_sha = ""
+source_merge_sha = "160d430f1a5af338537e35ff98b8ddda14d4673c"
 promoted_swarm_head = "c4fdba223d1c5c5b99a95b159ab8123d83d4b842"
 # Approved source-only governance receipts that accompany this promotion.
 source_governance = ["EffortlessMetrics/shiplog#656"]
@@ -36,6 +36,41 @@ source_post_merge_proof = ""
 # Merged swarm PRs included in this promotion slice (between the previous
 # promoted head and `promoted_swarm_head`).
 included_swarm_prs = ["EffortlessMetrics/shiplog-swarm#238"]
+[[latest_promotion.transition_source_mirror]]
+source_pr = "EffortlessMetrics/shiplog#657"
+source_merge_sha = "e6a72ad11ab22d03b1cf434b237bf0fff9c145bf"
+swarm_pr = "EffortlessMetrics/shiplog-swarm#265"
+swarm_merge_sha = "97239104cb2923e389749ac733755a955e4c6cc5"
+status = "superseded_in_swarm"
+paths = ["Cargo.lock"]
+[[latest_promotion.transition_source_mirror]]
+source_pr = "EffortlessMetrics/shiplog#658"
+source_merge_sha = "1d24d256fa9e976bc608e54cf176364a4791273e"
+swarm_pr = "EffortlessMetrics/shiplog-swarm#247"
+swarm_merge_sha = "ba4aeaf78cb17f980f1da05d24d9638033b95f68"
+status = "equivalent"
+paths = ["Cargo.lock"]
+[[latest_promotion.transition_source_mirror]]
+source_pr = "EffortlessMetrics/shiplog#659"
+source_merge_sha = "0da4b68ccc8763375aaa1422b6d2d3280c3fe3c9"
+swarm_pr = "EffortlessMetrics/shiplog-swarm#248"
+swarm_merge_sha = "2437c0c54dbdcd3a62fb3e9573363d8e6027d1ef"
+status = "equivalent"
+paths = ["Cargo.lock"]
+[[latest_promotion.transition_source_mirror]]
+source_pr = "EffortlessMetrics/shiplog#660"
+source_merge_sha = "de23dcb67d17242f081e73eb81f47b8fc07a8773"
+swarm_pr = "EffortlessMetrics/shiplog-swarm#249"
+swarm_merge_sha = "1543c9f543778a17ebf2ef2b654b29e24cd1dc32"
+status = "equivalent"
+paths = ["Cargo.lock"]
+[[latest_promotion.transition_source_mirror]]
+source_pr = "EffortlessMetrics/shiplog#661"
+source_merge_sha = "a94bfaf6880c6873d4dd0fce7bf9733fb1b61734"
+swarm_pr = "EffortlessMetrics/shiplog-swarm#250"
+swarm_merge_sha = "abb7fae01d1c04217ea275a819f932dc98e9dd0c"
+status = "equivalent"
+paths = ["Cargo.lock"]
 
 [pending]
 # Merged swarm PRs after `promoted_swarm_head` that are not yet promoted.

@@ -25,6 +25,12 @@ pub const GENERATED_REL: &str = "plans/shiplog-swarm/current-promotion.md";
 const GENERATED_BANNER: &str = "<!-- GENERATED FROM plans/shiplog-swarm/promotion-state.toml BY `cargo xtask promotion-state`. DO NOT EDIT BY HAND. -->";
 const VALID_STATUSES: &[&str] = &["completed", "pending"];
 const VALID_DISPOSITIONS: &[&str] = &["completed", "completed-with-governance", "pending"];
+const VALID_TRANSITION_STATUSES: &[&str] = &[
+    "equivalent",
+    "superseded_in_swarm",
+    "missing_in_swarm",
+    "conflicting",
+];
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -51,6 +57,21 @@ pub struct LatestPromotion {
     pub source_post_merge_proof: String,
     #[serde(default)]
     pub included_swarm_prs: Vec<String>,
+    #[serde(default)]
+    pub transition_source_mirror: Vec<TransitionSourceMirror>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TransitionSourceMirror {
+    pub source_pr: String,
+    pub source_merge_sha: String,
+    pub swarm_pr: String,
+    #[serde(default)]
+    pub swarm_merge_sha: String,
+    #[serde(default)]
+    pub paths: Vec<String>,
+    pub status: String,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -142,6 +163,9 @@ fn validate(state: &PromotionState) -> Result<()> {
         "latest_promotion.source_promotion_pr",
         &promotion.source_promotion_pr,
     )?;
+    if promotion.status == "completed" && promotion.source_merge_sha.is_empty() {
+        bail!("latest_promotion.source_merge_sha is required when status is \"completed\"");
+    }
     if !promotion.source_merge_sha.is_empty() {
         validate_sha(
             "latest_promotion.source_merge_sha",
@@ -158,11 +182,47 @@ fn validate(state: &PromotionState) -> Result<()> {
     for receipt in &promotion.included_swarm_prs {
         validate_receipt("latest_promotion.included_swarm_prs", receipt)?;
     }
+    for transition in &promotion.transition_source_mirror {
+        validate_transition_source_mirror(transition)?;
+    }
     for receipt in &state.pending.swarm_pr_range {
         validate_receipt("pending.swarm_pr_range", receipt)?;
     }
     for receipt in &state.pending.deferred_receipt_carry {
         validate_receipt("pending.deferred_receipt_carry", receipt)?;
+    }
+    Ok(())
+}
+
+fn validate_transition_source_mirror(entry: &TransitionSourceMirror) -> Result<()> {
+    validate_receipt(
+        "latest_promotion.transition_source_mirror.source_pr",
+        &entry.source_pr,
+    )?;
+    validate_receipt(
+        "latest_promotion.transition_source_mirror.swarm_pr",
+        &entry.swarm_pr,
+    )?;
+    validate_sha(
+        "latest_promotion.transition_source_mirror.source_merge_sha",
+        &entry.source_merge_sha,
+    )?;
+    if entry.status != "missing_in_swarm" || !entry.swarm_merge_sha.is_empty() {
+        validate_sha(
+            "latest_promotion.transition_source_mirror.swarm_merge_sha",
+            &entry.swarm_merge_sha,
+        )?;
+    }
+    if !VALID_TRANSITION_STATUSES.contains(&entry.status.as_str()) {
+        bail!(
+            "latest_promotion.transition_source_mirror.status {:?} is not one of {VALID_TRANSITION_STATUSES:?}",
+            entry.status
+        );
+    }
+    for path in &entry.paths {
+        if path.trim().is_empty() {
+            bail!("transition path must be non-empty");
+        }
     }
     Ok(())
 }
@@ -278,6 +338,24 @@ fn render_markdown(state: &PromotionState) -> String {
         }
     }
 
+    if !promotion.transition_source_mirror.is_empty() {
+        out.push_str("\n## Transition mirror\n\n");
+        for entry in &promotion.transition_source_mirror {
+            let paths = if entry.paths.is_empty() {
+                "no explicit paths".to_string()
+            } else {
+                entry.paths.join(", ")
+            };
+            out.push_str(&format!(
+                "- {src} -> {swarm} ({status}); paths: {paths}\n",
+                src = entry.source_pr,
+                swarm = entry.swarm_pr,
+                status = entry.status,
+                paths = paths
+            ));
+        }
+    }
+
     out.push_str("\n## Truth hierarchy\n\n");
     out.push_str(
         "1. Git refs and ancestry\n\
@@ -322,9 +400,45 @@ schema_version = 1
 status = "completed"
 disposition = "completed-with-governance"
 source_promotion_pr = "EffortlessMetrics/shiplog#655"
+source_merge_sha = "160d430f1a5af338537e35ff98b8ddda14d4673c"
 promoted_swarm_head = "c4fdba223d1c5c5b99a95b159ab8123d83d4b842"
 source_governance = ["EffortlessMetrics/shiplog#656"]
 included_swarm_prs = ["EffortlessMetrics/shiplog-swarm#238"]
+[[latest_promotion.transition_source_mirror]]
+source_pr = "EffortlessMetrics/shiplog#657"
+source_merge_sha = "e6a72ad11ab22d03b1cf434b237bf0fff9c145bf"
+swarm_pr = "EffortlessMetrics/shiplog-swarm#265"
+swarm_merge_sha = "97239104cb2923e389749ac733755a955e4c6cc5"
+status = "superseded_in_swarm"
+paths = ["Cargo.lock"]
+[[latest_promotion.transition_source_mirror]]
+source_pr = "EffortlessMetrics/shiplog#658"
+source_merge_sha = "1d24d256fa9e976bc608e54cf176364a4791273e"
+swarm_pr = "EffortlessMetrics/shiplog-swarm#247"
+swarm_merge_sha = "ba4aeaf78cb17f980f1da05d24d9638033b95f68"
+status = "equivalent"
+paths = ["Cargo.lock"]
+[[latest_promotion.transition_source_mirror]]
+source_pr = "EffortlessMetrics/shiplog#659"
+source_merge_sha = "0da4b68ccc8763375aaa1422b6d2d3280c3fe3c9"
+swarm_pr = "EffortlessMetrics/shiplog-swarm#248"
+swarm_merge_sha = "2437c0c54dbdcd3a62fb3e9573363d8e6027d1ef"
+status = "equivalent"
+paths = ["Cargo.lock"]
+[[latest_promotion.transition_source_mirror]]
+source_pr = "EffortlessMetrics/shiplog#660"
+source_merge_sha = "de23dcb67d17242f081e73eb81f47b8fc07a8773"
+swarm_pr = "EffortlessMetrics/shiplog-swarm#249"
+swarm_merge_sha = "1543c9f543778a17ebf2ef2b654b29e24cd1dc32"
+status = "equivalent"
+paths = ["Cargo.lock"]
+[[latest_promotion.transition_source_mirror]]
+source_pr = "EffortlessMetrics/shiplog#661"
+source_merge_sha = "a94bfaf6880c6873d4dd0fce7bf9733fb1b61734"
+swarm_pr = "EffortlessMetrics/shiplog-swarm#250"
+swarm_merge_sha = "abb7fae01d1c04217ea275a819f932dc98e9dd0c"
+status = "equivalent"
+paths = ["Cargo.lock"]
 [pending]
 swarm_pr_range = ["EffortlessMetrics/shiplog-swarm#248"]
 deferred_receipt_carry = []
@@ -347,6 +461,7 @@ deferred_receipt_carry = []
 schema_version = 1
 [latest_promotion]
 status = "completed"
+source_merge_sha = "160d430f1a5af338537e35ff98b8ddda14d4673c"
 source_promotion_pr = "EffortlessMetrics/shiplog#655"
 promoted_swarm_head = "c4fdba22"
 "#;
@@ -362,6 +477,41 @@ promoted_swarm_head = "c4fdba22"
             state.pending.swarm_pr_range,
             vec!["EffortlessMetrics/shiplog-swarm#248".to_string()]
         );
+    }
+
+    #[test]
+    fn accepts_equivalent_transition_mirror() {
+        let state = completed_manifest();
+        assert_eq!(state.latest_promotion.transition_source_mirror.len(), 5);
+        let statuses: Vec<_> = state
+            .latest_promotion
+            .transition_source_mirror
+            .iter()
+            .map(|entry| entry.status.as_str())
+            .collect();
+        assert!(statuses.contains(&"equivalent"));
+        assert!(statuses.contains(&"superseded_in_swarm"));
+    }
+
+    #[test]
+    fn rejects_invalid_transition_status() {
+        let text = r#"
+schema_version = 1
+[latest_promotion]
+status = "completed"
+source_merge_sha = "160d430f1a5af338537e35ff98b8ddda14d4673c"
+source_promotion_pr = "EffortlessMetrics/shiplog#655"
+promoted_swarm_head = "c4fdba223d1c5c5b99a95b159ab8123d83d4b842"
+source_governance = ["EffortlessMetrics/shiplog#656"]
+[[latest_promotion.transition_source_mirror]]
+source_pr = "EffortlessMetrics/shiplog#658"
+source_merge_sha = "1d24d256fa9e976bc608e54cf176364a4791273e"
+swarm_pr = "EffortlessMetrics/shiplog-swarm#247"
+swarm_merge_sha = "ba4aeaf78cb17f980f1da05d24d9638033b95f68"
+status = "bogus"
+"#;
+        let state: PromotionState = toml::from_str(text).expect("parse");
+        assert!(validate(&state).is_err());
     }
 
     #[test]
@@ -461,6 +611,7 @@ promoted_swarm_head = "c4fdba22"
 schema_version = 1
 [latest_promotion]
 status = "completed"
+source_merge_sha = "160d430f1a5af338537e35ff98b8ddda14d4673c"
 source_promotion_pr = "EffortlessMetrics/shiplog#655"
 promoted_swarm_head = "c4fdba22"
 [pending]
