@@ -134,6 +134,15 @@ fn check_path(
             if !path.swarm_chain.is_empty() {
                 bail!("missing_in_swarm must not name swarm PRs");
             }
+            // The receipt is an authority grant for a specific source change,
+            // not a free-form allowlist. Require the source PR patch to contain
+            // this path before allowing it to authorize source-only divergence.
+            patch_for_path(source_patch, &path.path).with_context(|| {
+                format!(
+                    "source PR {} does not touch this path",
+                    entry.source_pr.as_str()
+                )
+            })?;
             // Source changed it and swarm has not caught up yet, so the
             // difference is one-sided until a promotion reconciles it.
             authority.source_only.insert(path.path.clone());
@@ -656,6 +665,24 @@ mod tests {
 
     /// `missing_in_swarm` is the only disposition that earns one-sided source
     /// authority, and only while unconsumed.
+    #[test]
+    fn missing_in_swarm_requires_the_source_pr_to_touch_the_path() {
+        let patch = section(CARGO_LOCK, "1.52.3", "1.53.0", "tokio");
+        let port = StubPort::new().merged(
+            &format!("{SOURCE}#657"),
+            "e6a72ad11ab22d03b1cf434b237bf0fff9c145bf",
+            &patch,
+        );
+        let mut transition = entry(TransitionDisposition::MissingInSwarm, &[]);
+        transition.path[0].path = "not-touched.txt".to_string();
+        let error = derive_authority(&port, Path::new("."), &refs(), &[transition])
+            .expect_err("a receipt must not authorize a path absent from its source PR");
+        assert!(
+            format!("{error:#}").contains("does not touch this path"),
+            "unexpected error: {error:#}"
+        );
+    }
+
     #[test]
     fn missing_in_swarm_grants_source_only_until_consumed() -> Result<()> {
         let patch = section(CARGO_LOCK, "1.52.3", "1.53.0", "tokio");

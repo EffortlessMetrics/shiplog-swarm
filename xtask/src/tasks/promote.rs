@@ -306,6 +306,17 @@ fn run_with_port_to(
         },
         &state.transition,
     )?;
+    // Transition-authorized source-only paths must be restored from source into
+    // the overlay just like permanent policy paths. Otherwise the alignment
+    // check would approve the divergence and the subsequent checkout would
+    // silently replace the source-only change with the older swarm tree.
+    let overlay_source_only_paths = source_only_paths
+        .iter()
+        .cloned()
+        .chain(transition_authority.source_only.iter().cloned())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
     // Commits the ancestry walk may step over: approved governance, plus source
     // merges an active transition receipt accounts for. Both are recorded
     // evidence; anything else following the promotion merge is unapproved.
@@ -336,7 +347,7 @@ fn run_with_port_to(
         &inputs.workspace_root,
         &source_head,
         &swarm_sha,
-        &source_only_paths,
+        &overlay_source_only_paths,
         // A planning-only run must not leave the overlay commit in the object
         // database; an executing run has to keep it so the push has something to
         // send.

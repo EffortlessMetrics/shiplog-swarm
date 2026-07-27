@@ -274,9 +274,7 @@ fn validate_transitions(transitions: &[Transition]) -> Result<()> {
         // make the authority it grants ambiguous.
         let mut seen_paths = BTreeSet::new();
         for path in &entry.path {
-            if path.path.trim().is_empty() {
-                bail!("transition {} has an empty path", entry.source_pr);
-            }
+            validate_transition_path(&entry.source_pr, &path.path)?;
             if !seen_paths.insert(path.path.as_str()) {
                 bail!(
                     "transition {} lists path {} more than once",
@@ -338,6 +336,24 @@ fn validate_receipt(field: &str, value: &str) -> Result<()> {
     }
     if number.is_empty() || !number.chars().all(|c| c.is_ascii_digit()) {
         bail!("{field} receipt {value:?} must end with a numeric issue/PR id");
+    }
+    Ok(())
+}
+
+/// Transition receipt paths are later passed as repository path arguments,
+/// so they must stay within the repository and name exactly one normalized path.
+fn validate_transition_path(source_pr: &str, value: &str) -> Result<()> {
+    if value.trim().is_empty()
+        || value != value.trim()
+        || value.starts_with('/')
+        || value.contains('\\')
+        || value
+            .split('/')
+            .any(|part| part.is_empty() || part == "." || part == "..")
+    {
+        bail!(
+            "transition {source_pr} path {value:?} must be a normalized repository-relative path"
+        );
     }
     Ok(())
 }
