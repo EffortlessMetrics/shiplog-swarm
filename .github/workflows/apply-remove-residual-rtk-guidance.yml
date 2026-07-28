@@ -23,10 +23,14 @@ jobs:
             xtask/src/tasks/pr_body.rs
             xtask/src/tasks/repo_contract_report.rs
           )
+          changed=0
           for file in "${files[@]}"; do
-            grep -q 'rtk ' "$file"
-            sed -i 's/rtk //g' "$file"
+            if grep -q 'rtk ' "$file"; then
+              sed -i 's/rtk //g' "$file"
+              changed=1
+            fi
           done
+          test "$changed" = 1
           git diff --check
           git config user.name EffortlessSteven
           git config user.email git@effortlesssteven.com
