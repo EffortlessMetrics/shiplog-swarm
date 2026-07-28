@@ -1,0 +1,35 @@
+name: Apply residual RTK cleanup
+on:
+  push:
+    branches: [agent/remove-residual-rtk-guidance]
+    paths: [.github/workflows/apply-remove-residual-rtk-guidance.yml]
+permissions:
+  contents: write
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          ref: agent/remove-residual-rtk-guidance
+          fetch-depth: 0
+      - name: Apply bounded replacements
+        run: |
+          set -euo pipefail
+          files=(
+            plans/shiplog-swarm/current-promotion.md
+            plans/shiplog-swarm/implementation-plan.md
+            xtask/src/tasks/closeout.rs
+            xtask/src/tasks/pr_body.rs
+            xtask/src/tasks/repo_contract_report.rs
+          )
+          for file in "${files[@]}"; do
+            grep -q 'rtk ' "$file"
+            sed -i 's/rtk //g' "$file"
+          done
+          git diff --check
+          git config user.name EffortlessSteven
+          git config user.email git@effortlesssteven.com
+          git add "${files[@]}"
+          git commit -m 'docs: remove RTK from promotion guidance and generators'
+          git push origin HEAD:agent/remove-residual-rtk-guidance
