@@ -92,10 +92,10 @@ EffortlessMetrics/shiplog-swarm main
 ### Proof commands
 
 ```bash
-rtk git fetch origin main --prune --tags
-rtk git fetch swarm main --prune
-rtk git merge-base origin/main swarm/main
-rtk git diff --stat origin/main..swarm/main
+git fetch origin main --prune --tags
+git fetch swarm main --prune
+git merge-base origin/main swarm/main
+git diff --stat origin/main..swarm/main
 ```
 
 ### Rollback
@@ -150,8 +150,8 @@ EffortlessMetrics/shiplog
 ### Proof commands
 
 ```bash
-rtk gh api repos/EffortlessMetrics/shiplog-swarm --jq '{allow_squash_merge,allow_merge_commit,allow_rebase_merge,allow_auto_merge,delete_branch_on_merge}'
-rtk gh api repos/EffortlessMetrics/shiplog --jq '{allow_merge_commit}'
+gh api repos/EffortlessMetrics/shiplog-swarm --jq '{allow_squash_merge,allow_merge_commit,allow_rebase_merge,allow_auto_merge,delete_branch_on_merge}'
+gh api repos/EffortlessMetrics/shiplog --jq '{allow_merge_commit}'
 ```
 
 ### Rollback
@@ -234,9 +234,9 @@ manual dispatch result: Shiplog Rust Small Result passed
 ### Proof commands
 
 ```bash
-rtk cargo xtask check-workflows --mode blocking-allowlist
-rtk cargo xtask check-policy-schemas
-rtk git diff --check
+cargo xtask check-workflows --mode blocking-allowlist
+cargo xtask check-policy-schemas
+git diff --check
 ```
 
 The routed lane itself runs:
@@ -504,9 +504,9 @@ result:        regular merge commit; source and swarm checks passed
 ### Proof commands
 
 ```bash
-rtk gh run list --repo EffortlessMetrics/shiplog-swarm --workflow "EM CI Routed Shiplog Rust" --limit 10
-rtk gh pr checks --repo EffortlessMetrics/shiplog-swarm <proof-pr>
-rtk git diff --check
+gh run list --repo EffortlessMetrics/shiplog-swarm --workflow "EM CI Routed Shiplog Rust" --limit 10
+gh pr checks --repo EffortlessMetrics/shiplog-swarm <proof-pr>
+git diff --check
 ```
 
 ### Rollback
@@ -563,8 +563,8 @@ This PR is the protected same-repo PR proof. It must pass
 ### Proof commands
 
 ```bash
-rtk gh api repos/EffortlessMetrics/shiplog-swarm/branches/main/protection
-rtk gh pr checks --repo EffortlessMetrics/shiplog-swarm <post-protection-pr>
+gh api repos/EffortlessMetrics/shiplog-swarm/branches/main/protection
+gh pr checks --repo EffortlessMetrics/shiplog-swarm <post-protection-pr>
 ```
 
 ### Rollback
@@ -638,7 +638,7 @@ post-merge CI:  EM CI Routed Shiplog Rust passed; CI passed
 ### Proof commands
 
 ```bash
-rtk git diff --check
+git diff --check
 ```
 
 ### Rollback
@@ -667,15 +667,15 @@ PR: EffortlessMetrics/shiplog-swarm#28
 Start every swarm/source work session from live repo state, not chat memory:
 
 ```bash
-rtk git status --short --branch
-rtk git fetch origin --prune
-rtk git fetch swarm --prune
-rtk gh pr list --repo EffortlessMetrics/shiplog-swarm --state open --limit 30
-rtk gh pr list --repo EffortlessMetrics/shiplog --state open --limit 30
-rtk gh issue list --repo EffortlessMetrics/shiplog-swarm --state open --limit 30
-rtk gh issue list --repo EffortlessMetrics/shiplog --state open --limit 30
-rtk cargo xtask repo-contract-report
-rtk cargo xtask check-goals
+git status --short --branch
+git fetch origin --prune
+git fetch swarm --prune
+gh pr list --repo EffortlessMetrics/shiplog-swarm --state open --limit 30
+gh pr list --repo EffortlessMetrics/shiplog --state open --limit 30
+gh issue list --repo EffortlessMetrics/shiplog-swarm --state open --limit 30
+gh issue list --repo EffortlessMetrics/shiplog --state open --limit 30
+cargo xtask repo-contract-report
+cargo xtask check-goals
 ```
 
 Choose the next slice in this order:
@@ -949,7 +949,7 @@ EffortlessMetrics/shiplog#511:
   included swarm PRs: EffortlessMetrics/shiplog-swarm#68
   source merge: 727ed24a8896db219ec7357fdf0c2f0478c648fe
   result: regular merge commit; support-tier proof commands now require
-          copyable `rtk cargo xtask` prefixes; source post-merge routed CI, CI,
+          copyable `cargo xtask` prefixes; source post-merge routed CI, CI,
           smoke, security, testing, and CI Actuals passed
 
 EffortlessMetrics/shiplog#513:
@@ -1037,7 +1037,7 @@ EffortlessMetrics/shiplog#522:
   included swarm PRs: EffortlessMetrics/shiplog-swarm#79
   source merge: f4e7d82b848cd97e1c27a432100986a25201ee16
   result: regular merge commit; repo contract report command provenance now
-          uses the repo-required `rtk cargo xtask repo-contract-report`
+          uses the repo-required `cargo xtask repo-contract-report`
           spelling; source post-merge routed CI, CI, smoke, security, testing,
           and CI Actuals passed
 
@@ -1288,7 +1288,7 @@ Remote branch hygiene after EffortlessMetrics/shiplog#550:
   result: remote branch hygiene is clean; audited stale source and swarm
           branch candidates before deletion, preserved protected release
           branches, left no open PRs or issues in either repo, and reran
-          `rtk cargo xtask repo-contract-report` with 0 source and 0 swarm
+          `cargo xtask repo-contract-report` with 0 source and 0 swarm
           cleanup candidates
 
 EffortlessMetrics/shiplog#551:
@@ -2055,15 +2055,15 @@ Pending source promotion after EffortlessMetrics/shiplog#607:
 ### Proof commands
 
 ```bash
-rtk git fetch origin main --prune --tags
-rtk git fetch swarm main --prune
-rtk git merge-base origin/main swarm/main
-rtk git log --oneline origin/main..swarm/main
-rtk gh run list --repo EffortlessMetrics/shiplog-swarm --branch main --limit 10
-rtk gh run list --repo EffortlessMetrics/shiplog --branch main --limit 10
-rtk cargo xtask repo-contract-report
-rtk gh pr create --base main --head promote/swarm-YYYYMMDD-SHA
-rtk git diff --check
+git fetch origin main --prune --tags
+git fetch swarm main --prune
+git merge-base origin/main swarm/main
+git log --oneline origin/main..swarm/main
+gh run list --repo EffortlessMetrics/shiplog-swarm --branch main --limit 10
+gh run list --repo EffortlessMetrics/shiplog --branch main --limit 10
+cargo xtask repo-contract-report
+gh pr create --base main --head promote/swarm-YYYYMMDD-SHA
+git diff --check
 ```
 
 ### Rollback
