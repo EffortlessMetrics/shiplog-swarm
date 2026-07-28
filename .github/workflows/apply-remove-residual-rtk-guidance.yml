@@ -1,12 +1,12 @@
 name: Apply residual RTK cleanup
 on:
-  push:
-    branches: [agent/remove-residual-rtk-guidance]
-    paths: [.github/workflows/apply-remove-residual-rtk-guidance.yml]
+  pull_request:
+    types: [opened, synchronize, reopened]
 permissions:
   contents: write
 jobs:
   apply:
+    if: github.event.pull_request.head.ref == 'agent/remove-residual-rtk-guidance' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
@@ -25,12 +25,14 @@ jobs:
           )
           changed=0
           for file in "${files[@]}"; do
-            if grep -q 'rtk ' "$file"; then
-              sed -i 's/rtk //g' "$file"
+            if [ -f "$file" ] && grep -q 'rtk ' "$file"; then
+              perl -pi -e 's/rtk //g' "$file"
               changed=1
             fi
           done
-          test "$changed" = 1
+          if [ "$changed" = 0 ]; then
+            exit 0
+          fi
           git diff --check
           git config user.name EffortlessSteven
           git config user.email git@effortlesssteven.com
