@@ -949,7 +949,7 @@ EffortlessMetrics/shiplog#511:
   included swarm PRs: EffortlessMetrics/shiplog-swarm#68
   source merge: 727ed24a8896db219ec7357fdf0c2f0478c648fe
   result: regular merge commit; support-tier proof commands now require
-          copyable `cargo xtask` prefixes; source post-merge routed CI, CI,
+          copyable `rtk cargo xtask` prefixes; source post-merge routed CI, CI,
           smoke, security, testing, and CI Actuals passed
 
 EffortlessMetrics/shiplog#513:
@@ -1037,7 +1037,7 @@ EffortlessMetrics/shiplog#522:
   included swarm PRs: EffortlessMetrics/shiplog-swarm#79
   source merge: f4e7d82b848cd97e1c27a432100986a25201ee16
   result: regular merge commit; repo contract report command provenance now
-          uses the repo-required `cargo xtask repo-contract-report`
+          uses the repo-required `rtk cargo xtask repo-contract-report`
           spelling; source post-merge routed CI, CI, smoke, security, testing,
           and CI Actuals passed
 
@@ -1288,7 +1288,7 @@ Remote branch hygiene after EffortlessMetrics/shiplog#550:
   result: remote branch hygiene is clean; audited stale source and swarm
           branch candidates before deletion, preserved protected release
           branches, left no open PRs or issues in either repo, and reran
-          `cargo xtask repo-contract-report` with 0 source and 0 swarm
+          `rtk cargo xtask repo-contract-report` with 0 source and 0 swarm
           cleanup candidates
 
 EffortlessMetrics/shiplog#551:
