@@ -18,6 +18,13 @@ const SOURCE_REPO: &str = "EffortlessMetrics/shiplog";
 const ROUTED_WORKFLOW: &str = "EM CI Routed Shiplog Rust";
 const REQUIRED_RESULT: &str = "Shiplog Rust Small Result";
 const SOURCE_ONLY_PATH_POLICY: &str = "policy/source-only-paths.toml";
+/// Trailers giving the overlay commit machine-readable identity. The promotion
+/// checkpoint's second parent is the overlay, not the swarm head, so closeout
+/// needs the overlay to state which swarm head it carries.
+const OVERLAY_SOURCE_TRAILER: &str = "Shiplog-Source-Head:";
+const OVERLAY_SWARM_TRAILER: &str = "Shiplog-Swarm-Head:";
+/// Content hash of the per-path resolution plan the overlay was built from.
+const OVERLAY_PLAN_TRAILER: &str = "Shiplog-Resolution-Plan:";
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -561,6 +568,13 @@ struct PromoteVerification {
     source_head: String,
     last_promoted_swarm_head: String,
     landed_merge: String,
+    /// Which shape carried the swarm head. Overlay checkpoints additionally
+    /// proved their parent and recorded source head match the merge.
+    checkpoint_shape: CheckpointShape,
+    /// Plan id the overlay recorded, when it is an overlay checkpoint. Confirmed
+    /// present and well-formed; not compared against a stored plan.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    resolution_plan_id: Option<String>,
     included_swarm_prs: Vec<String>,
     checks: Vec<String>,
     next_actions: Vec<String>,
@@ -613,20 +627,29 @@ fn run_verify_only(
         &state.latest_promotion.promoted_swarm_head,
         swarm_sha,
     )?;
+    let shape_check = match landed_merge.shape {
+        CheckpointShape::RawSwarmHead => format!(
+            "regular-merge checkpoint {} has swarm head {swarm_sha} directly as its second parent",
+            landed_merge.merge_sha
+        ),
+        CheckpointShape::Overlay => format!(
+            "regular-merge checkpoint {} merges an overlay parented on {} that records source head {} and swarm head {swarm_sha}",
+            landed_merge.merge_sha, landed_merge.source_parent, landed_merge.source_parent
+        ),
+    };
     let verification = PromoteVerification {
         mode: "verify-only",
         swarm_head: swarm_sha.to_string(),
         source_ref: inputs.source_ref.clone(),
         source_head,
         last_promoted_swarm_head: state.latest_promotion.promoted_swarm_head.clone(),
-        landed_merge: landed_merge.clone(),
+        landed_merge: landed_merge.merge_sha.clone(),
+        checkpoint_shape: landed_merge.shape,
+        resolution_plan_id: landed_merge.resolution_plan_id.clone(),
         included_swarm_prs,
         checks: vec![
             format!("swarm head {swarm_sha} is reachable from {}", inputs.swarm_ref),
-            format!(
-                "regular-merge checkpoint {landed_merge} reachable from {} has swarm head {swarm_sha} as its second parent",
-                inputs.source_ref
-            ),
+            shape_check,
         ],
         next_actions: vec![
             "Run `cargo xtask repo-contract-report` to check source post-merge CI and topology alignment.".to_string(),
@@ -644,12 +667,118 @@ fn run_verify_only(
 /// `None` when the head has not landed as a regular merge (unlanded or squashed,
 /// where `swarm_sha` is not a merged-in parent anywhere in source history).
 /// Later commits on top of the checkpoint do not hide the landing.
-fn find_regular_merge_landing(
+/// How a promotion checkpoint carries its swarm head.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+enum CheckpointShape {
+    /// Predates overlays: the swarm head was pushed and merged directly.
+    RawSwarmHead,
+    /// The second parent is an overlay commit recording its own inputs.
+    Overlay,
+}
+
+/// A regular-merge promotion checkpoint on the source ref.
+///
+/// One parser serves both the planner, which walks back to the previous
+/// checkpoint, and closeout, which confirms a requested head landed. They
+/// previously implemented partial and divergent topology rules, so the first
+/// overlay promotion satisfied closeout while the next planning run rejected it.
+#[derive(Clone, Debug)]
+struct PromotionCheckpoint {
+    merge_sha: String,
+    source_parent: String,
+    /// Swarm head this checkpoint landed, whichever shape carried it.
+    swarm_head: String,
+    resolution_plan_id: Option<String>,
+    shape: CheckpointShape,
+}
+
+/// Interpret a two-parent merge as a promotion checkpoint.
+///
+/// A second parent with no swarm trailer is the legacy shape and is taken at
+/// face value. A second parent that claims to be an overlay must prove it: its
+/// own parent and its recorded source head must both be the merge's first
+/// parent, and it must carry a well-formed resolution plan id. Without the
+/// parent proof, any commit carrying a copied trailer would satisfy
+/// verification.
+fn parse_promotion_checkpoint(
+    port: &impl PromotePort,
+    workspace_root: &Path,
+    merge_sha: &str,
+    first_parent: &str,
+    second_parent: &str,
+) -> Result<PromotionCheckpoint> {
+    let message = port
+        .git_output(
+            workspace_root,
+            &["show", "-s", "--format=%B", second_parent],
+        )
+        .with_context(|| format!("promote: read commit message for {second_parent}"))?;
+
+    let Some(swarm_head) = overlay_trailer(&message, OVERLAY_SWARM_TRAILER) else {
+        return Ok(PromotionCheckpoint {
+            merge_sha: merge_sha.to_string(),
+            source_parent: first_parent.to_string(),
+            swarm_head: second_parent.to_string(),
+            resolution_plan_id: None,
+            shape: CheckpointShape::RawSwarmHead,
+        });
+    };
+
+    let recorded_source = overlay_trailer(&message, OVERLAY_SOURCE_TRAILER).with_context(|| {
+        format!(
+            "promote: overlay {second_parent} records a swarm head but no {OVERLAY_SOURCE_TRAILER} trailer"
+        )
+    })?;
+    if recorded_source != first_parent {
+        bail!(
+            "promote: overlay {second_parent} records source head {recorded_source}, but checkpoint {merge_sha} merges onto {first_parent}"
+        );
+    }
+    let overlay_parents = port
+        .git_output(
+            workspace_root,
+            &["show", "-s", "--format=%P", second_parent],
+        )
+        .with_context(|| format!("promote: read parents of overlay {second_parent}"))?;
+    let overlay_parent = overlay_parents
+        .split_whitespace()
+        .next()
+        .unwrap_or_default();
+    if overlay_parent != first_parent {
+        bail!(
+            "promote: overlay {second_parent} is parented on {overlay_parent}, not the checkpoint's first parent {first_parent}"
+        );
+    }
+    // Validated when present. Overlays only record a resolution plan once one
+    // exists, so an overlay without the trailer is still a valid checkpoint; a
+    // malformed one never is.
+    let resolution_plan_id = overlay_trailer(&message, OVERLAY_PLAN_TRAILER);
+    if let Some(plan_id) = &resolution_plan_id
+        && (plan_id.len() != 40 || !plan_id.chars().all(|c| c.is_ascii_hexdigit()))
+    {
+        bail!(
+            "promote: overlay {second_parent} records a malformed resolution plan id {plan_id:?}"
+        );
+    }
+    Ok(PromotionCheckpoint {
+        merge_sha: merge_sha.to_string(),
+        source_parent: first_parent.to_string(),
+        swarm_head,
+        resolution_plan_id,
+        shape: CheckpointShape::Overlay,
+    })
+}
+
+/// Every two-parent merge reachable from `source_head`, newest first.
+///
+/// Octopus merges are excluded by the arity filter: they are not the required
+/// two-parent promotion topology even when a swarm head happens to be a parent.
+fn two_parent_merges(
     port: &impl PromotePort,
     workspace_root: &Path,
     source_head: &str,
-    swarm_sha: &str,
-) -> Result<Option<String>> {
+) -> Result<Vec<(String, String, String)>> {
     let output = port
         .git_output(
             workspace_root,
@@ -658,16 +787,51 @@ fn find_regular_merge_landing(
         .with_context(|| {
             format!("promote: enumerate merges reachable from source head {source_head}")
         })?;
-    Ok(regular_merge_landing_from_rev_list(&output, swarm_sha))
+    Ok(two_parent_merges_from_rev_list(&output))
 }
 
-fn regular_merge_landing_from_rev_list(output: &str, swarm_sha: &str) -> Option<String> {
-    output.lines().find_map(|line| {
-        // A promotion checkpoint is exactly "<merge> <parent1> <parent2>".
-        // Reject octopus merges even when the swarm head happens to be the
-        // second parent: they are not the required two-parent topology.
-        let fields = line.split_whitespace().collect::<Vec<_>>();
-        (fields.len() == 3 && fields[2] == swarm_sha).then(|| fields[0].to_string())
+/// `(merge, first parent, second parent)` for every merge with exactly two
+/// parents.
+fn two_parent_merges_from_rev_list(output: &str) -> Vec<(String, String, String)> {
+    output
+        .lines()
+        .filter_map(|line| {
+            // A promotion checkpoint is exactly "<merge> <parent1> <parent2>".
+            let fields = line.split_whitespace().collect::<Vec<_>>();
+            (fields.len() == 3).then(|| {
+                (
+                    fields[0].to_string(),
+                    fields[1].to_string(),
+                    fields[2].to_string(),
+                )
+            })
+        })
+        .collect()
+}
+
+/// Locate the checkpoint that landed `swarm_sha`, in either shape.
+fn find_regular_merge_landing(
+    port: &impl PromotePort,
+    workspace_root: &Path,
+    source_head: &str,
+    swarm_sha: &str,
+) -> Result<Option<PromotionCheckpoint>> {
+    for (merge, first, second) in two_parent_merges(port, workspace_root, source_head)? {
+        let checkpoint = parse_promotion_checkpoint(port, workspace_root, &merge, &first, &second)?;
+        if checkpoint.swarm_head == swarm_sha {
+            return Ok(Some(checkpoint));
+        }
+    }
+    Ok(None)
+}
+
+/// Value of a single-line overlay trailer, if present.
+fn overlay_trailer(message: &str, trailer: &str) -> Option<String> {
+    message.lines().rev().find_map(|line| {
+        line.trim()
+            .strip_prefix(trailer)
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
     })
 }
 
@@ -929,27 +1093,40 @@ fn ensure_source_only_alignment(
         .map(String::as_str)
         .collect::<BTreeSet<_>>();
     approved.extend(transition_authority.source_only.iter().map(String::as_str));
+    // Paths the overlay resolves in source's favour. A swarm change to one of
+    // these is silently reverted by overlay construction, so promoting it would
+    // claim to carry a swarm commit while dropping part of it.
+    let source_authoritative = source_only_paths
+        .iter()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
     let mut unapproved: Vec<String> = Vec::new();
     let mut two_sided: Vec<String> = Vec::new();
+    let mut swarm_mutated_source_only: Vec<String> = Vec::new();
     for path in differing {
-        let source_only = source_changed.contains(path.as_str());
-        let swarm_only = swarm_changed.contains(path.as_str());
-        if source_only && !swarm_only && !approved.contains(path.as_str()) {
+        let source_touched = source_changed.contains(path.as_str());
+        let swarm_touched = swarm_changed.contains(path.as_str());
+        if source_authoritative.contains(path.as_str()) && swarm_touched {
+            swarm_mutated_source_only.push(path);
+            continue;
+        }
+        if source_touched && !swarm_touched && !approved.contains(path.as_str()) {
             unapproved.push(path);
-        } else if source_only
-            && swarm_only
+        } else if source_touched
+            && swarm_touched
             && !transition_authority.two_sided.contains(path.as_str())
         {
             two_sided.push(path);
         }
     }
-    if !unapproved.is_empty() || !two_sided.is_empty() {
+    if !unapproved.is_empty() || !two_sided.is_empty() || !swarm_mutated_source_only.is_empty() {
         bail!(
-            "promote: unapproved source-only overlay at {}..{}: unapproved {:?}, two-sided {:?}",
+            "promote: unapproved source-only overlay at {}..{}: unapproved {:?}, two-sided {:?}, swarm changed source-authoritative {:?}",
             source_head,
             swarm_sha,
             unapproved,
-            two_sided
+            two_sided,
+            swarm_mutated_source_only
         );
     }
     Ok(())
@@ -1058,7 +1235,11 @@ fn prepare_source_overlay(
                 "--no-gpg-sign",
                 "-m",
                 &format!(
-                    "chore(promote): overlay source with swarm {}",
+                    "chore(promote): overlay source with swarm {}
+
+                     {OVERLAY_SOURCE_TRAILER} {source_head}
+                     {OVERLAY_SWARM_TRAILER} {swarm_sha}
+",
                     &swarm_sha[..12]
                 ),
             ],
@@ -1468,10 +1649,21 @@ fn find_latest_promotion_merge(
             continue;
         }
         match parents.as_slice() {
-            [_first, second] if *second == promoted_swarm_head => return Ok(cursor),
-            [_first, _second] => bail!(
-                "promote: source commit {cursor} is an unexpected merge, not the recorded regular promotion checkpoint"
-            ),
+            [first, second] => {
+                // The same parser closeout uses. Matching the raw swarm head here
+                // meant the next promotion rejected the checkpoint the previous
+                // one created, because an overlay checkpoint's second parent is
+                // the overlay, not the swarm head.
+                let checkpoint =
+                    parse_promotion_checkpoint(port, workspace_root, &cursor, first, second)?;
+                if checkpoint.swarm_head == promoted_swarm_head {
+                    return Ok(cursor);
+                }
+                bail!(
+                    "promote: source commit {cursor} lands swarm head {}, not the recorded promotion checkpoint for {promoted_swarm_head}",
+                    checkpoint.swarm_head
+                )
+            }
             [..] => bail!(
                 "promote: unapproved source divergence at {cursor}; only recorded source governance may follow the latest promotion merge"
             ),
@@ -1926,9 +2118,223 @@ mod tests {
 merge-new source-parent requested-swarm-head unrelated-parent
 merge-old source-parent another-swarm-head
 ";
+        let merges = two_parent_merges_from_rev_list(output);
         ensure!(
-            regular_merge_landing_from_rev_list(output, "requested-swarm-head").is_none(),
+            !merges
+                .iter()
+                .any(|(_, _, second)| second == "requested-swarm-head"),
             "octopus merge must not satisfy the two-parent promotion contract"
+        );
+        ensure!(merges.len() == 1 && merges[0].0 == "merge-old");
+        ensure!(merges[0].1 == "source-parent" && merges[0].2 == "another-swarm-head");
+        Ok(())
+    }
+
+    /// Overlay construction resolves a policy-listed source-only path in
+    /// source's favour, so a swarm change to one would be reverted while the
+    /// promotion still claimed to carry that swarm commit. The alignment check
+    /// previously examined only source-only and two-sided changes, so a
+    /// swarm-only change to such a path passed silently.
+    #[test]
+    fn alignment_rejects_a_swarm_change_to_a_source_authoritative_path() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let root = dir.path();
+        git_fixture(root, &["init", "--initial-branch=main"])?;
+        git_fixture(root, &["config", "user.email", "test@example.com"])?;
+        git_fixture(root, &["config", "user.name", "Promotion Test"])?;
+        fs::write(root.join("owned-by-source.toml"), "source\n")?;
+        git_fixture(root, &["add", "-A"])?;
+        git_fixture(root, &["commit", "-m", "base"])?;
+        let base = git_fixture(root, &["rev-parse", "HEAD"])?;
+
+        // Swarm alone edits a path the policy marks source-authoritative.
+        git_fixture(root, &["switch", "-c", "swarm"])?;
+        fs::write(root.join("owned-by-source.toml"), "swarm edit\n")?;
+        git_fixture(root, &["add", "-A"])?;
+        git_fixture(
+            root,
+            &["commit", "-m", "feat: swarm edits source-owned path"],
+        )?;
+        let swarm_sha = git_fixture(root, &["rev-parse", "HEAD"])?;
+
+        let error = ensure_source_only_alignment(
+            &SystemPort,
+            root,
+            &base,
+            &swarm_sha,
+            &base,
+            &["owned-by-source.toml".to_string()],
+            &super::super::transition::TransitionAuthority::default(),
+        )
+        .expect_err("a swarm change to a source-authoritative path must be rejected");
+        ensure!(
+            error
+                .to_string()
+                .contains("swarm changed source-authoritative"),
+            "unexpected error: {error}"
+        );
+        Ok(())
+    }
+
+    /// The defect that made overlay promotions a one-shot: the planner walks back
+    /// to the previous checkpoint with its own matcher, which required the raw
+    /// swarm head as second parent. After the first overlay promotion landed, the
+    /// next planning run rejected the checkpoint the previous run had created.
+    /// Both now use one parser.
+    #[test]
+    fn the_planner_recognises_a_checkpoint_the_previous_promotion_created() -> Result<()> {
+        let fixture = fixture_git()?;
+        let root = fixture.dir.path();
+        let source_only_paths = load_source_only_paths(root)?;
+
+        // First promotion: build the overlay and land it as a regular merge.
+        let overlay = prepare_source_overlay(
+            &SystemPort,
+            root,
+            &fixture.governance,
+            &fixture.current,
+            &source_only_paths,
+            false,
+        )?;
+        git_fixture(root, &["switch", "--detach", &fixture.governance])?;
+        git_fixture(
+            root,
+            &[
+                "merge",
+                "--no-ff",
+                "-m",
+                "merge(swarm): promote through overlay",
+                &overlay.sha,
+            ],
+        )?;
+        let landed = git_fixture(root, &["rev-parse", "HEAD"])?;
+
+        // The planner, walking back from a later source head, must accept it.
+        fs::write(root.join("later-source.txt"), "later\n")?;
+        git_fixture(root, &["add", "-A"])?;
+        git_fixture(root, &["commit", "-m", "chore: source governance (#700)"])?;
+        let later_source_head = git_fixture(root, &["rev-parse", "HEAD"])?;
+        let governance = git_fixture(root, &["rev-parse", "HEAD"])?;
+
+        let found = find_latest_promotion_merge(
+            &SystemPort,
+            root,
+            &later_source_head,
+            &fixture.current,
+            &BTreeSet::from([governance]),
+        )?;
+        ensure!(
+            found == landed,
+            "planner must recognise the overlay checkpoint it created: expected {landed}, got {found}"
+        );
+        Ok(())
+    }
+
+    /// The overlay must prove it belongs to the checkpoint. Without the parent
+    /// and source-head proof, any commit carrying a copied trailer would satisfy
+    /// verification.
+    #[test]
+    fn a_copied_swarm_trailer_does_not_make_a_checkpoint() -> Result<()> {
+        let fixture = fixture_git()?;
+        let root = fixture.dir.path();
+
+        // A commit unrelated to the checkpoint, carrying a copied trailer that
+        // claims the swarm head but parented somewhere else entirely.
+        git_fixture(root, &["switch", "--detach", &fixture.promoted])?;
+        fs::write(root.join("impostor.txt"), "impostor\n")?;
+        git_fixture(root, &["add", "-A"])?;
+        let message = format!(
+            "chore(promote): overlay source with swarm {}\n\n{OVERLAY_SOURCE_TRAILER} {}\n{OVERLAY_SWARM_TRAILER} {}\n",
+            &fixture.current[..12],
+            fixture.governance,
+            fixture.current
+        );
+        git_fixture(root, &["commit", "--no-gpg-sign", "-m", &message])?;
+        let impostor = git_fixture(root, &["rev-parse", "HEAD"])?;
+
+        git_fixture(root, &["switch", "--detach", &fixture.governance])?;
+        git_fixture(
+            root,
+            &["merge", "--no-ff", "-m", "merge: impostor", &impostor],
+        )?;
+        let merged = git_fixture(root, &["rev-parse", "HEAD"])?;
+
+        let error = find_regular_merge_landing(&SystemPort, root, &merged, &fixture.current)
+            .expect_err("a commit whose parent is not the checkpoint's must be rejected");
+        ensure!(
+            error.to_string().contains("is parented on"),
+            "unexpected error: {error}"
+        );
+        Ok(())
+    }
+
+    /// Promotions push an overlay commit, so the checkpoint's second parent is
+    /// the overlay rather than the swarm head. Closeout has to recognise that
+    /// shape or every promotion this tool creates fails its own verification.
+    #[test]
+    fn verify_only_recognises_an_overlay_second_parent() -> Result<()> {
+        let fixture = fixture_git()?;
+        let root = fixture.dir.path();
+        let source_only_paths = load_source_only_paths(root)?;
+
+        // Build the overlay exactly as promotion does, then land it as a
+        // regular merge the way the source promotion PR would.
+        let overlay = prepare_source_overlay(
+            &SystemPort,
+            root,
+            &fixture.governance,
+            &fixture.current,
+            &source_only_paths,
+            false,
+        )?;
+        ensure!(
+            overlay.sha != fixture.current,
+            "overlay must be its own commit"
+        );
+        git_fixture(root, &["switch", "--detach", &fixture.governance])?;
+        git_fixture(
+            root,
+            &[
+                "merge",
+                "--no-ff",
+                "-m",
+                "merge(swarm): promote through overlay",
+                &overlay.sha,
+            ],
+        )?;
+        let landed = git_fixture(root, &["rev-parse", "HEAD"])?;
+
+        let found = find_regular_merge_landing(&SystemPort, root, &landed, &fixture.current)?
+            .context("overlay-parented checkpoint must be recognised")?;
+        ensure!(found.shape == CheckpointShape::Overlay);
+        ensure!(
+            found.merge_sha == landed,
+            "expected {landed} to be the landing, got {}",
+            found.merge_sha
+        );
+
+        // The overlay carries the identity that makes this possible.
+        let message = git_fixture(root, &["show", "-s", "--format=%B", &overlay.sha])?;
+        ensure!(
+            overlay_trailer(&message, OVERLAY_SWARM_TRAILER).as_deref()
+                == Some(fixture.current.as_str()),
+            "overlay must record the swarm head it carries: {message}"
+        );
+        ensure!(
+            overlay_trailer(&message, OVERLAY_SOURCE_TRAILER).as_deref()
+                == Some(fixture.governance.as_str())
+        );
+
+        // An unrelated swarm head must not match that checkpoint.
+        ensure!(
+            find_regular_merge_landing(
+                &SystemPort,
+                root,
+                &landed,
+                "0000000000000000000000000000000000000000"
+            )?
+            .is_none(),
+            "a checkpoint must only satisfy the swarm head it actually carries"
         );
         Ok(())
     }
