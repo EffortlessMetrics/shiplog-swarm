@@ -771,17 +771,17 @@ fn parse_promotion_checkpoint(
             "promote: overlay {second_parent} is parented on {overlay_parent}, not the checkpoint's first parent {first_parent}"
         );
     }
-    // Required now that every overlay records the plan it was built from, so a
-    // hand-made commit cannot pass by carrying only the two head trailers.
-    let plan_id = overlay_trailer(&message, OVERLAY_PLAN_TRAILER).with_context(|| {
-        format!("promote: overlay {second_parent} carries no {OVERLAY_PLAN_TRAILER} trailer")
-    })?;
-    if plan_id.len() != 40 || !plan_id.chars().all(|c| c.is_ascii_hexdigit()) {
+    // Overlays produced by #278 predate the resolution-plan trailer. Keep
+    // those already-valid checkpoints verifiable after #279 lands, while
+    // rejecting a malformed trailer whenever a newer overlay supplies one.
+    let resolution_plan_id = overlay_trailer(&message, OVERLAY_PLAN_TRAILER);
+    if let Some(plan_id) = &resolution_plan_id
+        && (plan_id.len() != 40 || !plan_id.chars().all(|c| c.is_ascii_hexdigit()))
+    {
         bail!(
             "promote: overlay {second_parent} records a malformed resolution plan id {plan_id:?}"
         );
     }
-    let resolution_plan_id = Some(plan_id);
     Ok(PromotionCheckpoint {
         merge_sha: merge_sha.to_string(),
         source_parent: first_parent.to_string(),
@@ -2846,9 +2846,45 @@ merge-old source-parent another-swarm-head
             .expect_err("a commit whose parent is not the checkpoint's must be rejected");
         let message = error.to_string();
         ensure!(
-            // Either proof is enough to refuse it: wrong parent, or no plan.
-            message.contains("is parented on") || message.contains("carries no"),
+            message.contains("is parented on"),
             "unexpected error: {message}"
+        );
+        Ok(())
+    }
+
+    /// #278 could create valid overlay checkpoints before #279 added the
+    /// resolution-plan trailer. Those checkpoints must remain verifiable after
+    /// the planner learns to record the newer receipt correlation value.
+    #[test]
+    fn legacy_overlay_without_resolution_plan_remains_verifiable() -> Result<()> {
+        let fixture = fixture_git()?;
+        let root = fixture.dir.path();
+
+        git_fixture(root, &["switch", "--detach", &fixture.governance])?;
+        fs::write(root.join("legacy-overlay.txt"), "legacy\n")?;
+        git_fixture(root, &["add", "legacy-overlay.txt"])?;
+        let message = format!(
+            "chore(promote): legacy overlay {}\n\n{OVERLAY_SOURCE_TRAILER} {}\n{OVERLAY_SWARM_TRAILER} {}\n",
+            &fixture.current[..12],
+            fixture.governance,
+            fixture.current
+        );
+        git_fixture(root, &["commit", "--no-gpg-sign", "-m", &message])?;
+        let overlay = git_fixture(root, &["rev-parse", "HEAD"])?;
+
+        git_fixture(root, &["switch", "--detach", &fixture.governance])?;
+        git_fixture(
+            root,
+            &["merge", "--no-ff", "-m", "merge: legacy overlay", &overlay],
+        )?;
+        let landed = git_fixture(root, &["rev-parse", "HEAD"])?;
+
+        let found = find_regular_merge_landing(&SystemPort, root, &landed, &fixture.current)?
+            .context("legacy overlay checkpoint must remain verifiable")?;
+        ensure!(found.shape == CheckpointShape::Overlay);
+        ensure!(
+            found.resolution_plan_id.is_none(),
+            "legacy overlay must not invent a resolution plan id"
         );
         Ok(())
     }
