@@ -56,7 +56,7 @@ repeatable evidence trail for self-reviews, promo packets, or brag documents.
 
 | Surface | Status | Command |
 |---------|--------|---------|
-| First-use setup | Ready | `shiplog start --yes` |
+| First-use setup (next release) | Source-only | `shiplog start --yes` |
 | First packet | Ready | `shiplog intake` |
 | Home screen | Ready | `shiplog` |
 | Quick evidence capture | Ready | `shiplog add "what changed"` |
@@ -71,7 +71,9 @@ repeatable evidence trail for self-reviews, promo packets, or brag documents.
 
 ## Quick start
 
-From a work directory, make setup explicit and then create the first packet:
+From a current source checkout, make setup explicit and then create the first
+packet. The shipped `v0.11.0` binary does not include this unreleased command
+yet:
 
 ```bash
 shiplog start --yes
@@ -141,11 +143,11 @@ Prerequisites:
 ## Setup troubleshooting
 
 Use the explicit setup command before collecting evidence when you want to
-inspect or repair configuration first:
+inspect or repair configuration first. The lower-level `init --guided` command
+remains available as an alternative scaffold path:
 
 ```bash
 shiplog start --yes
-shiplog init --guided
 shiplog doctor --setup
 shiplog sources status
 shiplog doctor --setup --json

@@ -2944,6 +2944,7 @@ fn start_dry_run_previews_guided_setup_without_writing() -> CliTestResult {
 fn start_yes_creates_guided_local_setup_without_token_providers() -> CliTestResult {
     let tmp = TempDir::new()?;
     git2::Repository::init(tmp.path())?;
+    let before = file_tree_manifest(tmp.path());
 
     shiplog_cmd()
         .current_dir(tmp.path())
@@ -2961,6 +2962,13 @@ fn start_yes_creates_guided_local_setup_without_token_providers() -> CliTestResu
         "[sources.github]\n# GitHub auth uses environment credentials or an authenticated gh CLI session.\n# Use either user or me = true.\nenabled = false"
     ));
     assert!(tmp.path().join("manual_events.yaml").exists());
+    let after = file_tree_manifest(tmp.path());
+    let added: Vec<&str> = after
+        .iter()
+        .filter(|(path, _, _)| !before.iter().any(|(before_path, _, _)| before_path == path))
+        .map(|(path, _, _)| path.as_str())
+        .collect();
+    assert_eq!(added, ["manual_events.yaml", "shiplog.toml"]);
     Ok(())
 }
 
@@ -2968,7 +2976,9 @@ fn start_yes_creates_guided_local_setup_without_token_providers() -> CliTestResu
 fn start_yes_preserves_existing_setup_files() -> CliTestResult {
     let tmp = TempDir::new()?;
     let existing = "existing setup";
+    let existing_manual = "existing manual events";
     std::fs::write(tmp.path().join("shiplog.toml"), existing)?;
+    std::fs::write(tmp.path().join("manual_events.yaml"), existing_manual)?;
 
     shiplog_cmd()
         .current_dir(tmp.path())
@@ -2981,12 +2991,15 @@ fn start_yes_preserves_existing_setup_files() -> CliTestResult {
         std::fs::read_to_string(tmp.path().join("shiplog.toml"))?,
         existing
     );
-    assert!(!tmp.path().join("manual_events.yaml").exists());
+    assert_eq!(
+        std::fs::read_to_string(tmp.path().join("manual_events.yaml"))?,
+        existing_manual
+    );
     Ok(())
 }
 
 #[test]
-fn status_latest_missing_setup_prints_init_guidance_without_writing() -> CliTestResult {
+fn status_latest_missing_setup_prints_start_guidance_without_writing() -> CliTestResult {
     let tmp = TempDir::new()?;
     let before = file_tree_manifest(tmp.path());
 
@@ -3001,7 +3014,7 @@ fn status_latest_missing_setup_prints_init_guidance_without_writing() -> CliTest
         .stdout(predicate::str::contains(
             "shiplog doctor --setup [read-only]",
         ))
-        .stdout(predicate::str::contains("shiplog init --guided [writes]"));
+        .stdout(predicate::str::contains("shiplog start --yes [writes]"));
     let stdout = String::from_utf8(assert.get_output().stdout.clone())?;
 
     assert!(
@@ -4968,8 +4981,8 @@ fn status_latest_json_missing_setup_serializes_model_without_writing() -> CliTes
             && action["writes"] == false
     }));
     assert!(actions.iter().any(|action| {
-        action["key"] == "init_guided"
-            && action["command"] == "shiplog init --guided"
+        action["key"] == "start"
+            && action["command"] == "shiplog start --yes"
             && action["writes"] == true
     }));
     assert!(
@@ -5122,7 +5135,7 @@ fn status_latest_json_safe_next_actions_cover_review_loop_states() -> CliTestRes
     let missing = status_latest_json(missing_setup.path(), &missing_out)?;
     assert_eq!(missing["overall_status"], "needs_setup");
     assert_status_first_action(&missing, "doctor_setup", false);
-    assert_status_has_action(&missing, "init_guided", true);
+    assert_status_has_action(&missing, "start", true);
     assert_status_lacks_command(&missing, "journal add --from-repair");
     assert_status_lacks_share_render(&missing);
     assert_eq!(
