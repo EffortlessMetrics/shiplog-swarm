@@ -143,8 +143,8 @@ Prerequisites:
 ## Setup troubleshooting
 
 Use the explicit setup command before collecting evidence when you want to
-inspect or repair configuration first. The lower-level `init --guided` command
-remains available as an alternative scaffold path:
+inspect or repair configuration first. The lower-level `shiplog init --guided`
+command remains available as an alternative scaffold path:
 
 ```bash
 shiplog start --yes
