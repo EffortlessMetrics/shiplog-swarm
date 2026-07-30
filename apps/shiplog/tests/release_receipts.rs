@@ -67,15 +67,20 @@ fn validate(run: &Path, receipts: bool) -> Command {
     cmd
 }
 
-/// Assert `--receipts` validation fails AND that it failed for the expected
-/// receipt-specific reason, so a future regression that fails at the same call
-/// site for an unrelated reason cannot pass silently.
-fn assert_receipts_reject(run: &Path, expected_error: &str) {
+/// Assert `--receipts` validation fails AND names both the offending artifact
+/// and the failure reason, so a future regression that fails at the same call
+/// site for an unrelated reason (or without identifying which receipt is bad)
+/// cannot pass silently.
+fn assert_receipts_reject(run: &Path, artifact: &str, expected_reason: &str) {
     let assert = validate(run, true).assert().failure();
     let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
     assert!(
-        stderr.contains(expected_error),
-        "expected receipts failure to mention {expected_error:?}. stderr:\n{stderr}"
+        stderr.contains(artifact),
+        "expected receipts failure to name the offending artifact {artifact:?}. stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains(expected_reason),
+        "expected receipts failure to mention {expected_reason:?}. stderr:\n{stderr}"
     );
 }
 
@@ -94,7 +99,7 @@ fn receipts_validation_accepts_a_healthy_cold_start_run() {
 fn receipts_validation_rejects_malformed_coverage_manifest() {
     let (_tmp, run) = cold_start_run();
     fs::write(run.join("coverage.manifest.json"), "not valid json{").expect("corrupt coverage");
-    assert_receipts_reject(&run, "coverage receipt");
+    assert_receipts_reject(&run, "coverage.manifest.json", "malformed");
 }
 
 #[test]
@@ -102,7 +107,7 @@ fn receipts_validation_rejects_malformed_bundle_manifest() {
     let (_tmp, run) = cold_start_run();
     // Valid JSON, but missing every required BundleManifest field.
     fs::write(run.join("bundle.manifest.json"), "{}").expect("corrupt bundle");
-    assert_receipts_reject(&run, "bundle receipt");
+    assert_receipts_reject(&run, "bundle.manifest.json", "malformed");
 }
 
 #[test]
@@ -115,7 +120,11 @@ fn receipts_validation_rejects_malformed_ledger_line() {
         format!("{pristine}\nthis line is not a json event\n"),
     )
     .expect("corrupt ledger");
-    assert_receipts_reject(&run, "is not a well-formed event record");
+    assert_receipts_reject(
+        &run,
+        "ledger.events.jsonl",
+        "is not a well-formed event record",
+    );
 }
 
 #[test]
@@ -126,7 +135,7 @@ fn receipts_validation_rejects_packet_missing_required_sections() {
         "# Something Else\n\nno required sections here\n",
     )
     .expect("corrupt packet");
-    assert_receipts_reject(&run, "missing required section");
+    assert_receipts_reject(&run, "packet.md", "missing required section");
 }
 
 #[test]
