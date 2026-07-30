@@ -259,16 +259,16 @@ fn start_yes_preserves_both_existing_setup_files() -> Result<(), String> {
     Scenario::new("Confirmed start preserves existing setup files")
         .given("a workspace with both setup files", |ctx| {
             given_empty_workspace(ctx);
-            if ctx.string("setup_error").is_none() {
-                if let Some(root) = ctx.paths.get("workspace") {
-                    if let Err(err) = std::fs::write(root.join("shiplog.toml"), "existing setup") {
-                        ctx.strings.insert("setup_error".into(), err.to_string());
-                    }
-                    if let Err(err) =
-                        std::fs::write(root.join("manual_events.yaml"), "existing manual events")
-                    {
-                        ctx.strings.insert("setup_error".into(), err.to_string());
-                    }
+            if ctx.string("setup_error").is_none()
+                && let Some(root) = ctx.paths.get("workspace")
+            {
+                if let Err(err) = std::fs::write(root.join("shiplog.toml"), "existing setup") {
+                    ctx.strings.insert("setup_error".into(), err.to_string());
+                }
+                if let Err(err) =
+                    std::fs::write(root.join("manual_events.yaml"), "existing manual events")
+                {
+                    ctx.strings.insert("setup_error".into(), err.to_string());
                 }
             }
         })
