@@ -3013,9 +3013,6 @@ merge-old source-parent another-swarm-head
         }
     }
 
-    /// Build the overlay the way `promote` does. Deliberately does not clean up
-    /// `target/` afterwards: `prepare_source_overlay` owns that now, so every
-    /// caller of this helper also asserts cleanup left no residue.
     /// The overlay sha the command itself produces, learned from a throwaway
     /// planning run.
     ///
