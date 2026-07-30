@@ -329,7 +329,7 @@ fn run_with_port_to(
     // evidence; anything else following the promotion merge is unapproved.
     let mut recorded_commits = approved_governance_commits(port, &state.latest_promotion)?;
     recorded_commits.extend(transition_authority.source_commits.iter().cloned());
-    let promotion_merge = find_latest_promotion_merge(
+    find_latest_promotion_merge(
         port,
         &inputs.workspace_root,
         &source_head,
