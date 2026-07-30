@@ -8,18 +8,19 @@
 //! acceptance instead of shipping.
 //!
 //! These tests drive the same cargo-built binary a release download would
-//! provide (via `CARGO_BIN_EXE_shiplog`), generate a real cold-start run, and
-//! assert both the healthy path and that each individual receipt corruption is
-//! caught. Each test generates its own run and corrupts a receipt in place —
-//! the intake report records its own absolute path, so a run must not be moved.
+//! provide (via `CARGO_BIN_EXE_shiplog`) and express each user-facing behavior
+//! through the repository's Given/When/Then testkit.
 
-use assert_cmd::Command;
 use std::fs;
 use std::path::{Path, PathBuf};
-use tempfile::TempDir;
+use std::process::{Command, Output};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use shiplog_testkit::bdd::assertions::{assert_contains, assert_false, assert_true};
+use shiplog_testkit::bdd::{Scenario, ScenarioContext};
 
 fn shiplog_cmd(cwd: &Path) -> Command {
-    let mut cmd = Command::from_std(std::process::Command::new(env!("CARGO_BIN_EXE_shiplog")));
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_shiplog"));
     cmd.current_dir(cwd)
         .env_remove("GITHUB_TOKEN")
         .env_remove("GITLAB_TOKEN")
@@ -29,122 +30,292 @@ fn shiplog_cmd(cwd: &Path) -> Command {
     cmd
 }
 
-/// Produce a real cold-start run and return (tempdir, run_dir). The tempdir
-/// must outlive use of `run_dir`.
-fn cold_start_run() -> (TempDir, PathBuf) {
-    let tmp = TempDir::new().expect("tempdir");
-    let out = tmp.path().join("out");
-    shiplog_cmd(tmp.path())
+fn given_a_clean_workspace(ctx: &mut ScenarioContext) {
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    let workspace =
+        std::env::temp_dir().join(format!("shiplog-receipts-{}-{nonce}", std::process::id()));
+    ctx.paths.insert("workspace".into(), workspace);
+}
+
+fn workspace(ctx: &ScenarioContext) -> Result<&Path, String> {
+    ctx.path("workspace")
+        .ok_or_else(|| "scenario workspace was not configured".to_string())
+}
+
+fn run_intake(ctx: &ScenarioContext) -> Result<PathBuf, String> {
+    let workspace = workspace(ctx)?;
+    let output_dir = workspace.join("out");
+    fs::create_dir_all(workspace).map_err(|error| format!("create workspace: {error}"))?;
+    let output = shiplog_cmd(workspace)
         .args([
             "intake",
             "--last-6-months",
             "--out",
-            out.to_str().expect("utf-8 out path"),
+            output_dir
+                .to_str()
+                .ok_or_else(|| "workspace path is not valid UTF-8".to_string())?,
             "--no-open",
         ])
-        .assert()
-        .success();
-    let run_dir = fs::read_dir(&out)
-        .expect("read out")
-        .filter_map(|entry| entry.ok())
+        .output()
+        .map_err(|error| format!("run intake: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "intake failed with {}: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    fs::read_dir(&output_dir)
+        .map_err(|error| format!("read intake output: {error}"))?
+        .filter_map(Result::ok)
         .map(|entry| entry.path())
         .find(|path| path.is_dir() && path.join("intake.report.json").exists())
-        .expect("cold-start run directory with intake.report.json");
-    (tmp, run_dir)
+        .ok_or_else(|| "intake did not produce a run directory".to_string())
 }
 
-/// `shiplog report validate --path <run>/intake.report.json [--receipts]`.
-fn validate(run: &Path, receipts: bool) -> Command {
+fn validate(run: &Path, receipts: bool) -> Result<Output, String> {
     let report = run.join("intake.report.json");
-    let mut cmd = Command::from_std(std::process::Command::new(env!("CARGO_BIN_EXE_shiplog")));
-    cmd.arg("report")
-        .arg("validate")
-        .arg("--path")
-        .arg(report.to_str().expect("utf-8 report path"));
+    let mut command = shiplog_cmd(run);
+    command.args(["report", "validate", "--path"]).arg(
+        report
+            .to_str()
+            .ok_or_else(|| "report path is not valid UTF-8".to_string())?,
+    );
     if receipts {
-        cmd.arg("--receipts");
+        command.arg("--receipts");
     }
-    cmd
+    command
+        .output()
+        .map_err(|error| format!("run receipt validation: {error}"))
 }
 
-/// Assert `--receipts` validation fails AND names both the offending artifact
-/// and the failure reason, so a future regression that fails at the same call
-/// site for an unrelated reason (or without identifying which receipt is bad)
-/// cannot pass silently.
-fn assert_receipts_reject(run: &Path, artifact: &str, expected_reason: &str) {
-    let assert = validate(run, true).assert().failure();
-    let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
-    assert!(
-        stderr.contains(artifact),
-        "expected receipts failure to name the offending artifact {artifact:?}. stderr:\n{stderr}"
-    );
-    assert!(
-        stderr.contains(expected_reason),
-        "expected receipts failure to mention {expected_reason:?}. stderr:\n{stderr}"
-    );
+fn save_output(ctx: &mut ScenarioContext, key: &str, output: Output) {
+    ctx.flags
+        .insert(format!("{key}.success"), output.status.success());
+    ctx.data.insert(format!("{key}.stdout"), output.stdout);
+    ctx.data.insert(format!("{key}.stderr"), output.stderr);
 }
 
-#[test]
-fn receipts_validation_accepts_a_healthy_cold_start_run() {
-    let (_tmp, run) = cold_start_run();
-    let assert = validate(&run, true).assert().success();
-    let stdout = String::from_utf8_lossy(&assert.get_output().stdout);
-    assert!(
-        stdout.contains("Receipts: 4 structurally validated"),
-        "expected receipts summary line. stdout:\n{stdout}"
-    );
+fn output_text(ctx: &ScenarioContext, key: &str, stream: &str) -> Result<String, String> {
+    let bytes = ctx
+        .data
+        .get(&format!("{key}.{stream}"))
+        .ok_or_else(|| format!("scenario output {key}.{stream} was not recorded"))?;
+    Ok(String::from_utf8_lossy(bytes).into_owned())
 }
 
-#[test]
-fn receipts_validation_rejects_malformed_coverage_manifest() {
-    let (_tmp, run) = cold_start_run();
-    fs::write(run.join("coverage.manifest.json"), "not valid json{").expect("corrupt coverage");
-    assert_receipts_reject(&run, "coverage.manifest.json", "malformed");
+fn run_receipt_validation(
+    ctx: &mut ScenarioContext,
+    corrupt: fn(&Path) -> Result<(), String>,
+) -> Result<(), String> {
+    let run = run_intake(ctx)?;
+    corrupt(&run)?;
+    save_output(ctx, "receipts", validate(&run, true)?);
+    Ok(())
 }
 
-#[test]
-fn receipts_validation_rejects_malformed_bundle_manifest() {
-    let (_tmp, run) = cold_start_run();
-    // Valid JSON, but missing every required BundleManifest field.
-    fs::write(run.join("bundle.manifest.json"), "{}").expect("corrupt bundle");
-    assert_receipts_reject(&run, "bundle.manifest.json", "malformed");
+fn corrupt_coverage(run: &Path) -> Result<(), String> {
+    fs::write(run.join("coverage.manifest.json"), "not valid json{")
+        .map_err(|error| format!("corrupt coverage manifest: {error}"))
 }
 
-#[test]
-fn receipts_validation_rejects_malformed_ledger_line() {
-    let (_tmp, run) = cold_start_run();
+fn corrupt_bundle(run: &Path) -> Result<(), String> {
+    fs::write(run.join("bundle.manifest.json"), "{}")
+        .map_err(|error| format!("corrupt bundle manifest: {error}"))
+}
+
+fn corrupt_ledger(run: &Path) -> Result<(), String> {
     let ledger = run.join("ledger.events.jsonl");
-    let pristine = fs::read_to_string(&ledger).expect("read ledger");
+    let pristine = fs::read_to_string(&ledger)
+        .map_err(|error| format!("read ledger before corruption: {error}"))?;
     fs::write(
-        &ledger,
+        ledger,
         format!("{pristine}\nthis line is not a json event\n"),
     )
-    .expect("corrupt ledger");
-    assert_receipts_reject(
-        &run,
-        "ledger.events.jsonl",
-        "is not a well-formed event record",
-    );
+    .map_err(|error| format!("corrupt ledger: {error}"))
 }
 
-#[test]
-fn receipts_validation_rejects_packet_missing_required_sections() {
-    let (_tmp, run) = cold_start_run();
+fn corrupt_packet(run: &Path) -> Result<(), String> {
     fs::write(
         run.join("packet.md"),
         "# Something Else\n\nno required sections here\n",
     )
-    .expect("corrupt packet");
-    assert_receipts_reject(&run, "packet.md", "missing required section");
+    .map_err(|error| format!("corrupt packet: {error}"))
+}
+
+fn then_receipts_succeed(ctx: &ScenarioContext) -> Result<(), String> {
+    assert_true(
+        ctx.flag("receipts.success").unwrap_or(false),
+        "receipt validation success",
+    )?;
+    let stdout = output_text(ctx, "receipts", "stdout")?;
+    assert_contains(
+        &stdout,
+        "Receipts: 4 structurally validated",
+        "receipt validation summary",
+    )
+}
+
+fn then_receipts_reject_coverage(ctx: &ScenarioContext) -> Result<(), String> {
+    then_receipts_reject(ctx, "coverage.manifest.json", "malformed")
+}
+
+fn then_receipts_reject_bundle(ctx: &ScenarioContext) -> Result<(), String> {
+    then_receipts_reject(ctx, "bundle.manifest.json", "malformed")
+}
+
+fn then_receipts_reject_ledger(ctx: &ScenarioContext) -> Result<(), String> {
+    then_receipts_reject(
+        ctx,
+        "ledger.events.jsonl",
+        "is not a well-formed event record",
+    )
+}
+
+fn then_receipts_reject_packet(ctx: &ScenarioContext) -> Result<(), String> {
+    then_receipts_reject(ctx, "packet.md", "missing required section")
+}
+
+fn then_receipts_reject(ctx: &ScenarioContext, artifact: &str, reason: &str) -> Result<(), String> {
+    assert_false(
+        ctx.flag("receipts.success").unwrap_or(true),
+        "receipt validation success",
+    )?;
+    let stderr = output_text(ctx, "receipts", "stderr")?;
+    assert_contains(&stderr, artifact, "offending receipt artifact")?;
+    assert_contains(&stderr, reason, "receipt validation reason")
+}
+
+fn when_receipts_accept_a_healthy_run(ctx: &mut ScenarioContext) -> Result<(), String> {
+    let run = run_intake(ctx)?;
+    save_output(ctx, "receipts", validate(&run, true)?);
+    Ok(())
+}
+
+fn when_receipts_reject_malformed_coverage(ctx: &mut ScenarioContext) -> Result<(), String> {
+    run_receipt_validation(ctx, corrupt_coverage)
+}
+
+fn when_receipts_reject_malformed_bundle(ctx: &mut ScenarioContext) -> Result<(), String> {
+    run_receipt_validation(ctx, corrupt_bundle)
+}
+
+fn when_receipts_reject_malformed_ledger(ctx: &mut ScenarioContext) -> Result<(), String> {
+    run_receipt_validation(ctx, corrupt_ledger)
+}
+
+fn when_receipts_reject_malformed_packet(ctx: &mut ScenarioContext) -> Result<(), String> {
+    run_receipt_validation(ctx, corrupt_packet)
+}
+
+fn when_receipts_flag_is_opt_in(ctx: &mut ScenarioContext) -> Result<(), String> {
+    let run = run_intake(ctx)?;
+    corrupt_coverage(&run)?;
+    save_output(ctx, "default", validate(&run, false)?);
+    save_output(ctx, "receipts", validate(&run, true)?);
+    Ok(())
+}
+
+fn then_receipts_flag_is_opt_in(ctx: &ScenarioContext) -> Result<(), String> {
+    assert_true(
+        ctx.flag("default.success").unwrap_or(false),
+        "default validation success",
+    )?;
+    assert_false(
+        ctx.flag("receipts.success").unwrap_or(true),
+        "receipt validation success",
+    )
 }
 
 #[test]
-fn receipts_flag_is_opt_in_and_does_not_change_default_validate() {
-    // Without --receipts, a broken coverage manifest still passes: the flag is
-    // the only thing that adds structural receipt validation.
-    let (_tmp, run) = cold_start_run();
-    fs::write(run.join("coverage.manifest.json"), "not valid json{").expect("corrupt coverage");
-    validate(&run, false).assert().success();
-    // ...and with the flag, the same corruption is rejected.
-    validate(&run, true).assert().failure();
+fn receipts_validation_accepts_a_healthy_cold_start_run() -> Result<(), String> {
+    Scenario::new("A healthy cold-start run has structurally valid receipts")
+        .given("a clean workspace", given_a_clean_workspace)
+        .when(
+            "the published binary validates all receipts",
+            when_receipts_accept_a_healthy_run,
+        )
+        .then(
+            "receipt validation succeeds with a summary",
+            then_receipts_succeed,
+        )
+        .run()
+}
+
+#[test]
+fn receipts_validation_rejects_malformed_coverage_manifest() -> Result<(), String> {
+    Scenario::new("Malformed coverage manifests fail receipt validation")
+        .given("a clean workspace", given_a_clean_workspace)
+        .when(
+            "the coverage manifest is corrupted before validation",
+            when_receipts_reject_malformed_coverage,
+        )
+        .then(
+            "validation names the coverage receipt and reason",
+            then_receipts_reject_coverage,
+        )
+        .run()
+}
+
+#[test]
+fn receipts_validation_rejects_malformed_bundle_manifest() -> Result<(), String> {
+    Scenario::new("Malformed bundle manifests fail receipt validation")
+        .given("a clean workspace", given_a_clean_workspace)
+        .when(
+            "the bundle manifest is corrupted before validation",
+            when_receipts_reject_malformed_bundle,
+        )
+        .then(
+            "validation names the bundle receipt and reason",
+            then_receipts_reject_bundle,
+        )
+        .run()
+}
+
+#[test]
+fn receipts_validation_rejects_malformed_ledger_line() -> Result<(), String> {
+    Scenario::new("Malformed ledger lines fail receipt validation")
+        .given("a clean workspace", given_a_clean_workspace)
+        .when(
+            "the ledger is corrupted before validation",
+            when_receipts_reject_malformed_ledger,
+        )
+        .then(
+            "validation names the ledger receipt and reason",
+            then_receipts_reject_ledger,
+        )
+        .run()
+}
+
+#[test]
+fn receipts_validation_rejects_packet_missing_required_sections() -> Result<(), String> {
+    Scenario::new("Packets missing required sections fail receipt validation")
+        .given("a clean workspace", given_a_clean_workspace)
+        .when(
+            "the packet is corrupted before validation",
+            when_receipts_reject_malformed_packet,
+        )
+        .then(
+            "validation names the packet receipt and reason",
+            then_receipts_reject_packet,
+        )
+        .run()
+}
+
+#[test]
+fn receipts_flag_is_opt_in_and_does_not_change_default_validate() -> Result<(), String> {
+    Scenario::new("Receipt validation remains opt-in")
+        .given("a clean workspace", given_a_clean_workspace)
+        .when(
+            "the same corrupt run is validated with and without the flag",
+            when_receipts_flag_is_opt_in,
+        )
+        .then(
+            "default validation passes while receipt validation fails",
+            then_receipts_flag_is_opt_in,
+        )
+        .run()
 }
