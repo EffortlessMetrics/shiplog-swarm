@@ -19,7 +19,7 @@ reason = "Fresh Linux and Windows contributor acceptance from a credential-free 
 permissions = ["contents:read"]
 secrets_used = []
 external_actions = [
-  "actions/checkout@v7.0.0",
+  "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
   "dtolnay/rust-toolchain@v1",
 ]
 created = "2026-07-17"
@@ -32,7 +32,7 @@ reason = "Advisory LEM PR Plan. Emits target/ci/ci-plan.json against contracts/s
 permissions = ["contents:read", "pull-requests:read"]
 secrets_used = []
 external_actions = [
-  "actions/checkout@v7.0.0",
+  "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
   "dtolnay/rust-toolchain@master",
   "Swatinem/rust-cache@v2",
   "actions/upload-artifact@v7",
@@ -47,7 +47,7 @@ reason = "CI Actuals collector. Triggers on workflow_run completion for every in
 permissions = ["contents:read", "actions:read"]
 secrets_used = ["GITHUB_TOKEN"]
 external_actions = [
-  "actions/checkout@v7.0.0",
+  "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
   "dtolnay/rust-toolchain@master",
   "Swatinem/rust-cache@v2",
   "actions/upload-artifact@v7",
@@ -62,7 +62,7 @@ reason = "Bounded BDD smoke (lane.bdd_smoke, added in PR #154). Runs two critica
 permissions = ["contents:read"]
 secrets_used = []
 external_actions = [
-  "actions/checkout@v7.0.0",
+  "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
   "dtolnay/rust-toolchain@master",
   "./.github/actions/native-build-deps",
   "Swatinem/rust-cache@v2",
@@ -77,7 +77,7 @@ reason = "Bounded property smoke (lane.property_smoke, added in PR #154). Runs p
 permissions = ["contents:read"]
 secrets_used = []
 external_actions = [
-  "actions/checkout@v7.0.0",
+  "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
   "dtolnay/rust-toolchain@master",
   "./.github/actions/native-build-deps",
   "Swatinem/rust-cache@v2",
@@ -92,7 +92,7 @@ reason = "Touched-target fuzz smoke (lane.fuzz_smoke, added in PR #154). Resolve
 permissions = ["contents:read"]
 secrets_used = []
 external_actions = [
-  "actions/checkout@v7.0.0",
+  "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
   "dtolnay/rust-toolchain@master",
   "./.github/actions/native-build-deps",
   "actions/cache@v6",
@@ -109,7 +109,7 @@ reason = "ripr advisory lane. Stub in PR #153 emits target/ripr/ripr.json + .sar
 permissions = ["contents:read"]
 secrets_used = []
 external_actions = [
-  "actions/checkout@v7.0.0",
+  "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
   "actions/upload-artifact@v7",
 ]
 created = "2026-05-10"
@@ -122,7 +122,7 @@ reason = "Self-hosted main/full-ci correctness gate. Check job covers fmt --chec
 permissions = ["contents:read"]
 secrets_used = []
 external_actions = [
-  "actions/checkout@v7.0.0",
+  "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
   "dtolnay/rust-toolchain@master",
   "./.github/actions/native-build-deps",
   "Swatinem/rust-cache@v2",
@@ -138,7 +138,7 @@ reason = "Swarm release-verification pipeline; builds and retains candidate arti
 permissions = ["contents:read"]
 secrets_used = []
 external_actions = [
-  "actions/checkout@v7.0.0",
+  "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
   "dtolnay/rust-toolchain@master",
   "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
   "actions/download-artifact@v8",
@@ -156,7 +156,7 @@ reason = "Standalone cargo-deny on push/PR/weekly. Duplicate of ci.yml#deny on P
 permissions = ["contents:read"]
 secrets_used = []
 external_actions = [
-  "actions/checkout@v7.0.0",
+  "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
   "dtolnay/rust-toolchain@stable",
   "taiki-e/install-action@v2",
 ]
@@ -171,7 +171,7 @@ reason = "shiplog-swarm routed Linux gate. Routes trusted same-repo PRs through 
 permissions = ["contents:read"]
 secrets_used = ["EM_RUNNER_READ_TOKEN"]
 external_actions = [
-  "actions/checkout@v7.0.0",
+  "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
   "dtolnay/rust-toolchain@v1",
   "Swatinem/rust-cache@v2",
 ]
@@ -185,7 +185,7 @@ reason = "Property tests at 256 cases per crate. Currently runs full sweep on ev
 permissions = ["contents:read"]
 secrets_used = []
 external_actions = [
-  "actions/checkout@v7.0.0",
+  "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
   "dtolnay/rust-toolchain@master",
   "./.github/actions/native-build-deps",
   "Swatinem/rust-cache@v2",
@@ -200,7 +200,7 @@ reason = "BDD scenarios across 4 jobs. Currently runs full matrix on every PR; P
 permissions = ["contents:read"]
 secrets_used = []
 external_actions = [
-  "actions/checkout@v7.0.0",
+  "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
   "dtolnay/rust-toolchain@master",
   "./.github/actions/native-build-deps",
   "Swatinem/rust-cache@v2",
@@ -215,7 +215,7 @@ reason = "Quick fuzz on PR (9 targets × 30s) + extended fuzz on nightly cron (9
 permissions = ["contents:read"]
 secrets_used = []
 external_actions = [
-  "actions/checkout@v7.0.0",
+  "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
   "dtolnay/rust-toolchain@master",
   "./.github/actions/native-build-deps",
   "actions/cache@v6",
@@ -232,7 +232,7 @@ reason = "Mutation testing across 22 crates (3 tiers, advisory). Off PR (correct
 permissions = ["contents:read"]
 secrets_used = []
 external_actions = [
-  "actions/checkout@v7.0.0",
+  "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
   "dtolnay/rust-toolchain@master",
   "./.github/actions/native-build-deps",
   "actions/upload-artifact@v7",
@@ -248,7 +248,7 @@ reason = "Codecov execution-surface coverage. Push main + label-gated PR (covera
 permissions = ["contents:read"]
 secrets_used = ["CODECOV_TOKEN"]
 external_actions = [
-  "actions/checkout@v7.0.0",
+  "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
   "dtolnay/rust-toolchain@master",
   "./.github/actions/native-build-deps",
   "Swatinem/rust-cache@v2",

@@ -29,9 +29,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         id: setup-checkout
         continue-on-error: true
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@master
         id: setup-toolchain
         if: steps.setup-checkout.outcome == 'success'
