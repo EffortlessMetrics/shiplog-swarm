@@ -163,6 +163,10 @@ fn check_path(
         // and the overlay keeps swarm content for paths outside
         // `policy/source-only-paths.toml`, so promoting would revert it. Record
         // it so the refusal can explain itself.
+        // A newer missing-in-swarm receipt supersedes any older resolved receipt
+        // for this path. Keeping both would let the planner select stale
+        // two-sided authority before it sees the newer blocking evidence.
+        authority.two_sided.remove(&path.path);
         authority
             .awaiting_swarm
             .insert(path.path.clone(), entry.source_pr.clone());
@@ -772,6 +776,34 @@ mod tests {
         assert!(
             consumed.awaiting_swarm.is_empty() && consumed.two_sided.is_empty(),
             "a consumed receipt still granted authority"
+        );
+        Ok(())
+    }
+
+    /// A newer missing-in-swarm receipt must supersede an older resolved
+    /// receipt for the same path rather than leaving stale two-sided authority.
+    #[test]
+    fn missing_in_swarm_supersedes_stale_resolved_receipt() -> Result<()> {
+        let patch = section(CARGO_LOCK, "1.52.3", "1.53.0", "tokio");
+        let source = format!("{SOURCE}#657");
+        let swarm = format!("{SWARM}#269");
+        let port = StubPort::new()
+            .merged(&source, "e6a72ad11ab22d03b1cf434b237bf0fff9c145bf", &patch)
+            .merged(&swarm, "ba4aeaf78cb17f980f1da05d24d9638033b95f68", &patch);
+        let entries = vec![
+            entry(
+                TransitionDisposition::Equivalent,
+                &[(swarm.as_str(), "ba4aeaf78cb17f980f1da05d24d9638033b95f68")],
+            ),
+            entry(TransitionDisposition::MissingInSwarm, &[]),
+        ];
+
+        let authority = derive_authority(&port, Path::new("."), &refs(), &entries)?;
+
+        assert!(authority.two_sided.is_empty());
+        assert_eq!(
+            authority.awaiting_swarm.get(CARGO_LOCK).map(String::as_str),
+            Some(source.as_str())
         );
         Ok(())
     }

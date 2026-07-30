@@ -349,11 +349,11 @@ fn run_with_port_to(
     let merge_base = port
         .git_output(
             &inputs.workspace_root,
-            &["merge-base", &promotion_merge, &swarm_sha],
+            &["merge-base", &source_head, &swarm_sha],
         )
         .with_context(|| {
             format!(
-                "promote: determine merge base between promotion checkpoint {promotion_merge} and swarm head {swarm_sha}"
+                "promote: determine merge base between source head {source_head} and swarm head {swarm_sha}"
             )
         })?;
     if merge_base.is_empty() {
@@ -776,7 +776,7 @@ fn parse_promotion_checkpoint(
     // rejecting a malformed trailer whenever a newer overlay supplies one.
     let resolution_plan_id = overlay_trailer(&message, OVERLAY_PLAN_TRAILER);
     if let Some(plan_id) = &resolution_plan_id
-        && (plan_id.len() != 40 || !plan_id.chars().all(|c| c.is_ascii_hexdigit()))
+        && (!matches!(plan_id.len(), 40 | 64) || !plan_id.chars().all(|c| c.is_ascii_hexdigit()))
     {
         bail!(
             "promote: overlay {second_parent} records a malformed resolution plan id {plan_id:?}"
@@ -1337,17 +1337,23 @@ fn tree_blobs(
     let output = port
         .git_output(workspace_root, &["ls-tree", "-rz", "--full-tree", revision])
         .with_context(|| format!("promote: read tree of {revision}"))?;
-    let mut blobs = BTreeMap::new();
-    for entry in output.split('\0').filter(|entry| !entry.is_empty()) {
-        // "<mode> <type> <oid>\t<path>"
-        let Some((meta, path)) = entry.split_once('\t') else {
-            continue;
-        };
-        if let Some(oid) = meta.split_whitespace().nth(2) {
-            blobs.insert(path.to_string(), oid.to_string());
-        }
-    }
-    Ok(blobs)
+    Ok(parse_tree_blobs(&output))
+}
+
+/// Parse `git ls-tree -rz --full-tree` output into `path -> blob oid`.
+fn parse_tree_blobs(listing: &str) -> BTreeMap<String, String> {
+    listing
+        .split('\0')
+        .filter(|entry| !entry.is_empty())
+        .filter_map(|entry| {
+            // "<mode> <type> <oid>\t<path>"
+            let (meta, path) = entry.split_once('\t')?;
+            Some((
+                path.to_string(),
+                meta.split_whitespace().nth(2)?.to_string(),
+            ))
+        })
+        .collect()
 }
 
 fn git_diff_names(
@@ -1429,18 +1435,19 @@ fn prepare_source_overlay(
             // A resolved source path must match the source tree exactly, which
             // includes its absence. Restoring only when source still has the
             // path would let a file source deliberately deleted survive in the
-            // overlay via the swarm copy, and `ensure_source_only_alignment`
-            // approves that difference, so nothing downstream would catch the
-            // reintroduction.
+            // overlay via the swarm copy; the post-construction blob check below
+            // is what now catches such a reintroduction.
             if tree_has_path_with_env(port, overlay_root, source_head, path.as_str(), &env)? {
                 git(&["checkout", source_head, "--", path.as_str()]).with_context(|| {
-                    format!("promote: preserve source-only path {path} while applying {swarm_sha}")
+                    format!(
+                        "promote: restore resolved source path {path} while applying {swarm_sha}"
+                    )
                 })?;
             } else {
                 git(&["rm", "-r", "--force", "--ignore-unmatch", "--", path.as_str()]).with_context(
                     || {
                         format!(
-                            "promote: honour source deletion of source-only path {path} while applying {swarm_sha}"
+                            "promote: honour source deletion of resolved path {path} while applying {swarm_sha}"
                         )
                     },
                 )?;
@@ -1490,18 +1497,7 @@ fn prepare_source_overlay(
         // which step got it wrong.
         let read_blobs = |revision: &str| -> Result<BTreeMap<String, String>> {
             let listing = git(&["ls-tree", "-rz", "--full-tree", revision])?;
-            Ok(listing
-                .split('\0')
-                .filter(|entry| !entry.is_empty())
-                .filter_map(|entry| {
-                    // "<mode> <type> <oid>	<path>"
-                    let (meta, path) = entry.split_once('\t')?;
-                    Some((
-                        path.to_string(),
-                        meta.split_whitespace().nth(2)?.to_string(),
-                    ))
-                })
-                .collect())
+            Ok(parse_tree_blobs(&listing))
         };
         let overlay_blobs = read_blobs(&overlay_sha)?;
         let source_blobs = read_blobs(source_head)?;
@@ -2906,7 +2902,7 @@ merge-old source-parent another-swarm-head
             &fixture.governance,
             &fixture.current,
             &source_only_paths,
-            "1234567890abcdef1234567890abcdef12345678",
+            "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
             false,
         )?;
         ensure!(
@@ -2933,6 +2929,11 @@ merge-old source-parent another-swarm-head
             found.merge_sha == landed,
             "expected {landed} to be the landing, got {}",
             found.merge_sha
+        );
+        ensure!(
+            found.resolution_plan_id.as_deref()
+                == Some("1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"),
+            "SHA-256 resolution plan ids must remain verifiable"
         );
 
         // The overlay carries the identity that makes this possible.
