@@ -22,7 +22,9 @@ fn workspace(ctx: &ScenarioContext) -> Result<&Path, String> {
 fn given_empty_workspace(ctx: &mut ScenarioContext) {
     match tempfile::tempdir() {
         Ok(dir) => {
-            ctx.paths.insert("workspace".into(), dir.keep());
+            let path = dir.keep();
+            ctx.register_cleanup_path(path.clone());
+            ctx.paths.insert("workspace".into(), path);
         }
         Err(err) => {
             ctx.strings.insert("setup_error".into(), err.to_string());
@@ -235,6 +237,11 @@ fn start_yes_creates_only_local_guided_setup() -> Result<(), String> {
                 &config,
                 "[sources.github]\n# GitHub auth uses environment credentials or an authenticated gh CLI session.\n# Use either user or me = true.\nenabled = false",
                 "disabled token provider",
+            )?;
+            assert_contains(
+                stdout(ctx)?,
+                "shiplog doctor --setup",
+                "next setup guidance",
             )
         })
         .then("confirmed start creates no evidence artifacts", |ctx| {
