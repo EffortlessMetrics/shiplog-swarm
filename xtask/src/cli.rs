@@ -235,6 +235,11 @@ pub struct PromoteArgs {
     #[arg(long)]
     pub allow_historical: bool,
 
+    /// Verify (read-only) that the swarm head already landed on the source ref
+    /// as a regular-merge promotion checkpoint, instead of preparing one.
+    #[arg(long)]
+    pub verify_only: bool,
+
     /// Source/public main ref in the release-maintainer checkout.
     #[arg(long, default_value = "origin/main")]
     pub source_ref: String,
@@ -405,6 +410,7 @@ impl Cli {
                 source_remote: args.source_remote,
                 output: args.output,
                 allow_historical: args.allow_historical,
+                verify_only: args.verify_only,
             }),
             Command::PromotionState(args) => {
                 tasks::promotion_state::run(&workspace_root, args.check)

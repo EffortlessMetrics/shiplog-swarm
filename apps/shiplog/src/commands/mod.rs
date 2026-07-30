@@ -756,8 +756,9 @@ pub(super) fn dispatch() -> Result<()> {
                 run,
                 latest,
                 path,
+                receipts,
             } => {
-                validate_intake_report_command(&out, run, latest, path)?;
+                validate_intake_report_command(&out, run, latest, path, receipts)?;
             }
             ReportCommand::Summarize {
                 out,
