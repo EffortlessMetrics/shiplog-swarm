@@ -31,8 +31,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         id: setup-checkout
         continue-on-error: true
-        persist-credentials: false
         with:
+          persist-credentials: false
           fetch-depth: 0
       - name: Resolve touched fuzz targets
         id: targets
