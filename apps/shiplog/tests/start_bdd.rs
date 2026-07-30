@@ -288,8 +288,12 @@ fn start_yes_preserves_both_existing_setup_files() -> Result<(), String> {
                 .map_err(|err| format!("read existing config: {err}"))?;
             let manual = std::fs::read_to_string(root.join("manual_events.yaml"))
                 .map_err(|err| format!("read existing manual events: {err}"))?;
-            assert_eq(config, "existing setup", "existing config")?;
-            assert_eq(manual, "existing manual events", "existing manual events")
+            assert_eq(config, "existing setup".to_string(), "existing config")?;
+            assert_eq(
+                manual,
+                "existing manual events".to_string(),
+                "existing manual events",
+            )
         })
         .run()
 }
