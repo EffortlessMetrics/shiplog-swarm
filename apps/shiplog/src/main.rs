@@ -29,7 +29,7 @@ use shiplog::render::md::{
     AppendixMode, MarkdownRenderOptions, MarkdownRenderer, SectionOrder, format_receipt_markdown,
 };
 use shiplog::schema::{
-    bundle::BundleProfile,
+    bundle::{BundleManifest, BundleProfile},
     coverage::{CoverageManifest, TimeWindow},
     event::{EventEnvelope, EventPayload},
     event::{Link, ManualDate, ManualEventEntry, ManualEventType},
@@ -1632,6 +1632,12 @@ enum ReportCommand {
         /// Validate this intake.report.json directly instead of resolving a run.
         #[arg(long)]
         path: Option<PathBuf>,
+        /// Also structurally validate the run's other receipts (packet.md,
+        /// ledger.events.jsonl, coverage.manifest.json, bundle.manifest.json),
+        /// not merely check that they exist. Used by release first-use
+        /// acceptance to prove published binaries emit well-formed artifacts.
+        #[arg(long)]
+        receipts: bool,
     },
     /// Summarize intake.report.json without rewriting run artifacts.
     Summarize {
@@ -4185,6 +4191,7 @@ fn validate_intake_report_command(
     run: Option<String>,
     latest: bool,
     path: Option<PathBuf>,
+    receipts: bool,
 ) -> Result<()> {
     let report_path = resolve_intake_report_path(out_dir, run, latest, path)?;
     let validation = validate_intake_report(&report_path)?;
@@ -4203,7 +4210,71 @@ fn validate_intake_report_command(
     println!("Artifacts: {} checked", validation.artifacts_checked);
     println!("Markdown: {}", validation.markdown_path.display());
 
+    if receipts {
+        let run_dir = report_path.parent().unwrap_or_else(|| Path::new("."));
+        let checked = validate_run_receipts(run_dir)?;
+        println!("Receipts: {checked} structurally validated");
+    }
+
     Ok(())
+}
+
+/// Markdown sections every rendered `packet.md` must carry. Kept minimal and
+/// stable so structural validation survives cold-start (zero-event) runs.
+const PACKET_REQUIRED_SECTIONS: &[&str] = &["# Packet Readiness", "## Coverage and Limits"];
+
+/// Structurally validate the durable receipts a run directory must contain,
+/// beyond existence: `packet.md` carries its required sections, every
+/// `ledger.events.jsonl` line deserializes into the canonical event record,
+/// and `coverage.manifest.json` / `bundle.manifest.json` deserialize into their
+/// canonical schema types. Fails closed (with the offending path) on the first
+/// malformed receipt. Returns the number of receipts validated.
+fn validate_run_receipts(run_dir: &Path) -> Result<usize> {
+    let packet_path = run_dir.join("packet.md");
+    let packet = std::fs::read_to_string(&packet_path)
+        .with_context(|| format!("read receipt {}", packet_path.display()))?;
+    ensure_no_secret_sentinels("packet markdown", &packet)
+        .with_context(|| format!("packet receipt {}", packet_path.display()))?;
+    for section in PACKET_REQUIRED_SECTIONS {
+        if !packet.contains(section) {
+            anyhow::bail!(
+                "packet receipt {} is missing required section {section:?}",
+                packet_path.display()
+            )
+        }
+    }
+
+    let ledger_path = run_dir.join("ledger.events.jsonl");
+    let ledger = std::fs::read_to_string(&ledger_path)
+        .with_context(|| format!("read receipt {}", ledger_path.display()))?;
+    for (index, line) in ledger.lines().enumerate() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        serde_json::from_str::<EventEnvelope>(line).with_context(|| {
+            format!(
+                "ledger receipt {} line {} is not a well-formed event record",
+                ledger_path.display(),
+                index + 1
+            )
+        })?;
+    }
+
+    let coverage_path = run_dir.join("coverage.manifest.json");
+    let coverage_text = std::fs::read_to_string(&coverage_path)
+        .with_context(|| format!("read receipt {}", coverage_path.display()))?;
+    serde_json::from_str::<CoverageManifest>(&coverage_text)
+        .with_context(|| format!("coverage receipt {} is malformed", coverage_path.display()))?;
+
+    let bundle_path = run_dir.join("bundle.manifest.json");
+    let bundle_text = std::fs::read_to_string(&bundle_path)
+        .with_context(|| format!("read receipt {}", bundle_path.display()))?;
+    serde_json::from_str::<BundleManifest>(&bundle_text)
+        .with_context(|| format!("bundle receipt {} is malformed", bundle_path.display()))?;
+
+    // packet.md, ledger.events.jsonl, coverage.manifest.json,
+    // bundle.manifest.json — intake.report.json is validated by the caller.
+    Ok(4)
 }
 
 fn summarize_intake_report_command(
