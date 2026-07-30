@@ -56,6 +56,7 @@ repeatable evidence trail for self-reviews, promo packets, or brag documents.
 
 | Surface | Status | Command |
 |---------|--------|---------|
+| First-use setup | Ready | `shiplog start --yes` |
 | First packet | Ready | `shiplog intake` |
 | Home screen | Ready | `shiplog` |
 | Quick evidence capture | Ready | `shiplog add "what changed"` |
@@ -70,16 +71,19 @@ repeatable evidence trail for self-reviews, promo packets, or brag documents.
 
 ## Quick start
 
-From a work directory, run the one command that creates the first packet:
+From a work directory, make setup explicit and then create the first packet:
 
 ```bash
+shiplog start --yes
 shiplog intake
 ```
 
-Intake uses the default six-month window, discovers usable local evidence,
-creates `shiplog.toml` and `manual_events.yaml` when needed, and records
-missing optional providers without requiring credentials. Add `--explain` when
-you want per-source decisions in the terminal.
+`start --yes` writes the local-first `shiplog.toml` and `manual_events.yaml`
+scaffold. Use `shiplog start --dry-run` to preview those writes. It does not
+collect evidence or contact providers. `intake` uses the default six-month
+window, discovers usable evidence from the configured sources, and records
+source decisions. Add `--explain` when you want per-source decisions in the
+terminal.
 
 Open the packet after intake when you want the rendered artifact immediately:
 
@@ -136,10 +140,11 @@ Prerequisites:
 
 ## Setup troubleshooting
 
-Setup commands are optional for the first packet. Use them when you want to
-inspect or repair configuration before collecting evidence:
+Use the explicit setup command before collecting evidence when you want to
+inspect or repair configuration first:
 
 ```bash
+shiplog start --yes
 shiplog init --guided
 shiplog doctor --setup
 shiplog sources status
@@ -147,7 +152,9 @@ shiplog doctor --setup --json
 shiplog status --latest
 ```
 
-`init --guided` writes local setup files. `doctor --setup`, `sources status`,
+`start --yes` writes the same local-first setup files as `init --guided` and
+requires explicit confirmation. `start --dry-run` previews them without
+writing. `doctor --setup`, `sources status`,
 `doctor --setup --json`, and `status --latest` are read-only. They do not query
 providers, render share packets, or mutate provider records.
 

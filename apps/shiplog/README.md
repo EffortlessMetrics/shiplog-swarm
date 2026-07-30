@@ -31,6 +31,7 @@ JSON, and manual evidence can run without provider tokens.
 
 | Surface | Command |
 |---------|---------|
+| First-use setup | `shiplog start --yes` |
 | First packet | `shiplog intake` |
 | Home screen | `shiplog` |
 | Quick context | `shiplog add "what changed"` |
@@ -43,12 +44,15 @@ JSON, and manual evidence can run without provider tokens.
 
 ## First useful loop
 
-Start with the first packet. Setup files are created automatically when they
-are needed, and provider credentials are optional:
+Start with explicit local setup, then collect the first packet:
 
 ```bash
+shiplog start --yes
 shiplog intake
 ```
+
+`start --yes` writes the local setup scaffold. Use `shiplog start --dry-run` to
+preview it without writing; it never collects evidence or contacts providers.
 
 Open the packet when you want to read it immediately:
 
@@ -66,7 +70,7 @@ shiplog open
 shiplog
 ```
 
-For setup troubleshooting or agent automation, use `doctor --setup`,
+For setup troubleshooting or agent automation, use `start --yes`, `doctor --setup`,
 `sources status`, and `status --latest --json` as read-only diagnostics.
 
 Repair and compare when status says the packet needs evidence:
@@ -99,6 +103,7 @@ Read-only commands:
 
 Write-producing commands:
 
+- `shiplog start --yes`
 - `shiplog init --guided`
 - `shiplog intake --last-6-months --explain`
 - `shiplog add "what changed"`

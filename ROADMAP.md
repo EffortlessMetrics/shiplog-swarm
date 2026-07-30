@@ -37,7 +37,8 @@ Release scope on `main`:
 
 These are future lanes, not `0.11.0` release promises.
 
-- **Guided first use** - add an explicit confirmed `shiplog start` command.
+- **Guided first use** - add an explicit confirmed `shiplog start` command
+  (tracked in [#283](https://github.com/EffortlessMetrics/shiplog-swarm/issues/283)).
 - **Provider connection** - add task-level GitLab, Jira, and Linear connection
   flows that preserve non-secret configuration.
 - **Share setup ergonomics** - provide safe local/OS-backed redaction-key
