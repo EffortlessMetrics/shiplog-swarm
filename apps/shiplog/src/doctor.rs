@@ -154,9 +154,9 @@ pub(crate) fn build_setup_status_for(
 
     if !config_path.exists() {
         let action = next_action(
-            "init_guided",
+            "start",
             "Create guided setup files",
-            "shiplog init --guided",
+            "shiplog start --yes",
             true,
             "shiplog.toml is missing",
             1,
@@ -1246,9 +1246,9 @@ fn build_manual_source(
     };
     if !events.exists() {
         let action = next_action(
-            "init_guided",
+            "start",
             "Create guided setup files",
-            "shiplog init --guided",
+            "shiplog start --yes",
             true,
             "manual journal is missing",
             2,
@@ -1682,7 +1682,7 @@ mod tests {
             .next_action
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("config item should have a next action"))?;
-        assert_eq!(action.command, "shiplog init --guided");
+        assert_eq!(action.command, "shiplog start --yes");
         assert!(action.writes);
         Ok(())
     }

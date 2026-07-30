@@ -46,6 +46,10 @@ pub(super) fn dispatch() -> Result<()> {
     };
 
     match command {
+        Command::Start { yes, dry_run } => {
+            run_start(dry_run, yes)?;
+        }
+
         Command::Init {
             sources,
             dry_run,

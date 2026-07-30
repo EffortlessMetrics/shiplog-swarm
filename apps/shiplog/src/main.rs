@@ -1,6 +1,6 @@
 //! `shiplog` CLI entrypoint.
 //!
-//! Exposes `init`, `doctor`, `intake`, `config`, `collect`, `render`,
+//! Exposes `start`, `init`, `doctor`, `intake`, `config`, `collect`, `render`,
 //! `refresh`, `workstreams`, `runs`, `review`, `journal`, `open`, `report`, `merge`,
 //! `import`, `sources`, and `run` commands over the workspace engine and adapter crates.
 
@@ -48,7 +48,7 @@ use intake_report_builder::build_intake_report;
 
 const TOP_LEVEL_AFTER_HELP: &str = "\
 Start here:
-  shiplog
+  shiplog start --yes
   shiplog add \"what changed\"
   shiplog update
   shiplog next
@@ -78,6 +78,18 @@ Advanced GitHub activity:
 
 Read-first commands:
   doctor --setup, status --latest, repair plan, repair diff, runs diff, and share explain inspect setup/receipts before write-producing commands.";
+
+const START_AFTER_HELP: &str = "\
+Explicit first-use setup:
+  shiplog start --yes
+  shiplog start --dry-run
+  shiplog doctor --setup
+  shiplog intake --last-6-months --explain
+
+Safety posture:
+  start writes only the guided local setup scaffold and never collects evidence.
+  --yes confirms those local writes; --dry-run previews them without writing.
+  Existing setup files are preserved unless you explicitly use init --force.";
 
 const GITHUB_ACTIVITY_AFTER_HELP: &str = "\
 Recommended harvest path:
@@ -378,6 +390,21 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Command {
+    /// Create the guided local setup scaffold after explicit confirmation.
+    #[command(
+        about = "Create the guided local setup scaffold after explicit confirmation.",
+        long_about = "Create the local-first shiplog.toml and manual_events.yaml scaffold without collecting evidence or contacting providers.",
+        after_help = START_AFTER_HELP
+    )]
+    Start {
+        /// Confirm writing the guided setup files.
+        #[arg(long)]
+        yes: bool,
+        /// Print the guided setup files instead of writing them.
+        #[arg(long)]
+        dry_run: bool,
+    },
+
     /// Create a local shiplog.toml and manual_events.yaml scaffold.
     Init {
         /// Sources to enable in the generated config.
@@ -3080,6 +3107,16 @@ fn quarter_start(year: i32, month: u32) -> Result<NaiveDate> {
     };
     NaiveDate::from_ymd_opt(year, start_month, 1)
         .ok_or_else(|| anyhow::anyhow!("invalid quarter start for {year}-{start_month:02}"))
+}
+
+fn run_start(dry_run: bool, confirmed: bool) -> Result<()> {
+    if !dry_run && !confirmed {
+        anyhow::bail!(
+            "shiplog start requires --yes because it writes guided setup files; use --dry-run to preview them"
+        );
+    }
+
+    run_init(Vec::new(), dry_run, false, true)
 }
 
 fn run_init(sources: Vec<InitSource>, dry_run: bool, force: bool, guided: bool) -> Result<()> {
@@ -8367,7 +8404,7 @@ fn run_home() -> Result<()> {
 
     if !config.exists() && resolution.latest_run.is_none() {
         println!("No packet exists yet.");
-        println!("Start: shiplog intake");
+        println!("Start: shiplog start --yes");
         return Ok(());
     }
 

@@ -1993,6 +1993,17 @@ fn init_help_shows_options() {
 }
 
 #[test]
+fn start_help_shows_confirmation_and_preview_options() {
+    shiplog_cmd()
+        .args(["start", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--yes"))
+        .stdout(predicate::str::contains("--dry-run"))
+        .stdout(predicate::str::contains("without collecting evidence"));
+}
+
+#[test]
 fn doctor_help_shows_options() {
     shiplog_cmd()
         .args(["doctor", "--help"])
@@ -2895,7 +2906,100 @@ fn init_guided_creates_local_first_setup_without_token_providers() -> CliTestRes
 }
 
 #[test]
-fn status_latest_missing_setup_prints_init_guidance_without_writing() -> CliTestResult {
+fn start_requires_confirmation_before_writing() -> CliTestResult {
+    let tmp = TempDir::new()?;
+
+    shiplog_cmd()
+        .current_dir(tmp.path())
+        .arg("start")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("shiplog start requires --yes"))
+        .stderr(predicate::str::contains("--dry-run"));
+
+    assert!(!tmp.path().join("shiplog.toml").exists());
+    assert!(!tmp.path().join("manual_events.yaml").exists());
+    Ok(())
+}
+
+#[test]
+fn start_dry_run_previews_guided_setup_without_writing() -> CliTestResult {
+    let tmp = TempDir::new()?;
+
+    shiplog_cmd()
+        .current_dir(tmp.path())
+        .args(["start", "--dry-run"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Would write guided shiplog.toml"))
+        .stdout(predicate::str::contains("[sources.manual]"))
+        .stdout(predicate::str::contains("enabled = true"));
+
+    assert!(!tmp.path().join("shiplog.toml").exists());
+    assert!(!tmp.path().join("manual_events.yaml").exists());
+    Ok(())
+}
+
+#[test]
+fn start_yes_creates_guided_local_setup_without_token_providers() -> CliTestResult {
+    let tmp = TempDir::new()?;
+    git2::Repository::init(tmp.path())?;
+    let before = file_tree_manifest(tmp.path());
+
+    shiplog_cmd()
+        .current_dir(tmp.path())
+        .args(["start", "--yes"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Initialized guided shiplog setup"))
+        .stdout(predicate::str::contains("shiplog doctor --setup"))
+        .stdout(predicate::str::contains("export GITHUB_TOKEN").not());
+
+    let config = std::fs::read_to_string(tmp.path().join("shiplog.toml"))?;
+    assert!(config.contains("[sources.git]\nenabled = true"));
+    assert!(config.contains("[sources.manual]\nenabled = true"));
+    assert!(config.contains(
+        "[sources.github]\n# GitHub auth uses environment credentials or an authenticated gh CLI session.\n# Use either user or me = true.\nenabled = false"
+    ));
+    assert!(tmp.path().join("manual_events.yaml").exists());
+    let after = file_tree_manifest(tmp.path());
+    let added: Vec<&str> = after
+        .iter()
+        .filter(|(path, _, _)| !before.iter().any(|(before_path, _, _)| before_path == path))
+        .map(|(path, _, _)| path.as_str())
+        .collect();
+    assert_eq!(added, ["manual_events.yaml", "shiplog.toml"]);
+    Ok(())
+}
+
+#[test]
+fn start_yes_preserves_existing_setup_files() -> CliTestResult {
+    let tmp = TempDir::new()?;
+    let existing = "existing setup";
+    let existing_manual = "existing manual events";
+    std::fs::write(tmp.path().join("shiplog.toml"), existing)?;
+    std::fs::write(tmp.path().join("manual_events.yaml"), existing_manual)?;
+
+    shiplog_cmd()
+        .current_dir(tmp.path())
+        .args(["start", "--yes"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("already exists"));
+
+    assert_eq!(
+        std::fs::read_to_string(tmp.path().join("shiplog.toml"))?,
+        existing
+    );
+    assert_eq!(
+        std::fs::read_to_string(tmp.path().join("manual_events.yaml"))?,
+        existing_manual
+    );
+    Ok(())
+}
+
+#[test]
+fn status_latest_missing_setup_prints_start_guidance_without_writing() -> CliTestResult {
     let tmp = TempDir::new()?;
     let before = file_tree_manifest(tmp.path());
 
@@ -2910,7 +3014,7 @@ fn status_latest_missing_setup_prints_init_guidance_without_writing() -> CliTest
         .stdout(predicate::str::contains(
             "shiplog doctor --setup [read-only]",
         ))
-        .stdout(predicate::str::contains("shiplog init --guided [writes]"));
+        .stdout(predicate::str::contains("shiplog start --yes [writes]"));
     let stdout = String::from_utf8(assert.get_output().stdout.clone())?;
 
     assert!(
@@ -3102,7 +3206,7 @@ fn no_argument_home_is_read_only_and_useful_before_and_after_setup() -> CliTestR
         .assert()
         .success()
         .stdout(predicate::str::contains("No packet exists yet."))
-        .stdout(predicate::str::contains("Start: shiplog intake"));
+        .stdout(predicate::str::contains("Start: shiplog start --yes"));
     assert_eq!(before_empty, file_tree_manifest(empty.path()));
 
     let established = TempDir::new()?;
@@ -4877,8 +4981,8 @@ fn status_latest_json_missing_setup_serializes_model_without_writing() -> CliTes
             && action["writes"] == false
     }));
     assert!(actions.iter().any(|action| {
-        action["key"] == "init_guided"
-            && action["command"] == "shiplog init --guided"
+        action["key"] == "start"
+            && action["command"] == "shiplog start --yes"
             && action["writes"] == true
     }));
     assert!(
@@ -5031,7 +5135,7 @@ fn status_latest_json_safe_next_actions_cover_review_loop_states() -> CliTestRes
     let missing = status_latest_json(missing_setup.path(), &missing_out)?;
     assert_eq!(missing["overall_status"], "needs_setup");
     assert_status_first_action(&missing, "doctor_setup", false);
-    assert_status_has_action(&missing, "init_guided", true);
+    assert_status_has_action(&missing, "start", true);
     assert_status_lacks_command(&missing, "journal add --from-repair");
     assert_status_lacks_share_render(&missing);
     assert_eq!(
@@ -18163,7 +18267,7 @@ fn no_subcommand_shows_home_screen() {
         .assert()
         .success()
         .stdout(predicate::str::contains("No packet exists yet."))
-        .stdout(predicate::str::contains("Start: shiplog intake"));
+        .stdout(predicate::str::contains("Start: shiplog start --yes"));
 }
 
 // ── 8. missing required args return helpful error messages ─────────────────
