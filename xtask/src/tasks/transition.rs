@@ -14,11 +14,12 @@
 //!   false for half of it.
 //! * **Bounded lifetime.** An entry grants nothing once `consumed_by` names the
 //!   promotion that reconciled it. Entries are kept as history, not authority.
-//! * **Narrow authority.** Only `missing_in_swarm` grants one-sided source
-//!   authority, and only until it is consumed. A resolved receipt
-//!   (`equivalent`, `superseded_in_swarm`) permits a path both sides touched to
-//!   reconcile; it never grants permanent source-only standing. `conflicting`
-//!   blocks outright.
+//! * **Narrow authority.** Only a resolved receipt (`equivalent`,
+//!   `superseded_in_swarm`) grants anything, and only permission for the overlay
+//!   to keep swarm content on a path both sides changed, because swarm
+//!   demonstrably already carries or supersedes the source change.
+//!   `missing_in_swarm` grants nothing and blocks: swarm does not carry the
+//!   change, so promoting would revert it. `conflicting` blocks outright.
 //!
 //! Evidence is checked rather than assumed: the recorded merge SHAs must belong
 //! to merged PRs and be reachable from the relevant branch, `equivalent` must
@@ -36,16 +37,31 @@ use super::promotion_state::{Transition, TransitionDisposition, TransitionPath};
 /// difference they actually prove.
 #[derive(Debug, Default)]
 pub struct TransitionAuthority {
-    /// Paths that may differ because only source changed them, pending
-    /// reconciliation. Granted solely by an unconsumed `missing_in_swarm`.
-    pub source_only: BTreeSet<String>,
     /// Paths both repositories changed, where a receipt proves the two changes
-    /// are reconciled.
-    pub two_sided: BTreeSet<String>,
+    /// are reconciled, so the overlay may keep the swarm content. Carries the
+    /// evidence that earned it, so a decision can state its basis rather than
+    /// just its effect.
+    pub two_sided: BTreeMap<String, ResolvedReceipt>,
+    /// Paths a receipt records as changed on source with no swarm counterpart,
+    /// mapped to the receipt that records it.
+    ///
+    /// These grant nothing. The overlay keeps swarm content for any path the
+    /// policy does not mark source-authoritative, so promoting would revert the
+    /// source change. They are carried only so the refusal can name the receipt
+    /// and say what to do about it.
+    pub awaiting_swarm: BTreeMap<String, String>,
     /// Source merge commits an active receipt accounts for. A source commit that
     /// followed the last promotion merge is otherwise unapproved divergence, so
     /// without this the path-level authority above could never be reached.
     pub source_commits: BTreeSet<String>,
+}
+
+/// The evidence behind a resolved path grant.
+#[derive(Clone, Debug)]
+pub struct ResolvedReceipt {
+    pub source_pr: String,
+    pub swarm_chain: Vec<String>,
+    pub disposition: TransitionDisposition,
 }
 
 /// Repository access the evidence checks need.
@@ -143,9 +159,17 @@ fn check_path(
         if !path.swarm_chain.is_empty() {
             bail!("missing_in_swarm must not name swarm PRs");
         }
-        // Source changed it and swarm has not caught up yet, so the difference
-        // is one-sided until a promotion reconciles it.
-        authority.source_only.insert(path.path.clone());
+        // Deliberately not an authority grant. Swarm does not carry this change,
+        // and the overlay keeps swarm content for paths outside
+        // `policy/source-only-paths.toml`, so promoting would revert it. Record
+        // it so the refusal can explain itself.
+        // A newer missing-in-swarm receipt supersedes any older resolved receipt
+        // for this path. Keeping both would let the planner select stale
+        // two-sided authority before it sees the newer blocking evidence.
+        authority.two_sided.remove(&path.path);
+        authority
+            .awaiting_swarm
+            .insert(path.path.clone(), entry.source_pr.clone());
         return Ok(());
     }
 
@@ -210,9 +234,17 @@ fn check_path(
         _ => unreachable!("handled above"),
     }
     // A resolved receipt reconciles a path both sides touched. It deliberately
-    // does not grant one-sided source authority: that would let a settled
-    // migration approve unrelated future source-only drift on the same path.
-    authority.two_sided.insert(path.path.clone());
+    // does not grant one-sided source authority: only
+    // `policy/source-only-paths.toml` may select source content, so a settled
+    // migration can never manufacture temporary source authority.
+    authority.two_sided.insert(
+        path.path.clone(),
+        ResolvedReceipt {
+            source_pr: entry.source_pr.clone(),
+            swarm_chain: path.swarm_chain.clone(),
+            disposition: path.disposition,
+        },
+    );
     Ok(())
 }
 
@@ -415,32 +447,7 @@ fn patch_for_path(patch: &str, path: &str) -> Option<String> {
 /// `--stable` ignores line numbers but keeps file identity, so the same edit
 /// applied to a different file is a different id.
 pub fn system_patch_id(patch: &str) -> Result<String> {
-    use std::io::Write as _;
-    use std::process::{Command, Stdio};
-
-    let mut child = Command::new("git")
-        .args(["patch-id", "--stable"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .context("transition: run git patch-id --stable")?;
-    child
-        .stdin
-        .take()
-        .context("transition: git patch-id stdin unavailable")?
-        .write_all(patch.as_bytes())
-        .context("transition: write patch to git patch-id")?;
-    let output = child
-        .wait_with_output()
-        .context("transition: collect git patch-id output")?;
-    if !output.status.success() {
-        bail!(
-            "git patch-id --stable failed: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        );
-    }
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = run_git_with_stdin(&["patch-id", "--stable"], patch)?;
     // Output is "<patch-id> <commit-id>"; an empty patch yields nothing at all,
     // which must not silently compare equal to another empty result.
     stdout
@@ -448,6 +455,48 @@ pub fn system_patch_id(patch: &str) -> Result<String> {
         .next()
         .map(str::to_string)
         .context("transition: git patch-id produced no id for the supplied patch")
+}
+
+/// `git hash-object` over arbitrary content.
+///
+/// Gives a stable content id using git's own hashing rather than taking on a
+/// digest dependency for one identifier.
+pub fn git_hash_object(content: &str) -> Result<String> {
+    run_git_with_stdin(&["hash-object", "--stdin"], content)?
+        .split_whitespace()
+        .next()
+        .map(str::to_string)
+        .context("transition: git hash-object produced no id")
+}
+
+fn run_git_with_stdin(args: &[&str], stdin: &str) -> Result<String> {
+    use std::io::Write as _;
+    use std::process::{Command, Stdio};
+
+    let mut child = Command::new("git")
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .with_context(|| format!("transition: run git {}", args.join(" ")))?;
+    child
+        .stdin
+        .take()
+        .context("transition: git stdin unavailable")?
+        .write_all(stdin.as_bytes())
+        .context("transition: write to git stdin")?;
+    let output = child
+        .wait_with_output()
+        .context("transition: collect git output")?;
+    if !output.status.success() {
+        bail!(
+            "git {} failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
 fn pull_request_patch(port: &impl TransitionPort, repo: &str, receipt: &str) -> Result<String> {
@@ -652,11 +701,11 @@ mod tests {
 
         let authority = derive_authority(&port, Path::new("."), &refs(), &entries)?;
 
-        assert!(authority.two_sided.contains(CARGO_LOCK));
+        assert!(authority.two_sided.contains_key(CARGO_LOCK));
         assert!(
-            authority.source_only.is_empty(),
-            "a resolved receipt must not grant source-only authority: {:?}",
-            authority.source_only
+            authority.awaiting_swarm.is_empty(),
+            "a resolved receipt has nothing awaiting swarm: {:?}",
+            authority.awaiting_swarm
         );
         Ok(())
     }
@@ -698,10 +747,10 @@ mod tests {
         );
     }
 
-    /// `missing_in_swarm` is the only disposition that earns one-sided source
-    /// authority, and only while unconsumed.
+    /// `missing_in_swarm` grants nothing. It records that swarm lacks the change
+    /// so the refusal can name the receipt, and stops recording it once consumed.
     #[test]
-    fn missing_in_swarm_grants_source_only_until_consumed() -> Result<()> {
+    fn missing_in_swarm_records_but_never_grants() -> Result<()> {
         let patch = section(CARGO_LOCK, "1.52.3", "1.53.0", "tokio");
         let port = StubPort::new().merged(
             &format!("{SOURCE}#657"),
@@ -711,16 +760,50 @@ mod tests {
         let mut entries = vec![entry(TransitionDisposition::MissingInSwarm, &[])];
 
         let active = derive_authority(&port, Path::new("."), &refs(), &entries)?;
-        assert!(active.source_only.contains(CARGO_LOCK));
-        assert!(active.two_sided.is_empty());
+        assert_eq!(
+            active.awaiting_swarm.get(CARGO_LOCK).map(String::as_str),
+            Some(format!("{SOURCE}#657").as_str())
+        );
+        assert!(
+            active.two_sided.is_empty(),
+            "missing_in_swarm must not grant reconciliation authority"
+        );
 
         // Once consumed the receipt is history and grants nothing, so the
         // migration mechanism cannot become a permanent bypass.
         entries[0].consumed_by = format!("{SOURCE}#655");
         let consumed = derive_authority(&port, Path::new("."), &refs(), &entries)?;
         assert!(
-            consumed.source_only.is_empty() && consumed.two_sided.is_empty(),
+            consumed.awaiting_swarm.is_empty() && consumed.two_sided.is_empty(),
             "a consumed receipt still granted authority"
+        );
+        Ok(())
+    }
+
+    /// A newer missing-in-swarm receipt must supersede an older resolved
+    /// receipt for the same path rather than leaving stale two-sided authority.
+    #[test]
+    fn missing_in_swarm_supersedes_stale_resolved_receipt() -> Result<()> {
+        let patch = section(CARGO_LOCK, "1.52.3", "1.53.0", "tokio");
+        let source = format!("{SOURCE}#657");
+        let swarm = format!("{SWARM}#269");
+        let port = StubPort::new()
+            .merged(&source, "e6a72ad11ab22d03b1cf434b237bf0fff9c145bf", &patch)
+            .merged(&swarm, "ba4aeaf78cb17f980f1da05d24d9638033b95f68", &patch);
+        let entries = vec![
+            entry(
+                TransitionDisposition::Equivalent,
+                &[(swarm.as_str(), "ba4aeaf78cb17f980f1da05d24d9638033b95f68")],
+            ),
+            entry(TransitionDisposition::MissingInSwarm, &[]),
+        ];
+
+        let authority = derive_authority(&port, Path::new("."), &refs(), &entries)?;
+
+        assert!(authority.two_sided.is_empty());
+        assert_eq!(
+            authority.awaiting_swarm.get(CARGO_LOCK).map(String::as_str),
+            Some(source.as_str())
         );
         Ok(())
     }
@@ -902,8 +985,8 @@ mod tests {
         )];
 
         let authority = derive_authority(&port, Path::new("."), &refs(), &entries)?;
-        assert!(authority.two_sided.contains(CARGO_LOCK));
-        assert!(authority.source_only.is_empty());
+        assert!(authority.two_sided.contains_key(CARGO_LOCK));
+        assert!(authority.awaiting_swarm.is_empty());
         Ok(())
     }
 
