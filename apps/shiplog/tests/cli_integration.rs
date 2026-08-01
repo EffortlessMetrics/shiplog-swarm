@@ -5873,6 +5873,35 @@ fn quick_add_honors_an_explicit_date() {
     );
 }
 
+/// The advertised front door is `start` -> `add` -> `update`. Work recorded
+/// today must survive that round trip: the default `--last-6-months` window is
+/// half-open, so anchoring `until` on today silently dropped the note the user
+/// had just written and left the packet reporting "Needs evidence".
+#[test]
+fn quick_add_today_is_collected_by_the_default_update_window() {
+    let tmp = TempDir::new().unwrap();
+
+    shiplog_cmd()
+        .current_dir(tmp.path())
+        .args(["start", "--yes"])
+        .assert()
+        .success();
+
+    shiplog_cmd()
+        .current_dir(tmp.path())
+        .args(["add", "Shipped the billing retry path"])
+        .assert()
+        .success();
+
+    shiplog_cmd()
+        .current_dir(tmp.path())
+        .args(["update"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Manual: success, 1 event"))
+        .stdout(predicate::str::contains("Manual: 1 event(s)"));
+}
+
 #[test]
 fn journal_add_creates_collectable_manual_event() {
     let tmp = TempDir::new().unwrap();

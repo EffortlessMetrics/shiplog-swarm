@@ -3078,7 +3078,15 @@ fn resolve_date_window_for_today(args: DateArgs, today: NaiveDate) -> Result<Res
     let since = today
         .checked_sub_months(Months::new(6))
         .ok_or_else(|| anyhow::anyhow!("could not resolve --last-6-months"))?;
-    checked_window(since, today, WindowLabel::LastSixMonths)
+    // `until` is exclusive, so the trailing window has to end on the day after
+    // today for today's own work to be collected. Anchoring it on `today`
+    // silently dropped everything recorded today, including a fresh
+    // `shiplog add`. The `--year` preset ends on Jan 1 of the following year
+    // for the same reason.
+    let until = today
+        .succ_opt()
+        .ok_or_else(|| anyhow::anyhow!("could not resolve --last-6-months"))?;
+    checked_window(since, until, WindowLabel::LastSixMonths)
 }
 
 fn checked_window(
@@ -17215,6 +17223,13 @@ mod tests {
         }
     }
 
+    /// Build a fixture date without adding panic-family debt to `main.rs`.
+    /// See `docs/NO_PANIC_POLICY.md`.
+    fn fixture_date(year: i32, month: u32, day: u32) -> Result<NaiveDate> {
+        NaiveDate::from_ymd_opt(year, month, day)
+            .with_context(|| format!("build fixture date {year}-{month}-{day}"))
+    }
+
     #[test]
     fn resolve_cache_dir_uses_default_out_cache() {
         let out_root = Path::new("C:/tmp/shiplog-out");
@@ -17471,12 +17486,49 @@ mod tests {
         .unwrap();
 
         assert_eq!(window.since, NaiveDate::from_ymd_opt(2025, 11, 7).unwrap());
-        assert_eq!(window.until, NaiveDate::from_ymd_opt(2026, 5, 7).unwrap());
         assert_eq!(window.label, WindowLabel::LastSixMonths);
         assert_eq!(
             window.window_label(),
-            "last-6-months (2025-11-07..2026-05-07)"
+            "last-6-months (2025-11-07..2026-05-08)"
         );
+    }
+
+    /// `until` is exclusive, so the trailing preset must end the day after
+    /// today. Anchoring it on `today` dropped work recorded today — including
+    /// a `shiplog add` entered moments earlier.
+    #[test]
+    fn last_six_months_window_contains_today() -> Result<()> {
+        let today = fixture_date(2026, 5, 7)?;
+
+        let resolved = resolve_date_window_for_today(date_args(), today)?;
+
+        let window = TimeWindow {
+            since: resolved.since,
+            until: resolved.until,
+        };
+        assert_eq!(window.until, fixture_date(2026, 5, 8)?);
+        assert!(window.contains(today), "today must be collectable");
+        assert!(window.contains(today.pred_opt().context("day before today")?));
+        assert!(!window.contains(today.succ_opt().context("day after today")?));
+        Ok(())
+    }
+
+    /// The trailing preset is explicitly requestable, not only the default.
+    #[test]
+    fn explicit_last_six_months_flag_contains_today() -> Result<()> {
+        let today = fixture_date(2026, 5, 7)?;
+        let mut args = date_args();
+        args.last_6_months = true;
+
+        let resolved = resolve_date_window_for_today(args, today)?;
+
+        let window = TimeWindow {
+            since: resolved.since,
+            until: resolved.until,
+        };
+        assert_eq!(window.until, fixture_date(2026, 5, 8)?);
+        assert!(window.contains(today));
+        Ok(())
     }
 
     #[test]
