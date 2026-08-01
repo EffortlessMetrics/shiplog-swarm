@@ -54,3 +54,11 @@ reason = "Only canonical source carries explicitly authorized GitHub Release wri
 classification = "release-governance"
 created = "2026-07-18"
 review_after = "2027-01-18"
+
+[[allow]]
+path = ".codex/goals/active.toml"
+owner = "repo-infra/release"
+reason = "Source #666 records that this file preserves source-specific goal execution state; each repository tracks its own active goal, so the divergence is permanent rather than a bounded transition to reconcile."
+classification = "release-governance"
+created = "2026-08-01"
+review_after = "2027-08-01"
