@@ -5808,6 +5808,71 @@ fn seed_journal_list_events(path: &Path) {
         .success();
 }
 
+/// `shiplog add "<title>"` is the quick front-door command advertised in
+/// `shiplog --help`. It must work with no flags at all, defaulting the entry
+/// date to today so the user never has to restate it.
+#[test]
+fn quick_add_defaults_the_entry_date_to_today() {
+    let tmp = TempDir::new().unwrap();
+
+    // Bracket the run so a UTC midnight rollover mid-command cannot flake the
+    // assertion: the entry must carry whichever UTC day the command observed.
+    let before = Utc::now().date_naive();
+    shiplog_cmd()
+        .current_dir(tmp.path())
+        .args(["add", "Shipped the billing retry path"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Added manual event:"))
+        .stdout(predicate::str::contains("shiplog update"));
+    let after = Utc::now().date_naive();
+
+    let file: ManualEventsFile = serde_yaml::from_str(
+        &std::fs::read_to_string(tmp.path().join("manual_events.yaml")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(file.events.len(), 1);
+    let entry = &file.events[0];
+
+    let ManualDate::Single(recorded) = entry.date else {
+        panic!("quick add must record a single date, got {:?}", entry.date);
+    };
+    assert!(
+        recorded == before || recorded == after,
+        "quick add recorded {recorded}, expected the command's UTC day ({before} or {after})"
+    );
+    assert_eq!(entry.title, "Shipped the billing retry path");
+    assert_eq!(
+        entry.id,
+        format!("manual-{recorded}-shipped-the-billing-retry-path")
+    );
+}
+
+/// The implicit today default must not shadow an explicit `--date`.
+#[test]
+fn quick_add_honors_an_explicit_date() {
+    let tmp = TempDir::new().unwrap();
+
+    shiplog_cmd()
+        .current_dir(tmp.path())
+        .args(["add", "Debugged customer import", "--date", "2026-05-08"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "Added manual event: manual-2026-05-08-debugged-customer-import",
+        ));
+
+    let file: ManualEventsFile = serde_yaml::from_str(
+        &std::fs::read_to_string(tmp.path().join("manual_events.yaml")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(file.events.len(), 1);
+    assert_eq!(
+        file.events[0].date,
+        ManualDate::Single(NaiveDate::from_ymd_opt(2026, 5, 8).unwrap())
+    );
+}
+
 #[test]
 fn journal_add_creates_collectable_manual_event() {
     let tmp = TempDir::new().unwrap();

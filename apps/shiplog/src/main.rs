@@ -3351,6 +3351,9 @@ fn run_update(args: UpdateArgs) -> Result<()> {
 fn run_add(args: AddArgs) -> Result<()> {
     let events = configured_manual_events_path(&args.config, true)
         .unwrap_or_else(|| PathBuf::from(MANUAL_EVENTS_FILENAME));
+    // Quick add is the low-friction front door: a bare `shiplog add "<title>"`
+    // records today's work without making the user restate the date.
+    let date = Some(args.date.unwrap_or_else(|| Utc::now().date_naive()));
     run_journal_add(JournalAddArgs {
         events,
         from_repair: None,
@@ -3359,7 +3362,7 @@ fn run_add(args: AddArgs) -> Result<()> {
         latest: false,
         id: None,
         event_type: args.event_type,
-        date: args.date,
+        date,
         start: None,
         end: None,
         title: Some(args.title),
