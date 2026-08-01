@@ -18,6 +18,7 @@ use std::io::{ErrorKind, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::Command as StdCommand;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration as StdDuration, Instant};
@@ -1683,8 +1684,23 @@ fn file_tree_manifest(root: &Path) -> Vec<(String, u64, Option<std::time::System
     entries
 }
 
-#[cfg(not(windows))]
-fn install_fake_gh(tmp: &Path) -> anyhow::Result<PathBuf> {
+/// Which `gh auth status` outcome the stubbed `gh` on `PATH` should report.
+#[derive(Clone, Copy)]
+enum FakeGhAuth {
+    /// `gh` is logged in and hands back a token.
+    ///
+    /// Only the `#[cfg(not(windows))]` credential-fallback test needs this.
+    #[cfg_attr(windows, allow(dead_code))]
+    LoggedIn,
+    /// `gh` exists but has no session, so `gh auth status` exits non-zero.
+    ///
+    /// Tests need this instead of an empty `GH_CONFIG_DIR`: probing the real
+    /// `gh` binary makes the reported reason depend on how fast that process
+    /// answers (`gh_logged_out` normally, `gh_timed_out` under load).
+    LoggedOut,
+}
+
+fn install_fake_gh(tmp: &Path, auth: FakeGhAuth) -> anyhow::Result<PathBuf> {
     let bin_dir = tmp.join("fake-gh-bin");
     std::fs::create_dir_all(&bin_dir)?;
     #[cfg(windows)]
@@ -1692,21 +1708,39 @@ fn install_fake_gh(tmp: &Path) -> anyhow::Result<PathBuf> {
     #[cfg(not(windows))]
     let path = bin_dir.join("gh");
     #[cfg(windows)]
-    let script = r#"@echo off
+    let script = match auth {
+        FakeGhAuth::LoggedIn => {
+            r#"@echo off
 if "%2"=="token" (
   echo shiplog-gh-secret
 ) else (
   echo {"hosts":{"github.com":[{"user":"octocat"}],"127.0.0.1":[{"user":"octocat"}]}}
 )
 exit /b 0
-"#;
+"#
+        }
+        FakeGhAuth::LoggedOut => {
+            r#"@echo off
+exit /b 1
+"#
+        }
+    };
     #[cfg(not(windows))]
-    let script = r##"#!/bin/sh
+    let script = match auth {
+        FakeGhAuth::LoggedIn => {
+            r##"#!/bin/sh
 case "$*" in
   *"auth token"*) printf '%s\n' 'shiplog-gh-secret' ;;
   *) printf '%s\n' '{"hosts":{"github.com":[{"user":"octocat"}],"127.0.0.1":[{"user":"octocat"}]}}' ;;
 esac
-"##;
+"##
+        }
+        FakeGhAuth::LoggedOut => {
+            r##"#!/bin/sh
+exit 1
+"##
+        }
+    };
     std::fs::write(&path, script)?;
     #[cfg(unix)]
     {
@@ -1717,7 +1751,6 @@ esac
     Ok(bin_dir)
 }
 
-#[cfg(not(windows))]
 fn path_with_prepend(prepend: &Path) -> anyhow::Result<String> {
     let mut paths = vec![prepend.to_path_buf()];
     if let Some(existing) = std::env::var_os("PATH") {
@@ -3827,13 +3860,22 @@ repo_owners = ["acme"]
 struct RecordedGithubCliServer {
     base_url: String,
     requests: Arc<Mutex<Vec<String>>>,
+    stop: Arc<AtomicBool>,
     handle: Option<JoinHandle<anyhow::Result<()>>>,
 }
 
 const CLI_GITHUB_FIXTURE_READY_TARGET: &str = "/__shiplog_cli_fixture_ready";
 
 impl RecordedGithubCliServer {
-    fn start(expected_requests: usize) -> anyhow::Result<Self> {
+    /// Serve GitHub fixtures until [`RecordedGithubCliServer::finish`] is called.
+    ///
+    /// The server deliberately does not wait for a fixed request count: the CLI
+    /// under test is a child process, and how long it takes to issue its calls
+    /// depends on machine load, not on the behaviour being asserted. Tests call
+    /// `finish` only after the child process has exited, so every request the
+    /// CLI made has already been served and recorded by then; assertions are
+    /// made on *which* requests arrived rather than on a wall-clock race.
+    fn start() -> anyhow::Result<Self> {
         let listener =
             TcpListener::bind("127.0.0.1:0").context("bind CLI GitHub fixture server")?;
         listener
@@ -3842,21 +3884,19 @@ impl RecordedGithubCliServer {
         let addr = listener.local_addr()?;
         let base_url = format!("http://{addr}");
         let requests = Arc::new(Mutex::new(Vec::new()));
+        let stop = Arc::new(AtomicBool::new(false));
         let thread_requests = Arc::clone(&requests);
+        let thread_stop = Arc::clone(&stop);
         let thread_base_url = base_url.clone();
         let handle = thread::spawn(move || {
-            replay_cli_github_fixtures(
-                listener,
-                &thread_base_url,
-                thread_requests,
-                expected_requests,
-            )
+            replay_cli_github_fixtures(listener, &thread_base_url, thread_requests, thread_stop)
         });
         wait_for_cli_github_fixture_server(addr)?;
 
         Ok(Self {
             base_url,
             requests,
+            stop,
             handle: Some(handle),
         })
     }
@@ -3866,6 +3906,7 @@ impl RecordedGithubCliServer {
     }
 
     fn finish(mut self) -> anyhow::Result<Vec<String>> {
+        self.stop.store(true, Ordering::SeqCst);
         if let Some(handle) = self.handle.take() {
             handle
                 .join()
@@ -3882,11 +3923,9 @@ fn replay_cli_github_fixtures(
     listener: TcpListener,
     base_url: &str,
     requests: Arc<Mutex<Vec<String>>>,
-    expected_requests: usize,
+    stop: Arc<AtomicBool>,
 ) -> anyhow::Result<()> {
-    let deadline = Instant::now() + StdDuration::from_secs(10);
-
-    while cli_fixture_request_count(&requests)? < expected_requests {
+    while !stop.load(Ordering::SeqCst) {
         match listener.accept() {
             Ok((mut stream, _peer)) => {
                 stream
@@ -3910,12 +3949,6 @@ fn replay_cli_github_fixtures(
                 }
             }
             Err(err) if err.kind() == ErrorKind::WouldBlock => {
-                if Instant::now() > deadline {
-                    return Err(anyhow::anyhow!(
-                        "CLI GitHub fixture server expected {expected_requests} requests, saw {}",
-                        cli_fixture_request_count(&requests)?
-                    ));
-                }
                 thread::sleep(StdDuration::from_millis(10));
             }
             Err(err) => return Err(err).context("accept CLI GitHub fixture request"),
@@ -3978,13 +4011,6 @@ fn wait_for_cli_github_fixture_server(addr: SocketAddr) -> anyhow::Result<()> {
             Err(err) => return Err(err).context("connect CLI GitHub fixture server"),
         }
     }
-}
-
-fn cli_fixture_request_count(requests: &Arc<Mutex<Vec<String>>>) -> anyhow::Result<usize> {
-    requests
-        .lock()
-        .map_err(|_| anyhow::anyhow!("CLI GitHub fixture request log was poisoned"))
-        .map(|requests| requests.len())
 }
 
 fn handle_cli_github_fixture_request(
@@ -4103,8 +4129,8 @@ fn github_auth_cli_fallback_collects_without_token_and_keeps_secret_out_of_artif
 -> CliTestResult {
     let tmp = TempDir::new()?;
     let out = tmp.path().join("out");
-    let server = RecordedGithubCliServer::start(3)?;
-    let fake_gh = install_fake_gh(tmp.path())?;
+    let server = RecordedGithubCliServer::start()?;
+    let fake_gh = install_fake_gh(tmp.path(), FakeGhAuth::LoggedIn)?;
     let path = path_with_prepend(&fake_gh)?;
     let sentinel = "shiplog-gh-secret";
     std::fs::write(
@@ -4309,7 +4335,7 @@ mode = "created"
 fn github_activity_run_resume_skips_completed_profile_without_refetching_details() -> CliTestResult
 {
     let tmp = TempDir::new()?;
-    let server = RecordedGithubCliServer::start(3)?;
+    let server = RecordedGithubCliServer::start()?;
     let config = tmp.path().join("shiplog-github-full.toml");
     let out = tmp.path().join("out/github-full");
     std::fs::write(
@@ -4383,7 +4409,7 @@ cache_dir = "./out/github-full/.cache"
             .filter(|line| line.contains("/search/issues?"))
             .count(),
         2,
-        "first authored run should make search meta and search page requests"
+        "first authored run should make search meta and search page requests: {requests:?}"
     );
     assert_eq!(
         requests
@@ -4391,7 +4417,14 @@ cache_dir = "./out/github-full/.cache"
             .filter(|line| line.contains("/repos/acme/widgets/pulls/1"))
             .count(),
         1,
-        "first authored run should fetch PR details once"
+        "first authored run should fetch PR details once: {requests:?}"
+    );
+    assert!(
+        requests
+            .iter()
+            .all(|line| line.contains("/search/issues?")
+                || line.contains("/repos/acme/widgets/pulls/1")),
+        "first authored run should not call any other GitHub endpoint: {requests:?}"
     );
 
     let progress_path = out.join("github.activity.progress.json");
@@ -4725,7 +4758,7 @@ cache_dir = "./out/github-full/.cache"
         }))?,
     )?;
 
-    let server = RecordedGithubCliServer::start(3)?;
+    let server = RecordedGithubCliServer::start()?;
     write_config(&server.base_url())?;
 
     shiplog_cmd()
@@ -4756,7 +4789,22 @@ cache_dir = "./out/github-full/.cache"
             .filter(|line| line.contains("/search/issues?"))
             .count(),
         2,
-        "resume should search only the pending February window"
+        "resume should search only the pending February window: {requests:?}"
+    );
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|line| line.contains("/repos/acme/widgets/pulls/1"))
+            .count(),
+        1,
+        "resume should fetch details for the pending window's PR exactly once: {requests:?}"
+    );
+    assert!(
+        requests
+            .iter()
+            .all(|line| line.contains("/search/issues?")
+                || line.contains("/repos/acme/widgets/pulls/1")),
+        "resume should not call any other GitHub endpoint: {requests:?}"
     );
     assert!(
         requests.iter().all(|line| !line.contains("2025-01-01")),
@@ -7704,10 +7752,18 @@ user = "octo"
 "#,
     )?;
 
+    // Both invocations must observe the same GitHub auth state for their
+    // projections to be comparable. Stub `gh` on PATH instead of probing the
+    // developer's real session, which reports `gh_logged_out` or `gh_timed_out`
+    // depending on how quickly the real binary answers.
+    let fake_gh = install_fake_gh(tmp.path(), FakeGhAuth::LoggedOut)?;
+    let path = path_with_prepend(&fake_gh)?;
+
     let before = file_tree_manifest(tmp.path());
     let doctor_assert = shiplog_cmd()
         .current_dir(tmp.path())
         .env_remove("GITHUB_TOKEN")
+        .env("PATH", &path)
         .env("GH_CONFIG_DIR", tmp.path().join("gh-config"))
         .env_remove("SHIPLOG_REDACT_KEY")
         .args(["doctor", "--setup", "--json"])
@@ -7719,6 +7775,7 @@ user = "octo"
     let sources_assert = shiplog_cmd()
         .current_dir(tmp.path())
         .env_remove("GITHUB_TOKEN")
+        .env("PATH", &path)
         .env("GH_CONFIG_DIR", tmp.path().join("gh-config"))
         .env_remove("SHIPLOG_REDACT_KEY")
         .args(["sources", "status"])
@@ -7764,7 +7821,14 @@ user = "octo"
     assert!(
         sources_rows["github"]
             .reason
-            .contains("GitHub authentication unavailable")
+            .contains("GitHub authentication unavailable"),
+        "unexpected github reason: {}",
+        sources_rows["github"].reason
+    );
+    assert!(
+        sources_rows["github"].reason.contains("gh_logged_out"),
+        "stubbed gh reports no session, so the reason must be gh_logged_out: {}",
+        sources_rows["github"].reason
     );
 
     assert!(
