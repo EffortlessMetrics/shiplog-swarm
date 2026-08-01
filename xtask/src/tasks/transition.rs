@@ -15,7 +15,8 @@
 //! * **Bounded lifetime.** An entry grants nothing once `consumed_by` names the
 //!   promotion that reconciled it. Entries are kept as history, not authority.
 //! * **Narrow authority.** Only a resolved receipt (`equivalent`,
-//!   `superseded_in_swarm`) grants anything, and only permission for the overlay
+//!   `tree_equivalent`, `superseded_in_swarm`) grants anything, and only
+//!   permission for the overlay
 //!   to keep swarm content on a path both sides changed, because swarm
 //!   demonstrably already carries or supersedes the source change.
 //!   `missing_in_swarm` grants nothing and blocks: swarm does not carry the
@@ -23,9 +24,16 @@
 //!
 //! Evidence is checked rather than assumed: the recorded merge SHAs must belong
 //! to merged PRs and be reachable from the relevant branch, `equivalent` must
-//! agree under `git patch-id --stable` for that path, and
+//! agree under `git patch-id --stable` for that path, `tree_equivalent` must
+//! resolve to the same blob at that path on both promoted refs, and
 //! `superseded_in_swarm` must present a contiguous version chain starting where
 //! the source change started.
+//!
+//! `equivalent` and `tree_equivalent` are separate dispositions on purpose.
+//! Patch identity is the stronger claim and stays exactly as strict as it was;
+//! `tree_equivalent` exists for the real case where two repositories started
+//! from different content and converged on identical content by different
+//! patches, which patch identity cannot express and must not be made to.
 
 use anyhow::{Context, Result, bail};
 use std::collections::{BTreeMap, BTreeSet};
@@ -209,6 +217,27 @@ fn check_path(
                 );
             }
         }
+        TransitionDisposition::TreeEquivalent => {
+            if path.swarm_chain.len() != 1 {
+                bail!("tree_equivalent must name exactly one swarm PR, not a chain");
+            }
+            // The swarm PR must have touched the path too, exactly as
+            // `equivalent` requires. Otherwise a path the two trees happen to
+            // agree on could be claimed by a swarm PR that never went near it.
+            patch_for_path(&swarm_patches[0], &path.path).with_context(|| {
+                format!("swarm PR {} does not touch this path", path.swarm_chain[0])
+            })?;
+            // The evidence is the outcome, not the edit: the resulting blob at
+            // this path must be byte-identical on both promoted refs. Blob ids
+            // are content hashes, so equal ids mean equal bytes.
+            let source_blob = blob_id(port, workspace_root, refs.source_ref, &path.path)?;
+            let swarm_blob = blob_id(port, workspace_root, refs.swarm_ref, &path.path)?;
+            if source_blob != swarm_blob {
+                bail!(
+                    "claimed tree_equivalent but the resulting blobs differ: source {source_blob}, swarm {swarm_blob}"
+                );
+            }
+        }
         TransitionDisposition::SupersededInSwarm => {
             // The chain must begin by reproducing the source change, not merely
             // by starting at the same version. Without this, a swarm step from
@@ -300,6 +329,27 @@ fn check_merged_at(
         format!("{receipt} merge {merge_sha} is not reachable from {reachable_from}")
     })?;
     Ok(())
+}
+
+/// The blob id of `path` as it stands on `git_ref`.
+///
+/// A blob id is a hash of the file's bytes, so two refs sharing one is proof
+/// the resulting content is byte-identical without reading either file.
+fn blob_id(
+    port: &impl TransitionPort,
+    workspace_root: &Path,
+    git_ref: &str,
+    path: &str,
+) -> Result<String> {
+    let spec = format!("{git_ref}:{path}");
+    let output = port
+        .git_output(workspace_root, &["rev-parse", "--verify", &spec])
+        .with_context(|| format!("resolve {spec}"))?;
+    output
+        .split_whitespace()
+        .next()
+        .map(str::to_string)
+        .with_context(|| format!("{spec} resolved to no blob id"))
 }
 
 /// Require the swarm steps to form an unbroken version chain that starts where
@@ -558,6 +608,8 @@ mod tests {
         patches: BTreeMap<String, String>,
         /// SHAs that are reachable from the ref they are checked against.
         reachable: BTreeSet<String>,
+        /// `<ref>:<path>` to the blob id that rev spec resolves to.
+        blobs: BTreeMap<String, String>,
         ancestry_checks: RefCell<Vec<String>>,
     }
 
@@ -567,8 +619,16 @@ mod tests {
                 views: BTreeMap::new(),
                 patches: BTreeMap::new(),
                 reachable: BTreeSet::new(),
+                blobs: BTreeMap::new(),
                 ancestry_checks: RefCell::new(Vec::new()),
             }
+        }
+
+        /// Record what `<git_ref>:<path>` resolves to.
+        fn blob(mut self, git_ref: &str, path: &str, blob: &str) -> Self {
+            self.blobs
+                .insert(format!("{git_ref}:{path}"), blob.to_string());
+            self
         }
 
         fn merged(mut self, receipt: &str, merge_sha: &str, patch: &str) -> Self {
@@ -614,6 +674,14 @@ mod tests {
                     bail!("stub: {sha} is not an ancestor");
                 }
                 return Ok(String::new());
+            }
+            if args.first() == Some(&"rev-parse") {
+                let spec = args.last().context("stub: rev-parse without a spec")?;
+                let blob = self
+                    .blobs
+                    .get(*spec)
+                    .with_context(|| format!("stub: no blob recorded for {spec}"))?;
+                return Ok(format!("{blob}\n"));
             }
             bail!("stub: unexpected git {args:?}")
         }
@@ -893,6 +961,138 @@ mod tests {
             system_patch_id(&elsewhere)?,
             "patch identity must include the file it applies to"
         );
+        Ok(())
+    }
+
+    /// The real converged case: the two repositories started from different
+    /// content and landed identical content by different patches. Patch identity
+    /// says no, and it is right to; the resulting blobs are what agree.
+    #[test]
+    fn tree_equivalent_accepts_identical_blobs_from_differing_patches() -> Result<()> {
+        let source_patch = section(CARGO_LOCK, "1.52.3", "1.53.0", "tokio");
+        // Same destination, different starting point, so a different patch id.
+        let swarm_patch = section(CARGO_LOCK, "1.50.0", "1.53.0", "tokio");
+        assert_ne!(
+            system_patch_id(&source_patch)?,
+            system_patch_id(&swarm_patch)?,
+            "the fixture must not accidentally share a patch id"
+        );
+        let converged = "9f2c1b6a0d4e5f708192a3b4c5d6e7f809a1b2c3";
+        let swarm = format!("{SWARM}#269");
+        let swarm_sha = "ba4aeaf78cb17f980f1da05d24d9638033b95f68";
+        let port = StubPort::new()
+            .merged(
+                &format!("{SOURCE}#657"),
+                "e6a72ad11ab22d03b1cf434b237bf0fff9c145bf",
+                &source_patch,
+            )
+            .merged(&swarm, swarm_sha, &swarm_patch)
+            .blob("origin/main", CARGO_LOCK, converged)
+            .blob("swarm/main", CARGO_LOCK, converged);
+        let entries = vec![entry(
+            TransitionDisposition::TreeEquivalent,
+            &[(swarm.as_str(), swarm_sha)],
+        )];
+
+        let authority = derive_authority(&port, Path::new("."), &refs(), &entries)?;
+
+        let receipt = authority
+            .two_sided
+            .get(CARGO_LOCK)
+            .context("tree_equivalent must grant two-sided authority")?;
+        assert_eq!(
+            receipt.disposition,
+            TransitionDisposition::TreeEquivalent,
+            "the grant must record the disposition that earned it"
+        );
+        assert!(authority.awaiting_swarm.is_empty());
+        Ok(())
+    }
+
+    /// `tree_equivalent` is a claim about the outcome, so differing outcomes
+    /// must be refused even though both sides touched the path.
+    #[test]
+    fn tree_equivalent_rejects_differing_blobs() {
+        let source_patch = section(CARGO_LOCK, "1.52.3", "1.53.0", "tokio");
+        let swarm_patch = section(CARGO_LOCK, "1.52.3", "9.9.9", "tokio");
+        let swarm = format!("{SWARM}#269");
+        let swarm_sha = "ba4aeaf78cb17f980f1da05d24d9638033b95f68";
+        let port = StubPort::new()
+            .merged(
+                &format!("{SOURCE}#657"),
+                "e6a72ad11ab22d03b1cf434b237bf0fff9c145bf",
+                &source_patch,
+            )
+            .merged(&swarm, swarm_sha, &swarm_patch)
+            .blob(
+                "origin/main",
+                CARGO_LOCK,
+                "1111111111111111111111111111111111111111",
+            )
+            .blob(
+                "swarm/main",
+                CARGO_LOCK,
+                "2222222222222222222222222222222222222222",
+            );
+        let entries = vec![entry(
+            TransitionDisposition::TreeEquivalent,
+            &[(swarm.as_str(), swarm_sha)],
+        )];
+        let error = derive_authority(&port, Path::new("."), &refs(), &entries)
+            .expect_err("differing resulting blobs must not be accepted as tree_equivalent");
+        assert!(
+            format!("{error:#}").contains("the resulting blobs differ"),
+            "unexpected error: {error:#}"
+        );
+    }
+
+    /// Adding `tree_equivalent` must not soften `equivalent`. `equivalent` still
+    /// decides on patch identity alone: identical resulting blobs do not rescue
+    /// differing patches, and it never consults blob evidence at all.
+    #[test]
+    fn equivalent_behaviour_is_unchanged_by_tree_equivalent() -> Result<()> {
+        let source_patch = section(CARGO_LOCK, "1.52.3", "1.53.0", "tokio");
+        let swarm_patch = section(CARGO_LOCK, "1.50.0", "1.53.0", "tokio");
+        let converged = "9f2c1b6a0d4e5f708192a3b4c5d6e7f809a1b2c3";
+        let swarm = format!("{SWARM}#269");
+        let swarm_sha = "ba4aeaf78cb17f980f1da05d24d9638033b95f68";
+
+        // Identical resulting blobs, different patches: still rejected.
+        let port = StubPort::new()
+            .merged(
+                &format!("{SOURCE}#657"),
+                "e6a72ad11ab22d03b1cf434b237bf0fff9c145bf",
+                &source_patch,
+            )
+            .merged(&swarm, swarm_sha, &swarm_patch)
+            .blob("origin/main", CARGO_LOCK, converged)
+            .blob("swarm/main", CARGO_LOCK, converged);
+        let entries = vec![entry(
+            TransitionDisposition::Equivalent,
+            &[(swarm.as_str(), swarm_sha)],
+        )];
+        let error = derive_authority(&port, Path::new("."), &refs(), &entries)
+            .expect_err("equivalent must still require matching patch ids");
+        assert!(
+            format!("{error:#}").contains("patch ids differ"),
+            "unexpected error: {error:#}"
+        );
+
+        // Matching patches: still accepted, and with no blobs recorded at all,
+        // which proves `equivalent` did not start depending on blob evidence.
+        let matching = StubPort::new()
+            .merged(
+                &format!("{SOURCE}#657"),
+                "e6a72ad11ab22d03b1cf434b237bf0fff9c145bf",
+                &source_patch,
+            )
+            .merged(&swarm, swarm_sha, &source_patch);
+        let authority = derive_authority(&matching, Path::new("."), &refs(), &entries)?;
+        let receipt = authority
+            .two_sided
+            .get(CARGO_LOCK)
+            .context("equivalent must still grant two-sided authority")?;
+        assert_eq!(receipt.disposition, TransitionDisposition::Equivalent);
         Ok(())
     }
 
