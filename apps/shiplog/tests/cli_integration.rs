@@ -5815,6 +5815,9 @@ fn seed_journal_list_events(path: &Path) {
 fn quick_add_defaults_the_entry_date_to_today() {
     let tmp = TempDir::new().unwrap();
 
+    // Bracket the run so a UTC midnight rollover mid-command cannot flake the
+    // assertion: the entry must carry whichever UTC day the command observed.
+    let before = Utc::now().date_naive();
     shiplog_cmd()
         .current_dir(tmp.path())
         .args(["add", "Shipped the billing retry path"])
@@ -5822,19 +5825,26 @@ fn quick_add_defaults_the_entry_date_to_today() {
         .success()
         .stdout(predicate::str::contains("Added manual event:"))
         .stdout(predicate::str::contains("shiplog update"));
+    let after = Utc::now().date_naive();
 
-    let today = Utc::now().date_naive();
     let file: ManualEventsFile = serde_yaml::from_str(
         &std::fs::read_to_string(tmp.path().join("manual_events.yaml")).unwrap(),
     )
     .unwrap();
     assert_eq!(file.events.len(), 1);
     let entry = &file.events[0];
-    assert_eq!(entry.date, ManualDate::Single(today));
+
+    let ManualDate::Single(recorded) = entry.date else {
+        panic!("quick add must record a single date, got {:?}", entry.date);
+    };
+    assert!(
+        recorded == before || recorded == after,
+        "quick add recorded {recorded}, expected the command's UTC day ({before} or {after})"
+    );
     assert_eq!(entry.title, "Shipped the billing retry path");
     assert_eq!(
         entry.id,
-        format!("manual-{today}-shipped-the-billing-retry-path")
+        format!("manual-{recorded}-shipped-the-billing-retry-path")
     );
 }
 
