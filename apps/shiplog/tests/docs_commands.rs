@@ -185,9 +185,16 @@ fn changelog_curates_0_10_as_source_ergonomics_release_notes() {
         .unwrap_or_else(|err| panic!("read {}: {err}", doc_path.display()));
 
     let unreleased = section_between(&doc, "## [Unreleased]", "## [0.11.0]");
+    // Either the post-release-cut marker or real Keep a Changelog subsections.
+    // Pinning this to the empty marker would make the section unwritable, so
+    // work landing after a release cut could not be recorded at all.
+    let empty = unreleased.contains("No unreleased changes.");
+    let curated = ["### Added", "### Changed", "### Fixed", "### Removed"]
+        .iter()
+        .any(|heading| unreleased.contains(heading));
     assert!(
-        unreleased.contains("No unreleased changes."),
-        "Unreleased should be empty after the 0.11.0 release cut"
+        empty ^ curated,
+        "Unreleased should be either the empty marker or curated subsections, not both or neither"
     );
     assert!(
         !unreleased.contains("#424")

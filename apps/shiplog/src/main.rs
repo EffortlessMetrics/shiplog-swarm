@@ -2370,6 +2370,11 @@ enum WindowLabel {
 
 const CONFIG_FILENAME: &str = "shiplog.toml";
 const MANUAL_EVENTS_FILENAME: &str = "manual_events.yaml";
+/// Identity placeholder written by the `init`/`start` scaffold. It is a
+/// prompt to the user, never a real attribution, so setup readiness reports it
+/// as a caveat until it is replaced. Shared with the scaffold template so the
+/// two cannot drift.
+const SCAFFOLD_USER_PLACEHOLDER: &str = "Your Name";
 const CURRENT_CONFIG_VERSION: i64 = 1;
 const SOURCE_FAILURES_FILENAME: &str = "source.failures.json";
 const SOURCE_FAILURES_SCHEMA_VERSION: u8 = 1;
@@ -7245,6 +7250,7 @@ fn render_init_config_with_git_repo(selected: &[InitSource], git_repo: &str) -> 
     let json = init_source_enabled(selected, InitSource::Json);
     let manual = init_source_enabled(selected, InitSource::Manual);
     let git_repo = toml_basic_string(git_repo);
+    let user = SCAFFOLD_USER_PLACEHOLDER;
 
     format!(
         r#"# shiplog local configuration.
@@ -7267,7 +7273,8 @@ include_reviews = true
 preset = "last-6-months"
 
 [user]
-label = "Your Name"
+# Replace this with how you want to be credited in the packet.
+label = "{user}"
 
 [sources.github]
 # GitHub auth uses environment credentials or an authenticated gh CLI session.
@@ -7318,7 +7325,7 @@ coverage = "./coverage.manifest.json"
 [sources.manual]
 enabled = {manual}
 events = "./manual_events.yaml"
-user = "Your Name"
+user = "{user}"
 
 [redaction]
 # Set SHIPLOG_REDACT_KEY before manager or public share rendering.

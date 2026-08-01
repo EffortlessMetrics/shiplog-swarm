@@ -7,7 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-No unreleased changes.
+### Added
+
+- Added an `Identity` setup readiness item so `doctor --setup` reports when
+  `user.label` or `sources.manual.user` is still the scaffold placeholder.
+  Those fields are not inert: `sources.manual.user` becomes the actor on every
+  manual event and the `user` recorded in `coverage.manifest.json`. The item is
+  a caveat rather than a blocker, so collection stays available while the gap
+  is stated.
+
+### Fixed
+
+- Fixed `shiplog add "<title>"` failing with `journal add requires --date or
+  --start/--end`. The quick-add date now defaults to today, as the flag help
+  and the 0.11.0 release notes already described. An explicit `--date` still
+  wins, and `journal add` keeps its stricter contract.
+- Fixed the `--last-6-months` window excluding work recorded today. `until` is
+  exclusive, but the preset anchored it on today, so a note added through
+  `shiplog add` was never collected by the very next `shiplog update` and the
+  packet reported it as missing evidence.
 
 ## [0.11.0] - 2026-07-11
 

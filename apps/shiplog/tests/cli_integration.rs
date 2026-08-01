@@ -7149,6 +7149,71 @@ events = "./manual_events.yaml"
     Ok(())
 }
 
+/// The scaffold seeds the identity fields with a placeholder that is not inert:
+/// `sources.manual.user` becomes the actor on every manual event and the `user`
+/// in `coverage.manifest.json`, and `user.label` titles the packet. Setup
+/// readiness has to say so, or the first packet ships attributed to "Your Name".
+#[test]
+fn doctor_setup_reports_the_scaffold_identity_placeholder_as_a_caveat() -> CliTestResult {
+    let tmp = TempDir::new()?;
+
+    shiplog_cmd()
+        .current_dir(tmp.path())
+        .args(["start", "--yes"])
+        .assert()
+        .success();
+
+    let assert = shiplog_cmd()
+        .current_dir(tmp.path())
+        .args(["doctor", "--setup"])
+        .assert()
+        .stdout(predicate::str::contains("Identity"))
+        .stdout(predicate::str::contains("scaffold placeholder"))
+        .stdout(predicate::str::contains("Set your identity"));
+    let stdout = String::from_utf8(assert.get_output().stdout.clone())?;
+
+    assert!(
+        stdout.contains("user.label") && stdout.contains("sources.manual.user"),
+        "both scaffolded identity fields should be named. stdout:\n{stdout}"
+    );
+    assert!(
+        !tmp.path().join("out").exists(),
+        "doctor --setup should not write run artifacts"
+    );
+    Ok(())
+}
+
+/// Once the placeholder is replaced the caveat clears and states the attribution.
+#[test]
+fn doctor_setup_reports_a_replaced_identity_as_ready() -> CliTestResult {
+    let tmp = TempDir::new()?;
+
+    shiplog_cmd()
+        .current_dir(tmp.path())
+        .args(["start", "--yes"])
+        .assert()
+        .success();
+
+    let config_path = tmp.path().join("shiplog.toml");
+    let config = std::fs::read_to_string(&config_path)?.replace("Your Name", "Ada Lovelace");
+    std::fs::write(&config_path, config)?;
+
+    let assert = shiplog_cmd()
+        .current_dir(tmp.path())
+        .args(["doctor", "--setup"])
+        .assert()
+        .stdout(predicate::str::contains(
+            "packet attributed to Ada Lovelace",
+        ));
+    let stdout = String::from_utf8(assert.get_output().stdout.clone())?;
+
+    assert!(
+        !stdout.contains("scaffold placeholder"),
+        "a replaced identity should not be reported as a placeholder. stdout:\n{stdout}"
+    );
+    Ok(())
+}
+
 #[test]
 fn doctor_setup_reports_malformed_manual_as_read_only_setup_block() -> CliTestResult {
     let tmp = TempDir::new()?;
