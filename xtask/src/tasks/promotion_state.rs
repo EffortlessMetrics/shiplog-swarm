@@ -48,6 +48,13 @@ pub struct PromotionState {
 pub struct Transition {
     pub source_pr: String,
     pub source_merge_sha: String,
+    /// Exact source and swarm commits whose trees this receipt describes.
+    /// Empty values are accepted only for consumed legacy receipts; active
+    /// receipts fail closed during structural validation.
+    #[serde(default)]
+    pub source_target: String,
+    #[serde(default)]
+    pub swarm_target: String,
     /// The promotion that reconciled this receipt. While empty the receipt is
     /// active; once set it is history and grants nothing.
     #[serde(default)]
@@ -84,6 +91,27 @@ pub struct TransitionPath {
     /// steps that continue the source history.
     #[serde(default)]
     pub swarm_chain: Vec<String>,
+    /// Complete source-side tree entry at `Transition::source_target`.
+    /// `None` records that the path was absent at that exact target.
+    #[serde(default)]
+    pub source_tree_entry: Option<TreeEntry>,
+    /// Complete swarm-side tree entry at `Transition::swarm_target`.
+    /// `None` records that the path was absent at that exact target.
+    #[serde(default)]
+    pub swarm_tree_entry: Option<TreeEntry>,
+}
+
+/// The complete Git tree entry persisted by a transition receipt.
+///
+/// Mode and object type are part of the identity: a symlink, executable file,
+/// gitlink, and regular file must not be conflated merely because they share
+/// an object id. Absence is represented by the surrounding `Option`.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TreeEntry {
+    pub mode: String,
+    pub object_type: String,
+    pub oid: String,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
@@ -339,6 +367,16 @@ fn validate_transitions(transitions: &[Transition]) -> Result<()> {
                 }
             }
         }
+        if entry.consumed_by.is_empty() {
+            if entry.source_target.is_empty() || entry.swarm_target.is_empty() {
+                bail!(
+                    "active transition {} must record exact source_target and swarm_target",
+                    entry.source_pr
+                );
+            }
+            validate_full_sha("transition.source_target", &entry.source_target)?;
+            validate_full_sha("transition.swarm_target", &entry.swarm_target)?;
+        }
     }
     Ok(())
 }
@@ -569,6 +607,8 @@ disposition = "equivalent"
 [[transition]]
 source_pr = "EffortlessMetrics/shiplog#666"
 source_merge_sha = "d88d59a1a5af338537e35ff98b8ddda14d4673cf"
+source_target = "1111111111111111111111111111111111111111"
+swarm_target = "2222222222222222222222222222222222222222"
 swarm_merge_sha = { "EffortlessMetrics/shiplog-swarm#274" = "1ca35e97ba506062376e6f78b6633003e25db963" }
 [[transition.path]]
 path = "xtask/tests/cli.rs"
@@ -642,6 +682,46 @@ disposition = "missing_in_swarm"
         );
     }
 
+    #[test]
+    fn active_transition_requires_exact_target_bindings() {
+        let error = manifest_with_transition(
+            r#"
+[[transition]]
+source_pr = "EffortlessMetrics/shiplog#666"
+source_merge_sha = "d88d59a1a5af338537e35ff98b8ddda14d4673cf"
+[[transition.path]]
+path = "AGENTS.md"
+disposition = "missing_in_swarm"
+"#,
+        )
+        .expect_err("an active receipt without exact targets must fail closed");
+        assert!(
+            format!("{error:#}").contains("must record exact source_target and swarm_target"),
+            "unexpected error: {error:#}"
+        );
+    }
+
+    #[test]
+    fn consumed_legacy_transition_remains_historical() -> Result<()> {
+        let state = manifest_with_transition(
+            r#"
+[[transition]]
+source_pr = "EffortlessMetrics/shiplog#666"
+source_merge_sha = "d88d59a1a5af338537e35ff98b8ddda14d4673cf"
+consumed_by = "EffortlessMetrics/shiplog#655"
+[[transition.path]]
+path = "AGENTS.md"
+disposition = "missing_in_swarm"
+"#,
+        )?;
+        assert_eq!(
+            state.transition[0].consumed_by(),
+            Some("EffortlessMetrics/shiplog#655")
+        );
+        assert!(state.transition[0].source_target.is_empty());
+        Ok(())
+    }
+
     /// Two dispositions for one path would make the authority it grants
     /// ambiguous.
     #[test]
@@ -675,6 +755,8 @@ disposition = "conflicting"
 [[transition]]
 source_pr = "EffortlessMetrics/shiplog#666"
 source_merge_sha = "d88d59a1a5af338537e35ff98b8ddda14d4673cf"
+source_target = "1111111111111111111111111111111111111111"
+swarm_target = "2222222222222222222222222222222222222222"
 swarm_merge_sha = { "EffortlessMetrics/shiplog-swarm#274" = "1ca35e97ba506062376e6f78b6633003e25db963" }
 [[transition.path]]
 path = "xtask/src/tasks/check_goals.rs"
