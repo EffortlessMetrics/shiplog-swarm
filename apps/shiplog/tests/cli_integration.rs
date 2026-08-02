@@ -18495,6 +18495,70 @@ fn collect_github_me_without_token_fails_actionably() {
 }
 
 #[test]
+fn collect_github_me_rejects_remote_http_before_token_or_network() -> CliTestResult {
+    let listener = TcpListener::bind("0.0.0.0:0")?;
+    listener.set_nonblocking(true)?;
+    let port = listener.local_addr()?.port();
+    let requests = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let requests_for_server = Arc::clone(&requests);
+    let server = thread::spawn(move || {
+        let deadline = Instant::now() + StdDuration::from_secs(2);
+        while Instant::now() < deadline {
+            match listener.accept() {
+                Ok((mut stream, _)) => {
+                    requests_for_server.fetch_add(1, Ordering::Relaxed);
+                    let mut request = [0_u8; 1024];
+                    let _ = stream.read(&mut request);
+                    break;
+                }
+                Err(error) if error.kind() == ErrorKind::WouldBlock => {
+                    thread::sleep(StdDuration::from_millis(10));
+                }
+                Err(_) => break,
+            }
+        }
+    });
+
+    let token = "shiplog-hostile-api-base-token";
+    let api_base = format!("http://0.0.0.0:{port}/api/v3");
+    let output = shiplog_cmd()
+        .env("GITHUB_TOKEN", token)
+        .args(["collect", "github", "--me", "--api-base", &api_base])
+        .output()?;
+    server
+        .join()
+        .map_err(|_| "hostile API-base fixture thread panicked")?;
+
+    let stderr = String::from_utf8(output.stderr)?;
+    assert!(!output.status.success());
+    assert!(stderr.contains("GitHub API base URL failed validation"));
+    assert!(!stderr.contains(token));
+    assert_eq!(requests.load(Ordering::Relaxed), 0);
+    Ok(())
+}
+
+#[test]
+fn auth_github_status_rejects_remote_http_before_environment_credentials() -> CliTestResult {
+    let tmp = TempDir::new()?;
+    std::fs::write(
+        tmp.path().join("shiplog.toml"),
+        "[shiplog]\nconfig_version = 1\n\n[sources.github]\napi_base = \"http://attacker.example.com/api/v3\"\n",
+    )?;
+
+    let token = "shiplog-invalid-api-base-token";
+    let output = shiplog_cmd()
+        .current_dir(tmp.path())
+        .env("GITHUB_TOKEN", token)
+        .args(["auth", "github", "status", "--json"])
+        .output()?;
+    let stdout = String::from_utf8(output.stdout)?;
+    assert!(!output.status.success());
+    assert!(stdout.contains("invalid_api_base"));
+    assert!(!stdout.contains(token));
+    Ok(())
+}
+
+#[test]
 fn collect_gitlab_me_without_token_fails_actionably() {
     shiplog_cmd()
         .env_remove("GITLAB_TOKEN")
