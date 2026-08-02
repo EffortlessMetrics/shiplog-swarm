@@ -1689,8 +1689,6 @@ fn file_tree_manifest(root: &Path) -> Vec<(String, u64, Option<std::time::System
 enum FakeGhAuth {
     /// `gh` is logged in and hands back a token.
     ///
-    /// Only the `#[cfg(not(windows))]` credential-fallback test needs this.
-    #[cfg_attr(windows, allow(dead_code))]
     LoggedIn,
     /// `gh` exists but has no session, so `gh auth status` exits non-zero.
     ///
@@ -1711,7 +1709,8 @@ fn install_fake_gh(tmp: &Path, auth: FakeGhAuth) -> anyhow::Result<PathBuf> {
     let script = match auth {
         FakeGhAuth::LoggedIn => {
             r#"@echo off
-if "%2"=="token" (
+if defined SHIPLOG_FAKE_GH_LOG >>"%SHIPLOG_FAKE_GH_LOG%" echo fake-gh %~1 %~2
+if /I "%~2"=="token" (
   echo shiplog-gh-secret
 ) else (
   echo {"hosts":{"github.com":[{"user":"octocat"}],"127.0.0.1":[{"user":"octocat"}]}}
@@ -1721,6 +1720,7 @@ exit /b 0
         }
         FakeGhAuth::LoggedOut => {
             r#"@echo off
+if defined SHIPLOG_FAKE_GH_LOG >>"%SHIPLOG_FAKE_GH_LOG%" echo fake-gh %~1 %~2
 exit /b 1
 "#
         }
@@ -1729,6 +1729,7 @@ exit /b 1
     let script = match auth {
         FakeGhAuth::LoggedIn => {
             r##"#!/bin/sh
+if [ -n "${SHIPLOG_FAKE_GH_LOG:-}" ]; then printf '%s\n' "$*" >> "$SHIPLOG_FAKE_GH_LOG"; fi
 case "$*" in
   *"auth token"*) printf '%s\n' 'shiplog-gh-secret' ;;
   *) printf '%s\n' '{"hosts":{"github.com":[{"user":"octocat"}],"127.0.0.1":[{"user":"octocat"}]}}' ;;
@@ -1737,6 +1738,7 @@ esac
         }
         FakeGhAuth::LoggedOut => {
             r##"#!/bin/sh
+if [ -n "${SHIPLOG_FAKE_GH_LOG:-}" ]; then printf '%s\n' "$*" >> "$SHIPLOG_FAKE_GH_LOG"; fi
 exit 1
 "##
         }
@@ -1751,6 +1753,7 @@ exit 1
     Ok(bin_dir)
 }
 
+#[cfg(not(windows))]
 fn path_with_prepend(prepend: &Path) -> anyhow::Result<String> {
     let mut paths = vec![prepend.to_path_buf()];
     if let Some(existing) = std::env::var_os("PATH") {
@@ -1759,7 +1762,31 @@ fn path_with_prepend(prepend: &Path) -> anyhow::Result<String> {
     Ok(std::env::join_paths(paths)?.to_string_lossy().into_owned())
 }
 
-#[cfg(not(windows))]
+fn isolated_fake_gh_path(bin_dir: &Path) -> anyhow::Result<String> {
+    #[cfg(windows)]
+    {
+        let system_root = std::env::var_os("SystemRoot")
+            .context("Windows tests require SystemRoot to locate cmd.exe")?;
+        let paths = [
+            bin_dir.to_path_buf(),
+            PathBuf::from(&system_root).join("System32"),
+            PathBuf::from(system_root).join("System"),
+        ];
+        Ok(std::env::join_paths(paths)?.to_string_lossy().into_owned())
+    }
+
+    #[cfg(not(windows))]
+    {
+        path_with_prepend(bin_dir)
+    }
+}
+
+fn configure_fake_gh_command(command: &mut Command, bin_dir: &Path) {
+    #[cfg(windows)]
+    command.env("SHIPLOG_TEST_GH_COMMAND", bin_dir.join("gh.cmd"));
+    let _ = (command, bin_dir);
+}
+
 fn assert_tree_does_not_contain(root: &Path, forbidden: &str) -> anyhow::Result<()> {
     fn visit(path: &Path, forbidden: &str) -> anyhow::Result<()> {
         for entry in std::fs::read_dir(path)? {
@@ -4123,7 +4150,6 @@ fn cli_target_has_query_param(target: &str, key: &str, value: &str) -> bool {
         .unwrap_or(false)
 }
 
-#[cfg(not(windows))]
 #[test]
 fn github_auth_cli_fallback_collects_without_token_and_keeps_secret_out_of_artifacts()
 -> CliTestResult {
@@ -4131,7 +4157,9 @@ fn github_auth_cli_fallback_collects_without_token_and_keeps_secret_out_of_artif
     let out = tmp.path().join("out");
     let server = RecordedGithubCliServer::start()?;
     let fake_gh = install_fake_gh(tmp.path(), FakeGhAuth::LoggedIn)?;
-    let path = path_with_prepend(&fake_gh)?;
+    let fake_gh_log_dir = TempDir::new()?;
+    let fake_gh_log = fake_gh_log_dir.path().join("fake-gh.log");
+    let path = isolated_fake_gh_path(&fake_gh)?;
     let sentinel = "shiplog-gh-secret";
     std::fs::write(
         tmp.path().join("shiplog.toml"),
@@ -4156,13 +4184,15 @@ enabled = false
         ),
     )?;
 
-    let auth_assert = shiplog_cmd()
+    let mut auth_command = shiplog_cmd();
+    auth_command
         .current_dir(tmp.path())
         .env_remove("GH_TOKEN")
         .env_remove("GITHUB_TOKEN")
         .env_remove("GH_ENTERPRISE_TOKEN")
         .env_remove("GITHUB_ENTERPRISE_TOKEN")
         .env("PATH", &path)
+        .env("SHIPLOG_FAKE_GH_LOG", &fake_gh_log)
         .env("GH_CONFIG_DIR", tmp.path().join("gh-config"))
         .args([
             "auth",
@@ -4171,19 +4201,21 @@ enabled = false
             "--config",
             tmp.path().join("shiplog.toml").to_str().unwrap(),
             "--json",
-        ])
-        .assert()
-        .success();
+        ]);
+    configure_fake_gh_command(&mut auth_command, &fake_gh);
+    let auth_assert = auth_command.assert().success();
     let auth_json: serde_json::Value = serde_json::from_slice(&auth_assert.get_output().stdout)?;
     assert_eq!(auth_json["source"], "gh_cli");
 
-    let assert = shiplog_cmd()
+    let mut intake_command = shiplog_cmd();
+    intake_command
         .current_dir(tmp.path())
         .env_remove("GH_TOKEN")
         .env_remove("GITHUB_TOKEN")
         .env_remove("GH_ENTERPRISE_TOKEN")
         .env_remove("GITHUB_ENTERPRISE_TOKEN")
         .env("PATH", path)
+        .env("SHIPLOG_FAKE_GH_LOG", &fake_gh_log)
         .env("GH_CONFIG_DIR", tmp.path().join("gh-config"))
         .args([
             "intake",
@@ -4196,9 +4228,9 @@ enabled = false
             "2026-02-01",
             "--until",
             "2026-03-01",
-        ])
-        .assert()
-        .success();
+        ]);
+    configure_fake_gh_command(&mut intake_command, &fake_gh);
+    let assert = intake_command.assert().success();
     let stdout = String::from_utf8(assert.get_output().stdout.clone())?;
     let stderr = String::from_utf8(assert.get_output().stderr.clone())?;
     assert!(!stdout.contains(sentinel));
@@ -4214,13 +4246,19 @@ enabled = false
     assert_tree_does_not_contain(&out, sentinel)?;
     let config = std::fs::read_to_string(tmp.path().join("shiplog.toml"))?;
     assert!(!config.contains(sentinel));
-    Ok(())
-}
-
-#[cfg(windows)]
-#[test]
-fn github_auth_cli_fallback_collects_without_token_and_keeps_secret_out_of_artifacts()
--> CliTestResult {
+    let fake_gh_invocations = std::fs::read_to_string(&fake_gh_log)?;
+    assert!(
+        fake_gh_invocations
+            .lines()
+            .any(|line| line.trim_end_matches('\r') == "fake-gh auth status"),
+        "the isolated gh fixture must receive auth status: {fake_gh_invocations:?}"
+    );
+    assert!(
+        fake_gh_invocations
+            .lines()
+            .any(|line| line.trim_end_matches('\r') == "fake-gh auth token"),
+        "the isolated gh fixture must receive auth token: {fake_gh_invocations:?}"
+    );
     Ok(())
 }
 
@@ -7757,30 +7795,36 @@ user = "octo"
     // developer's real session, which reports `gh_logged_out` or `gh_timed_out`
     // depending on how quickly the real binary answers.
     let fake_gh = install_fake_gh(tmp.path(), FakeGhAuth::LoggedOut)?;
-    let path = path_with_prepend(&fake_gh)?;
+    let fake_gh_log_dir = TempDir::new()?;
+    let fake_gh_log = fake_gh_log_dir.path().join("fake-gh.log");
+    let path = isolated_fake_gh_path(&fake_gh)?;
 
     let before = file_tree_manifest(tmp.path());
-    let doctor_assert = shiplog_cmd()
+    let mut doctor_command = shiplog_cmd();
+    doctor_command
         .current_dir(tmp.path())
         .env_remove("GITHUB_TOKEN")
         .env("PATH", &path)
+        .env("SHIPLOG_FAKE_GH_LOG", &fake_gh_log)
         .env("GH_CONFIG_DIR", tmp.path().join("gh-config"))
         .env_remove("SHIPLOG_REDACT_KEY")
-        .args(["doctor", "--setup", "--json"])
-        .assert()
-        .failure();
+        .args(["doctor", "--setup", "--json"]);
+    configure_fake_gh_command(&mut doctor_command, &fake_gh);
+    let doctor_assert = doctor_command.assert().failure();
     let doctor_stdout = String::from_utf8(doctor_assert.get_output().stdout.clone())?;
     let doctor_json: serde_json::Value = serde_json::from_str(&doctor_stdout)?;
 
-    let sources_assert = shiplog_cmd()
+    let mut sources_command = shiplog_cmd();
+    sources_command
         .current_dir(tmp.path())
         .env_remove("GITHUB_TOKEN")
         .env("PATH", &path)
+        .env("SHIPLOG_FAKE_GH_LOG", &fake_gh_log)
         .env("GH_CONFIG_DIR", tmp.path().join("gh-config"))
         .env_remove("SHIPLOG_REDACT_KEY")
-        .args(["sources", "status"])
-        .assert()
-        .failure();
+        .args(["sources", "status"]);
+    configure_fake_gh_command(&mut sources_command, &fake_gh);
+    let sources_assert = sources_command.assert().failure();
     let sources_stdout = String::from_utf8(sources_assert.get_output().stdout.clone())?;
     let after = file_tree_manifest(tmp.path());
     assert_eq!(
@@ -7838,6 +7882,16 @@ user = "octo"
     assert!(
         !sources_stdout.contains("Redaction key") && !sources_stdout.contains("SHIPLOG_REDACT_KEY"),
         "sources status should not include redaction/share credential noise"
+    );
+
+    let fake_gh_invocations = std::fs::read_to_string(&fake_gh_log)?;
+    let status_invocations = fake_gh_invocations
+        .lines()
+        .filter(|line| line.trim_end_matches('\r') == "fake-gh auth status")
+        .count();
+    assert!(
+        status_invocations >= 2,
+        "both projections must invoke the isolated gh fixture: {fake_gh_invocations:?}"
     );
 
     Ok(())

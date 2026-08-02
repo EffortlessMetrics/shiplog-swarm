@@ -307,8 +307,7 @@ fn resolve_from_gh(host: String) -> GithubAuthResolution {
 }
 
 fn run_gh(arguments: &[&str]) -> Result<Output, GithubAuthReason> {
-    let mut child = Command::new("gh")
-        .args(arguments)
+    let mut child = gh_command(arguments)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -340,6 +339,25 @@ fn run_gh(arguments: &[&str]) -> Result<Output, GithubAuthReason> {
             }
         }
     }
+}
+
+fn gh_command(arguments: &[&str]) -> Command {
+    #[cfg(all(windows, debug_assertions))]
+    if let Some(test_command) = std::env::var_os("SHIPLOG_TEST_GH_COMMAND") {
+        // Windows does not execute batch files through Command::new("gh").
+        // Keep this explicit debug-test seam so the normal binary always
+        // resolves the real GitHub CLI from PATH.
+        let mut command = Command::new("cmd.exe");
+        command
+            .args(["/D", "/S", "/C"])
+            .arg(test_command)
+            .args(arguments);
+        return command;
+    }
+
+    let mut command = Command::new("gh");
+    command.args(arguments);
+    command
 }
 
 fn terminate_child(child: &mut Child) {
