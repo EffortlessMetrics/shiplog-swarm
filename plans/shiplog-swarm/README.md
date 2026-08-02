@@ -11,6 +11,7 @@ Linked artifacts:
 - ADR: [`SHIPLOG-ADR-0011`](../../docs/adr/SHIPLOG-ADR-0011-swarm-is-dev-landing-zone-not-release-surface.md)
 - Plan: [`implementation-plan.md`](./implementation-plan.md)
 - Promotion runbook: [`promotion-runbook.md`](./promotion-runbook.md)
+- Bounded transition decisions: [`transition-decisions.md`](./transition-decisions.md)
 - Current promotion manifest: [`promotion-state.toml`](./promotion-state.toml)
   (generated view: [`current-promotion.md`](./current-promotion.md))
 
