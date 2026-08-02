@@ -15,7 +15,7 @@
 //! * **Bounded lifetime.** An entry grants nothing once `consumed_by` names the
 //!   promotion that reconciled it. Entries are kept as history, not authority.
 //! * **Narrow authority.** Only a resolved receipt (`equivalent`,
-//!   `tree_equivalent`, `superseded_in_swarm`) grants anything, and only
+//!   `dependency_equivalent`, `tree_equivalent`, `superseded_in_swarm`) grants anything, and only
 //!   permission for the overlay
 //!   to keep swarm content on a path both sides changed, because swarm
 //!   demonstrably already carries or supersedes the source change.
@@ -27,8 +27,9 @@
 //!
 //! Evidence is checked rather than assumed: the recorded merge SHAs must belong
 //! to merged PRs and be reachable from the relevant branch, `equivalent` must
-//! agree under `git patch-id --stable` for that path, `tree_equivalent` must
-//! resolve to the same blob at that path on both promoted refs, and
+//! agree under `git patch-id --stable` for that path, `dependency_equivalent`
+//! must agree on the exact Cargo.lock package-version transitions,
+//! `tree_equivalent` must resolve to the same blob at that path on both promoted refs, and
 //! `superseded_in_swarm` must present a contiguous version chain starting where
 //! the source change started.
 //!
@@ -273,6 +274,28 @@ fn check_path(
             if source_id != swarm_id {
                 bail!(
                     "claimed equivalent but patch ids differ: source {source_id}, swarm {swarm_id}"
+                );
+            }
+        }
+        TransitionDisposition::DependencyEquivalent => {
+            if path.path != "Cargo.lock" {
+                bail!(
+                    "dependency_equivalent is only valid for Cargo.lock, not {}",
+                    path.path
+                );
+            }
+            if path.swarm_chain.len() != 1 {
+                bail!("dependency_equivalent must name exactly one swarm PR, not a chain");
+            }
+            let swarm_section =
+                patch_for_path(&swarm_patches[0], &path.path).with_context(|| {
+                    format!("swarm PR {} does not touch the path", path.swarm_chain[0])
+                })?;
+            let source_transitions = lock_transitions(&source_section);
+            let swarm_transitions = lock_transitions(&swarm_section);
+            if source_transitions.is_empty() || source_transitions != swarm_transitions {
+                bail!(
+                    "claimed dependency_equivalent but Cargo.lock package-version transitions differ: source {source_transitions:?}, swarm {swarm_transitions:?}"
                 );
             }
         }
@@ -1271,6 +1294,53 @@ mod tests {
             system_patch_id(&source_patch)?,
             system_patch_id(&elsewhere)?,
             "patch identity must include the file it applies to"
+        );
+        Ok(())
+    }
+
+    /// Dependency bumps can have different raw patch identities when the two
+    /// lockfiles carry different surrounding package resolutions. The exact
+    /// package-version transition remains the narrower evidence claim.
+    #[test]
+    fn dependency_equivalent_accepts_matching_lock_version_transitions() -> Result<()> {
+        let source_patch = section(CARGO_LOCK, "1.52.3", "1.53.0", "tokio");
+        let swarm_patch = source_patch.replace("[[package]]", "[[package]]\n# swarm context");
+        let swarm = format!("{SWARM}#269");
+        let swarm_sha = "ba4aeaf78cb17f980f1da05d24d9638033b95f68";
+        let port = StubPort::new()
+            .merged(
+                &format!("{SOURCE}#657"),
+                "e6a72ad11ab22d03b1cf434b237bf0fff9c145bf",
+                &source_patch,
+            )
+            .merged(&swarm, swarm_sha, &swarm_patch)
+            .blob(
+                "origin/main",
+                CARGO_LOCK,
+                "9f2c1b6a0d4e5f708192a3b4c5d6e7f809a1b2c3",
+            )
+            .blob(
+                "swarm/main",
+                CARGO_LOCK,
+                "9f2c1b6a0d4e5f708192a3b4c5d6e7f809a1b2c3",
+            );
+        let entries = vec![bind_entries(
+            entry(
+                TransitionDisposition::DependencyEquivalent,
+                &[(swarm.as_str(), swarm_sha)],
+            ),
+            Some(blob_entry("9f2c1b6a0d4e5f708192a3b4c5d6e7f809a1b2c3")),
+            Some(blob_entry("9f2c1b6a0d4e5f708192a3b4c5d6e7f809a1b2c3")),
+        )];
+
+        let authority = derive_authority(&port, Path::new("."), &refs(), &entries)?;
+        assert_eq!(
+            authority
+                .two_sided
+                .get(CARGO_LOCK)
+                .context("dependency equivalence must grant two-sided authority")?
+                .disposition,
+            TransitionDisposition::DependencyEquivalent
         );
         Ok(())
     }

@@ -146,6 +146,14 @@ promotion targets, and differing source/swarm entries. It selects the swarm
 tree entry for that path for this promotion only; it does not create permanent
 source authority or replace `source-only-paths.toml`.
 
+For dependency-only lockfile transitions, use
+`disposition = "dependency_equivalent"`. This is limited to `Cargo.lock` and
+requires one swarm PR whose parsed package `name`/`version` from/to transitions
+match the source PR exactly. It is narrower than whole-patch `equivalent` and
+does not assert that unrelated lockfile resolutions or final blobs are equal;
+those differences still require their own evidence or an explicit bounded
+resolution.
+
 Example shape:
 
 ```toml
