@@ -2981,7 +2981,7 @@ merge-old source-parent another-swarm-head
             .expect_err("a commit whose parent is not the checkpoint's must be rejected");
         let message = error.to_string();
         ensure!(
-            message.contains("is parented on"),
+            message.contains("must have exactly one parent"),
             "unexpected error: {message}"
         );
         Ok(())
