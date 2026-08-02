@@ -36,9 +36,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   other window in shiplog is half-open `[since, until)`, so boundary-date
   commits and issues were counted in two adjacent periods with duplicate event
   ids (#226).
-- Fixed `--api-base` accepting a cleartext GitHub API base. Non-HTTPS bases are
-  now rejected before any token or payload is sent, with loopback hosts still
-  allowed for local mock servers (#234).
+- Fixed GitHub `--api-base` validation so remote cleartext bases are rejected
+  before credential lookup, `gh` probing, token attachment, or payload sending.
+  HTTPS remains required for remote hosts, while loopback HTTP stays available
+  for local mock servers (#234).
 - Fixed `shiplog github activity merge` accepting a recorded `run_ref` that was
   not a single plain path segment, which could resolve outside the intended run
   directory. The merge now fails closed on such a receipt (#261).
