@@ -1228,9 +1228,10 @@ impl OverlayPlan {
 /// Decide what happens to every path that differs between source and swarm.
 ///
 /// Only `policy/source-only-paths.toml` can select source content. A transition
-/// receipt may permit the overlay to keep swarm content on a path both sides
-/// changed, but can never manufacture source authority, which is what preserves
-/// swarm as the product mutation authority.
+/// A resolved transition or an explicit discard decision may permit the overlay
+/// to keep swarm content on a path both sides changed, but can never
+/// manufacture source authority. That preserves swarm as the product mutation
+/// authority while making exceptional source abandonment explicit.
 fn plan_path_resolutions(
     port: &impl PromotePort,
     workspace_root: &Path,
@@ -1254,7 +1255,21 @@ fn plan_path_resolutions(
     for path in differing {
         let touched_by_source = source_changed.contains(path.as_str());
         let touched_by_swarm = swarm_changed.contains(path.as_str());
-        let (effect, basis) = if source_authoritative.contains(path.as_str()) {
+        let (effect, basis) = if let Some(decision) = transition_authority
+            .discard_source
+            .get(path.as_str())
+            .filter(|_| touched_by_source)
+        {
+            (
+                PathEffect::TakeSwarm,
+                ResolutionBasis::DiscardedSource {
+                    source_pr: decision.source_pr.clone(),
+                    decision_receipt: decision.decision_receipt.clone(),
+                    decision_merge_sha: decision.decision_merge_sha.clone(),
+                    reason: decision.reason.clone(),
+                },
+            )
+        } else if source_authoritative.contains(path.as_str()) {
             if touched_by_swarm {
                 (
                     PathEffect::Block,
@@ -1274,20 +1289,6 @@ fn plan_path_resolutions(
                     source_pr: receipt.source_pr.clone(),
                     swarm_chain: receipt.swarm_chain.clone(),
                     disposition: receipt.disposition.to_string(),
-                },
-            )
-        } else if let Some(decision) = transition_authority
-            .discard_source
-            .get(path.as_str())
-            .filter(|_| touched_by_source && !touched_by_swarm)
-        {
-            (
-                PathEffect::TakeSwarm,
-                ResolutionBasis::DiscardedSource {
-                    source_pr: decision.source_pr.clone(),
-                    decision_receipt: decision.decision_receipt.clone(),
-                    decision_merge_sha: decision.decision_merge_sha.clone(),
-                    reason: decision.reason.clone(),
                 },
             )
         } else if touched_by_source && !touched_by_swarm {
@@ -2669,6 +2670,61 @@ merge-old source-parent another-swarm-head
         ensure!(plan.decisions.len() == 1);
         let decision = &plan.decisions[0];
         ensure!(decision.effect == PathEffect::TakeSwarm);
+        ensure!(matches!(
+            decision.basis,
+            ResolutionBasis::DiscardedSource { .. }
+        ));
+        ensure_no_blocked_paths(&plan, &mut Vec::new())?;
+        Ok(())
+    }
+
+    #[test]
+    fn discard_source_resolution_selects_swarm_content_for_two_sided_drift() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let root = dir.path();
+        git_fixture(root, &["init", "--initial-branch=main"])?;
+        git_fixture(root, &["config", "user.email", "test@example.com"])?;
+        git_fixture(root, &["config", "user.name", "Promotion Test"])?;
+        fs::write(root.join("governance.md"), "base\n")?;
+        git_fixture(root, &["add", "-A"])?;
+        git_fixture(root, &["commit", "-m", "base"])?;
+        let base = git_fixture(root, &["rev-parse", "HEAD"])?;
+
+        git_fixture(root, &["switch", "-c", "swarm"])?;
+        fs::write(root.join("governance.md"), "swarm product\n")?;
+        git_fixture(root, &["add", "-A"])?;
+        git_fixture(root, &["commit", "-m", "swarm product change"])?;
+        let swarm_sha = git_fixture(root, &["rev-parse", "HEAD"])?;
+        git_fixture(root, &["switch", "main"])?;
+        fs::write(root.join("governance.md"), "source transition\n")?;
+        git_fixture(root, &["add", "-A"])?;
+        git_fixture(root, &["commit", "-m", "source transition copy"])?;
+        let source_head = git_fixture(root, &["rev-parse", "HEAD"])?;
+
+        let mut authority = super::super::transition::TransitionAuthority::default();
+        authority.discard_source.insert(
+            "governance.md".to_string(),
+            super::super::transition::DiscardSourceDecision {
+                source_pr: "EffortlessMetrics/shiplog#674".to_string(),
+                decision_receipt: "EffortlessMetrics/shiplog-swarm#242".to_string(),
+                decision_merge_sha: "7d0a1b2c3d4e5f60718293a4b5c6d7e8f9a0b1c2".to_string(),
+                reason: "Reviewed swarm state supersedes the source transition copy.".to_string(),
+            },
+        );
+
+        let plan = plan_path_resolutions(
+            &SystemPort,
+            root,
+            &source_head,
+            &swarm_sha,
+            &base,
+            &[],
+            &authority,
+        )?;
+        ensure!(plan.decisions.len() == 1);
+        let decision = &plan.decisions[0];
+        ensure!(decision.effect == PathEffect::TakeSwarm);
+        ensure!(decision.source_changed && decision.swarm_changed);
         ensure!(matches!(
             decision.basis,
             ResolutionBasis::DiscardedSource { .. }
