@@ -129,6 +129,42 @@ land the authorized source change, back-port the exact fix into swarm, and
 re-establish tree alignment before promotion resumes. Emergency authorization
 does not become standing permission for source-side product automation.
 
+## Transition Evidence And Resolution
+
+An active transition receipt records two separate questions for each path:
+
+1. What happened historically? `disposition = "missing_in_swarm"` records that
+   the source PR changed the path and no swarm chain carries that change. It
+   remains blocking evidence by itself.
+2. What is this bounded promotion allowed to do? An exceptional source-side
+   decision may explicitly set `resolution = "discard_source"`.
+
+`discard_source` is valid only with a non-empty `decision_receipt`, its full
+`decision_merge_sha` reachable from the exact swarm target, a human-readable
+`reason`, exact `source_tree_entry` and `swarm_tree_entry` bindings for the
+promotion targets, and differing source/swarm entries. It selects the swarm
+tree entry for that path for this promotion only; it does not create permanent
+source authority or replace `source-only-paths.toml`.
+
+Example shape:
+
+```toml
+[[transition.path]]
+path = "docs/xtask.md"
+disposition = "missing_in_swarm"
+resolution = "discard_source"
+decision_receipt = "EffortlessMetrics/shiplog-swarm#242"
+decision_merge_sha = "<decision-receipt-merge-sha>"
+reason = "Reviewed swarm state supersedes the source transition copy."
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "<source-target-oid>" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "<swarm-target-oid>" }
+```
+
+The promotion planner and overlay must consume this same per-path decision.
+Decision receipts are bounded by the transition entry's `consumed_by`
+promotion and must never be inferred from matching trees, commit subjects, or
+source-only policy.
+
 Verify the role boundary explicitly rather than inferring it from remote names:
 
 ```powershell

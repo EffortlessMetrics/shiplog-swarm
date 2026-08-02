@@ -86,6 +86,22 @@ impl Transition {
 pub struct TransitionPath {
     pub path: String,
     pub disposition: TransitionDisposition,
+    /// The deliberate outcome selected for an exceptional source-side
+    /// divergence. Historical evidence and promotion resolution are kept
+    /// separate so discarding a source change cannot be inferred from a
+    /// generic evidence disposition.
+    #[serde(default)]
+    pub resolution: Option<TransitionResolution>,
+    /// Exact issue or PR receipt that records the human-reviewed decision.
+    #[serde(default)]
+    pub decision_receipt: String,
+    /// Merge SHA of the decision receipt, which must be reachable from the
+    /// exact swarm promotion target before it can grant authority.
+    #[serde(default)]
+    pub decision_merge_sha: String,
+    /// Human-readable reason for the exceptional resolution.
+    #[serde(default)]
+    pub reason: String,
     /// Ordered swarm PRs that carried this path. `equivalent` and
     /// `tree_equivalent` each name exactly one; `superseded_in_swarm` names the
     /// steps that continue the source history.
@@ -129,6 +145,15 @@ pub enum TransitionDisposition {
     MissingInSwarm,
     /// The two sides disagree; promotion must not proceed.
     Conflicting,
+}
+
+/// An explicit, bounded resolution for historical transition evidence.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TransitionResolution {
+    /// Discard the source-side change for this exact path and take the swarm
+    /// tree entry during this bounded promotion.
+    DiscardSource,
 }
 
 impl std::fmt::Display for TransitionDisposition {
@@ -317,6 +342,52 @@ fn validate_transitions(transitions: &[Transition]) -> Result<()> {
                     entry.source_pr,
                     path.path
                 );
+            }
+            match path.resolution {
+                None => {
+                    if !path.decision_receipt.is_empty()
+                        || !path.decision_merge_sha.is_empty()
+                        || !path.reason.is_empty()
+                    {
+                        bail!(
+                            "transition {} path {} has decision metadata without an explicit resolution",
+                            entry.source_pr,
+                            path.path
+                        );
+                    }
+                }
+                Some(TransitionResolution::DiscardSource) => {
+                    if path.disposition != TransitionDisposition::MissingInSwarm {
+                        bail!(
+                            "transition {} path {} discard_source requires missing_in_swarm evidence",
+                            entry.source_pr,
+                            path.path
+                        );
+                    }
+                    if path.decision_receipt.trim().is_empty() {
+                        bail!(
+                            "transition {} path {} discard_source requires decision_receipt",
+                            entry.source_pr,
+                            path.path
+                        );
+                    }
+                    validate_receipt("transition.path.decision_receipt", &path.decision_receipt)?;
+                    validate_full_sha(
+                        "transition.path.decision_merge_sha",
+                        &path.decision_merge_sha,
+                    )?;
+                    if path.reason.trim().is_empty() {
+                        bail!(
+                            "transition {} path {} discard_source requires reason",
+                            entry.source_pr,
+                            path.path
+                        );
+                    }
+                    // `None` is a meaningful exact binding for an absent path.
+                    // The repository-aware transition check below compares both
+                    // options to the selected targets and rejects omitted or
+                    // stale bindings before granting authority.
+                }
             }
             match path.disposition {
                 TransitionDisposition::MissingInSwarm | TransitionDisposition::Conflicting => {
@@ -637,6 +708,57 @@ disposition = "tree_equivalent"
             "unexpected error: {error:#}"
         );
         Ok(())
+    }
+
+    #[test]
+    fn discard_source_requires_bounded_decision_metadata_and_exact_tree_entries() -> Result<()> {
+        let state = manifest_with_transition(
+            r#"
+[[transition]]
+source_pr = "EffortlessMetrics/shiplog#674"
+source_merge_sha = "b31d5f6d9700698b463d8f2b71b9d48a191f433c"
+source_target = "1111111111111111111111111111111111111111"
+swarm_target = "2222222222222222222222222222222222222222"
+[[transition.path]]
+path = "docs/xtask.md"
+disposition = "missing_in_swarm"
+resolution = "discard_source"
+decision_receipt = "EffortlessMetrics/shiplog-swarm#242"
+decision_merge_sha = "7d0a1b2c3d4e5f60718293a4b5c6d7e8f9a0b1c2"
+reason = "The reviewed swarm control-plane copy supersedes the source transition copy for this bounded promotion."
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" }
+"#,
+        )?;
+        let path = &state.transition[0].path[0];
+        assert_eq!(path.resolution, Some(TransitionResolution::DiscardSource));
+        assert_eq!(path.decision_receipt, "EffortlessMetrics/shiplog-swarm#242");
+        Ok(())
+    }
+
+    #[test]
+    fn discard_source_rejects_missing_decision_receipt() {
+        let error = manifest_with_transition(
+            r#"
+[[transition]]
+source_pr = "EffortlessMetrics/shiplog#674"
+source_merge_sha = "b31d5f6d9700698b463d8f2b71b9d48a191f433c"
+source_target = "1111111111111111111111111111111111111111"
+swarm_target = "2222222222222222222222222222222222222222"
+[[transition.path]]
+path = "docs/xtask.md"
+disposition = "missing_in_swarm"
+resolution = "discard_source"
+reason = "A reason without a decision receipt is not bounded authority."
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" }
+"#,
+        )
+        .expect_err("discard_source without a decision receipt must fail closed");
+        assert!(
+            format!("{error:#}").contains("requires decision_receipt"),
+            "unexpected error: {error:#}"
+        );
     }
 
     /// Naming a chain step without recording its merge commit would leave the
