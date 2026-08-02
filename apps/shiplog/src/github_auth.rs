@@ -128,6 +128,17 @@ pub fn resolve(api_base: Option<&str>) -> GithubAuthResolution {
         }
     };
 
+    let api_base = api_base.unwrap_or("https://api.github.com");
+    if shiplog::ingest::github::validate_https_api_base(api_base).is_err() {
+        return GithubAuthResolution::Unavailable(GithubAuthMetadata {
+            source: GithubAuthSource::Unavailable,
+            host,
+            account: None,
+            availability: GithubAuthAvailability::Unavailable,
+            reason: Some(GithubAuthReason::InvalidApiBase),
+        });
+    }
+
     let environment = std::env::vars().collect::<BTreeMap<_, _>>();
     if let Some((source, secret)) = environment_credential(&host, &environment) {
         return GithubAuthResolution::Available(GithubCredential {
