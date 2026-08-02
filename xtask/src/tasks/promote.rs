@@ -762,13 +762,11 @@ fn parse_promotion_checkpoint(
             &["show", "-s", "--format=%P", second_parent],
         )
         .with_context(|| format!("promote: read parents of overlay {second_parent}"))?;
-    let overlay_parent = overlay_parents
-        .split_whitespace()
-        .next()
-        .unwrap_or_default();
-    if overlay_parent != first_parent {
+    let overlay_parents = overlay_parents.split_whitespace().collect::<Vec<_>>();
+    if overlay_parents.as_slice() != [first_parent] {
         bail!(
-            "promote: overlay {second_parent} is parented on {overlay_parent}, not the checkpoint's first parent {first_parent}"
+            "promote: overlay {second_parent} must have exactly one parent {first_parent}, found {}",
+            overlay_parents.join(" ")
         );
     }
     // Overlays produced by #278 predate the resolution-plan trailer. Keep
@@ -1454,11 +1452,6 @@ fn prepare_source_overlay(
             }
         }
         git(&["add", "-A"])?;
-        let staged = git(&["diff", "--cached", "--name-only"])
-            .with_context(|| format!("promote: inspect staged overlay changes for {swarm_sha}"))?;
-        if staged.is_empty() {
-            return Ok(source_head.to_string());
-        }
         let commit_env = [
             ("GIT_AUTHOR_NAME", "shiplog-promote[bot]"),
             (
@@ -1481,9 +1474,12 @@ fn prepare_source_overlay(
         );
         let mut commit_env: Vec<(&str, &str)> = commit_env.to_vec();
         commit_env.extend(env.iter().copied());
+        // The overlay is the transaction checkpoint, not merely a carrier for
+        // changed paths. Preserve it even when source and swarm already have
+        // identical trees.
         port.git_output_with_env(
             overlay_root,
-            &["commit", "--no-gpg-sign", "-m", &message],
+            &["commit", "--allow-empty", "--no-gpg-sign", "-m", &message],
             &commit_env,
         )?;
         let overlay_sha = git(&["rev-parse", "HEAD"])?;
@@ -2627,6 +2623,149 @@ merge-old source-parent another-swarm-head
         ensure!(
             overlay_trailer(&message, OVERLAY_SWARM_TRAILER).as_deref()
                 == Some(fixture.current.as_str())
+        );
+        Ok(())
+    }
+
+    /// An unchanged source/swarm tree still needs a durable overlay checkpoint.
+    /// The isolated planning commit and the later materialized commit must be
+    /// identical so dry-run remains a faithful preview of execution.
+    #[test]
+    fn identical_tree_overlay_is_deterministic_and_reusable() -> Result<()> {
+        let fixture = fixture_git()?;
+        let root = fixture.dir.path();
+        let plan_id = "1234567890abcdef1234567890abcdef12345678";
+
+        let planned = prepare_source_overlay(
+            &SystemPort,
+            root,
+            &fixture.governance,
+            &fixture.governance,
+            &[],
+            plan_id,
+            true,
+        )?;
+        let executed = prepare_source_overlay(
+            &SystemPort,
+            root,
+            &fixture.governance,
+            &fixture.governance,
+            &[],
+            plan_id,
+            false,
+        )?;
+        ensure!(
+            planned.sha == executed.sha,
+            "dry-run and execution must materialize the same empty overlay"
+        );
+        ensure!(
+            executed.sha != fixture.governance,
+            "identical trees still require an overlay checkpoint"
+        );
+        ensure!(
+            git_fixture(root, &["show", "-s", "--format=%P", &executed.sha])? == fixture.governance,
+            "the empty overlay must have the source head as its only parent"
+        );
+        ensure!(
+            git_fixture(
+                root,
+                &[
+                    "diff-tree",
+                    "--no-commit-id",
+                    "--name-only",
+                    "-r",
+                    &executed.sha
+                ],
+            )?
+            .is_empty(),
+            "identical-tree overlay must be empty"
+        );
+
+        let message = git_fixture(root, &["show", "-s", "--format=%B", &executed.sha])?;
+        ensure!(
+            overlay_trailer(&message, OVERLAY_SOURCE_TRAILER).as_deref()
+                == Some(fixture.governance.as_str())
+        );
+        ensure!(
+            overlay_trailer(&message, OVERLAY_SWARM_TRAILER).as_deref()
+                == Some(fixture.governance.as_str())
+        );
+        ensure!(overlay_trailer(&message, OVERLAY_PLAN_TRAILER).as_deref() == Some(plan_id));
+
+        git_fixture(root, &["switch", "--detach", &fixture.governance])?;
+        git_fixture(
+            root,
+            &[
+                "merge",
+                "--no-ff",
+                "-m",
+                "merge(swarm): promote identical tree",
+                &executed.sha,
+            ],
+        )?;
+        let landed = git_fixture(root, &["rev-parse", "HEAD"])?;
+
+        fs::write(root.join("later-source.txt"), "later\n")?;
+        git_fixture(root, &["add", "later-source.txt"])?;
+        git_fixture(root, &["commit", "-m", "chore: source governance (#700)"])?;
+        let later_source_head = git_fixture(root, &["rev-parse", "HEAD"])?;
+        let governance = later_source_head.clone();
+
+        let found = find_latest_promotion_merge(
+            &SystemPort,
+            root,
+            &later_source_head,
+            &fixture.governance,
+            &BTreeSet::from([governance]),
+        )?;
+        ensure!(
+            found == landed,
+            "next planning run must recognize the identical-tree checkpoint"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn overlay_checkpoint_rejects_extra_overlay_parent() -> Result<()> {
+        let fixture = fixture_git()?;
+        let root = fixture.dir.path();
+        let tree = format!("{}^{{tree}}", fixture.governance);
+        let message = format!(
+            "chore(promote): malformed overlay\n\n{OVERLAY_SOURCE_TRAILER} {}\n{OVERLAY_SWARM_TRAILER} {}\n",
+            fixture.governance, fixture.current
+        );
+        let overlay = git_fixture(
+            root,
+            &[
+                "commit-tree",
+                &tree,
+                "-p",
+                &fixture.governance,
+                "-p",
+                &fixture.promoted,
+                "-m",
+                &message,
+            ],
+        )?;
+
+        git_fixture(root, &["switch", "--detach", &fixture.governance])?;
+        git_fixture(
+            root,
+            &[
+                "merge",
+                "--no-ff",
+                "-m",
+                "merge: malformed overlay",
+                &overlay,
+            ],
+        )?;
+        let merged = git_fixture(root, &["rev-parse", "HEAD"])?;
+
+        let error = find_regular_merge_landing(&SystemPort, root, &merged, &fixture.current)
+            .expect_err("an overlay with extra parents must be rejected");
+        ensure!(
+            error.to_string().contains("must have exactly one parent"),
+            "unexpected error: {error}"
         );
         Ok(())
     }
