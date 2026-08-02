@@ -203,6 +203,8 @@ fn check_path(
         swarm_patches.push(pull_request_patch(port, refs.swarm_repo, swarm_pr)?);
     }
 
+    let mut current_tree_entries = None;
+
     match path.disposition {
         TransitionDisposition::Equivalent => {
             if path.swarm_chain.len() != 1 {
@@ -240,6 +242,7 @@ fn check_path(
                     "claimed tree_equivalent but the resulting tree entries differ: source {source_entry:?}, swarm {swarm_entry:?}"
                 );
             }
+            current_tree_entries = Some((source_entry, swarm_entry));
         }
         TransitionDisposition::SupersededInSwarm => {
             // The chain must begin by reproducing the source change, not merely
@@ -265,8 +268,15 @@ fn check_path(
         }
         _ => unreachable!("handled above"),
     }
-    let source_entry = tree_entry(port, workspace_root, refs.source_target, &path.path)?;
-    let swarm_entry = tree_entry(port, workspace_root, refs.swarm_target, &path.path)?;
+    if current_tree_entries.is_none() {
+        current_tree_entries = Some((
+            tree_entry(port, workspace_root, refs.source_target, &path.path)?,
+            tree_entry(port, workspace_root, refs.swarm_target, &path.path)?,
+        ));
+    }
+    let Some((source_entry, swarm_entry)) = current_tree_entries.as_ref() else {
+        bail!("resolved transition path has no current tree entries");
+    };
     verify_recorded_tree_entries(path, source_entry.as_ref(), swarm_entry.as_ref())?;
     // A resolved receipt reconciles a path both sides touched. It deliberately
     // does not grant one-sided source authority: only
@@ -1446,8 +1456,10 @@ mod tests {
             "unexpected error: {error:#}"
         );
 
-        // Matching patches: still accepted, and with no blobs recorded at all,
-        // which proves `equivalent` did not start depending on blob evidence.
+        // Matching patches: still accepted. The disposition-specific
+        // equivalence check ignores blob evidence, while the universal
+        // recorded-tree check now requires matching current and recorded
+        // entries for every active resolved path.
         let matching = StubPort::new()
             .merged(
                 &format!("{SOURCE}#657"),
