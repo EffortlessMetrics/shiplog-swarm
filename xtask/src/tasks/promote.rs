@@ -1430,19 +1430,20 @@ fn prepare_source_overlay(
         // promotion dropped that deletion.
         git(&["read-tree", "-u", "--reset", swarm_sha])?;
         for path in take_source {
+            let pathspec = literal_pathspec(path);
             // A resolved source path must match the source tree exactly, which
             // includes its absence. Restoring only when source still has the
             // path would let a file source deliberately deleted survive in the
             // overlay via the swarm copy; the post-construction blob check below
             // is what now catches such a reintroduction.
             if tree_has_path_with_env(port, overlay_root, source_head, path.as_str(), &env)? {
-                git(&["checkout", source_head, "--", path.as_str()]).with_context(|| {
+                git(&["checkout", source_head, "--", &pathspec]).with_context(|| {
                     format!(
                         "promote: restore resolved source path {path} while applying {swarm_sha}"
                     )
                 })?;
             } else {
-                git(&["rm", "-r", "--force", "--ignore-unmatch", "--", path.as_str()]).with_context(
+                git(&["rm", "-r", "--force", "--ignore-unmatch", "--", &pathspec]).with_context(
                     || {
                         format!(
                             "promote: honour source deletion of resolved path {path} while applying {swarm_sha}"
@@ -1768,15 +1769,20 @@ fn tree_has_path_with_env(
     path: &str,
     env: &[(&str, &str)],
 ) -> Result<bool> {
+    let pathspec = literal_pathspec(path);
     let output = port
         .git_output_with_env(
             workspace_root,
-            &["ls-tree", "-r", "--name-only", revision, "--", path],
+            &["ls-tree", "-r", "--name-only", revision, "--", &pathspec],
             env,
         )
         .with_context(|| format!("promote: inspect path {path} in {revision}"))?;
     let output = output.trim().to_string();
     Ok(output.lines().any(|line| line == path))
+}
+
+fn literal_pathspec(path: &str) -> String {
+    format!(":(literal){path}")
 }
 
 /// Extract `owner/repo#N` receipts from squash-merge commit subjects, keeping
@@ -2766,6 +2772,50 @@ merge-old source-parent another-swarm-head
         ensure!(
             error.to_string().contains("must have exactly one parent"),
             "unexpected error: {error}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn overlay_treats_metacharacter_paths_literally() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let root = dir.path();
+        git_fixture(root, &["init", "--initial-branch=main"])?;
+        git_fixture(root, &["config", "user.email", "test@example.com"])?;
+        git_fixture(root, &["config", "user.name", "Promotion Test"])?;
+
+        fs::write(root.join("literal0.txt"), "base\n")?;
+        git_fixture(root, &["add", "literal0.txt"])?;
+        git_fixture(root, &["commit", "-m", "base"])?;
+        git_fixture(root, &["switch", "-c", "swarm"])?;
+        fs::write(root.join("literal0.txt"), "swarm\n")?;
+        git_fixture(root, &["add", "literal0.txt"])?;
+        git_fixture(root, &["commit", "-m", "swarm sibling"])?;
+        let swarm_sha = git_fixture(root, &["rev-parse", "HEAD"])?;
+        git_fixture(root, &["switch", "main"])?;
+        fs::write(root.join("literal[0].txt"), "source\n")?;
+        git_fixture(root, &["add", "literal[0].txt"])?;
+        git_fixture(root, &["commit", "-m", "source exact path"])?;
+        let source_head = git_fixture(root, &["rev-parse", "HEAD"])?;
+
+        let overlay = prepare_source_overlay(
+            &SystemPort,
+            root,
+            &source_head,
+            &swarm_sha,
+            &["literal[0].txt".to_string()],
+            "1234567890abcdef1234567890abcdef12345678",
+            false,
+        )?;
+        let exact_object = format!("{}:literal[0].txt", overlay.sha);
+        let sibling_object = format!("{}:literal0.txt", overlay.sha);
+        ensure!(
+            git_fixture(root, &["show", &exact_object])? == "source",
+            "literal policy path must restore the exact bracketed file"
+        );
+        ensure!(
+            git_fixture(root, &["show", &sibling_object])? == "swarm",
+            "glob-matching sibling must retain swarm content"
         );
         Ok(())
     }
