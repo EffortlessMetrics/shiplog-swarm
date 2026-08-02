@@ -1453,6 +1453,8 @@ fn prepare_source_overlay(
             }
         }
         git(&["add", "-A"])?;
+        let source_date = git(&["show", "-s", "--format=%cI", source_head])
+            .with_context(|| format!("promote: read committer date for source {source_head}"))?;
         let commit_env = [
             ("GIT_AUTHOR_NAME", "shiplog-promote[bot]"),
             (
@@ -1464,8 +1466,8 @@ fn prepare_source_overlay(
                 "GIT_COMMITTER_EMAIL",
                 "shiplog-promote[bot]@users.noreply.github.com",
             ),
-            ("GIT_AUTHOR_DATE", "2026-07-23T00:00:00+00:00"),
-            ("GIT_COMMITTER_DATE", "2026-07-23T00:00:00+00:00"),
+            ("GIT_AUTHOR_DATE", source_date.as_str()),
+            ("GIT_COMMITTER_DATE", source_date.as_str()),
         ];
         // Assembled with explicit newlines: a multi-line literal would carry its
         // own source indentation into the commit body and mangle the trailers.
@@ -2667,6 +2669,15 @@ merge-old source-parent another-swarm-head
         ensure!(
             executed.sha != fixture.governance,
             "identical trees still require an overlay checkpoint"
+        );
+        let source_date = git_fixture(root, &["show", "-s", "--format=%cI", &fixture.governance])?;
+        ensure!(
+            git_fixture(root, &["show", "-s", "--format=%aI", &executed.sha])? == source_date,
+            "overlay author date must derive from the exact source target"
+        );
+        ensure!(
+            git_fixture(root, &["show", "-s", "--format=%cI", &executed.sha])? == source_date,
+            "overlay committer date must derive from the exact source target"
         );
         ensure!(
             git_fixture(root, &["show", "-s", "--format=%P", &executed.sha])? == fixture.governance,
