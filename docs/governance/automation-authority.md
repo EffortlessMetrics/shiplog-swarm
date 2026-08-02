@@ -98,6 +98,11 @@ The checker verifies, per role:
   workflows.
 - **Matrix integrity** — the policy ledger itself is validated for the exact set of
   automation rows and effects, with no duplicates, omissions, or contradictions.
+- **Source routine-bot guard** — source-role validation requires
+  `source-automation-guard.yml` to use `pull_request_target` for opened, reopened,
+  and synchronized PRs, match the `dependabot[bot]` and `factory-droid[bot]`
+  identities, fail with `exit 1`, and remain metadata-only (`contents: read`,
+  `pull-requests: read`, no checkout or named secrets).
 
 Intentional per-repository configuration differences (for example, source's empty
 Dependabot list or its release-writer `release.yml`) are classified as approved
@@ -122,6 +127,8 @@ metadata, never checks out the untrusted head, and grants no write permission.
 The guard is intentionally repository-gated, so the same workflow can travel
 through the swarm promotion tree without rejecting the swarm's authoritative
 automation. A failed guard is a handoff signal, not a source-side mutation path.
+The source-role automation-authority check validates this guard's static contract;
+branch protection and required-check configuration remain separate GitHub controls.
 
 Swarm then originates the fix as a normal `product-pr`, and the fix reaches source
 only through the next promotion `merge-checkpoint`.

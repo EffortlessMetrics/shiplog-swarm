@@ -5,6 +5,8 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 
+const SOURCE_GUARD_WORKFLOW: &str = "source-automation-guard.yml";
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum RepositoryRole {
@@ -159,7 +161,98 @@ fn inspect(workspace_root: &Path, role: RepositoryRole) -> Result<Vec<String>> {
             inspect_workflow(&path, role, &mut findings)?;
         }
     }
+    if role == RepositoryRole::Source {
+        inspect_source_bot_guard(&workflows, &mut findings)?;
+    }
     Ok(findings)
+}
+
+fn inspect_source_bot_guard(workflows: &Path, findings: &mut Vec<String>) -> Result<()> {
+    let path = workflows.join(SOURCE_GUARD_WORKFLOW);
+    let text = match fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            findings.push(format!(
+                "source automation guard workflow {SOURCE_GUARD_WORKFLOW:?} is required"
+            ));
+            return Ok(());
+        }
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("read source guard workflow {}", path.display()));
+        }
+    };
+    let yaml: Yaml = serde_yaml::from_str(&text)
+        .with_context(|| format!("parse source guard workflow {}", path.display()))?;
+
+    let trigger = yaml_get(&yaml, "on").and_then(|value| yaml_get(value, "pull_request_target"));
+    let trigger_types = trigger
+        .and_then(|value| yaml_get(value, "types"))
+        .and_then(Yaml::as_sequence);
+    for required in ["opened", "reopened", "synchronize"] {
+        if !trigger_types
+            .is_some_and(|types| types.iter().any(|value| value.as_str() == Some(required)))
+        {
+            findings.push(format!(
+                "source automation guard must trigger pull_request_target on {required:?}"
+            ));
+        }
+    }
+
+    let permissions = yaml_get(&yaml, "permissions");
+    if permission(permissions, "contents") != Some("read") {
+        findings.push("source automation guard must declare top-level contents: read".to_string());
+    }
+    if permission(permissions, "pull-requests") != Some("read") {
+        findings
+            .push("source automation guard must declare top-level pull-requests: read".to_string());
+    }
+    if !write_scopes(permissions).is_empty() {
+        findings.push("source automation guard must not grant any write permission".to_string());
+    }
+
+    let jobs = yaml_get(&yaml, "jobs")
+        .and_then(Yaml::as_mapping)
+        .context("source automation guard jobs must be a mapping")?;
+    let Some(job) = jobs.get(Yaml::String("reject-routine-bot-pr".to_string())) else {
+        findings.push("source automation guard must define reject-routine-bot-pr".to_string());
+        return Ok(());
+    };
+    let condition = yaml_get(job, "if")
+        .and_then(Yaml::as_str)
+        .unwrap_or_default();
+    for required in [
+        "github.repository == 'EffortlessMetrics/shiplog'",
+        "dependabot[bot]",
+        "factory-droid[bot]",
+    ] {
+        if !condition.contains(required) {
+            findings.push(format!(
+                "source automation guard job condition is missing required marker {required:?}"
+            ));
+        }
+    }
+    let steps = yaml_get(job, "steps")
+        .and_then(Yaml::as_sequence)
+        .context("source automation guard steps must be a sequence")?;
+    let run_scripts = steps
+        .iter()
+        .filter_map(|step| yaml_get(step, "run").and_then(Yaml::as_str))
+        .collect::<Vec<_>>();
+    if !run_scripts.iter().any(|run| run.contains("exit 1")) {
+        findings
+            .push("source automation guard must run an explicit exit 1 failure step".to_string());
+    }
+    let mut strings = Vec::new();
+    collect_strings(job, &mut strings);
+    let joined = strings.join("\n");
+    if joined.contains("actions/checkout") {
+        findings.push("source automation guard must not check out an untrusted head".to_string());
+    }
+    if joined.contains("secrets.") {
+        findings.push("source automation guard must not consume named secrets".to_string());
+    }
+    Ok(())
 }
 
 fn validate_policy(policy: &Policy) -> Vec<String> {
@@ -435,6 +528,13 @@ mod tests {
                 "on:\n  workflow_dispatch:\npermissions:\n  contents: read\njobs:\n  create-release:\n    permissions:\n      contents: {release_permission}\n  upload-assets:\n    permissions:\n      contents: {release_permission}\n"
             ),
         )?;
+        if role == RepositoryRole::Source {
+            fs::write(
+                dir.path()
+                    .join(".github/workflows/source-automation-guard.yml"),
+                "name: Source Automation Guard\non:\n  pull_request_target:\n    types: [opened, reopened, synchronize]\npermissions:\n  contents: read\n  pull-requests: read\njobs:\n  reject-routine-bot-pr:\n    if: >-\n      github.repository == 'EffortlessMetrics/shiplog' &&\n      (github.event.pull_request.user.login == 'dependabot[bot]' ||\n      github.event.pull_request.user.login == 'factory-droid[bot]')\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo guard && exit 1\n",
+            )?;
+        }
         Ok(dir)
     }
 
@@ -469,6 +569,73 @@ mod tests {
             findings
                 .iter()
                 .any(|finding| finding.contains("contents writes"))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn source_requires_the_routine_bot_guard() -> Result<()> {
+        let dir = fixture(RepositoryRole::Source, false)?;
+        fs::remove_file(
+            dir.path()
+                .join(".github/workflows/source-automation-guard.yml"),
+        )?;
+
+        let findings = inspect(dir.path(), RepositoryRole::Source)?;
+
+        ensure!(
+            findings
+                .iter()
+                .any(|finding| finding.contains("source automation guard workflow"))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn source_guard_requires_both_routine_bot_identities_and_fail_closed_exit() -> Result<()> {
+        let dir = fixture(RepositoryRole::Source, false)?;
+        let path = dir
+            .path()
+            .join(".github/workflows/source-automation-guard.yml");
+        let text = fs::read_to_string(&path)?
+            .replace("factory-droid[bot]", "unexpected-bot")
+            .replace("exit 1", "echo allowed");
+        fs::write(path, text)?;
+
+        let findings = inspect(dir.path(), RepositoryRole::Source)?;
+
+        ensure!(
+            findings
+                .iter()
+                .any(|finding| finding.contains("factory-droid[bot]"))
+        );
+        ensure!(findings.iter().any(|finding| finding.contains("exit 1")));
+        Ok(())
+    }
+
+    #[test]
+    fn source_guard_rejects_checkout_and_named_secrets() -> Result<()> {
+        let dir = fixture(RepositoryRole::Source, false)?;
+        let path = dir
+            .path()
+            .join(".github/workflows/source-automation-guard.yml");
+        let text = fs::read_to_string(&path)?.replace(
+            "steps:\n      - run: echo guard && exit 1",
+            "steps:\n      - uses: actions/checkout@pinned\n        env:\n          TOKEN: ${{ secrets.TOKEN }}\n      - run: echo guard && exit 1",
+        );
+        fs::write(path, text)?;
+
+        let findings = inspect(dir.path(), RepositoryRole::Source)?;
+
+        ensure!(
+            findings
+                .iter()
+                .any(|finding| finding.contains("check out an untrusted head"))
+        );
+        ensure!(
+            findings
+                .iter()
+                .any(|finding| finding.contains("named secrets"))
         );
         Ok(())
     }
