@@ -11963,6 +11963,9 @@ struct LinearViewer {
 }
 
 fn discover_github_user(api_base: &str, token: Option<&str>) -> Result<String> {
+    shiplog::ingest::github::validate_https_api_base(api_base)
+        .context("GitHub API base URL failed validation")?;
+
     let token = token
         .map(ToOwned::to_owned)
         .or_else(|| std::env::var("GITHUB_TOKEN").ok())
