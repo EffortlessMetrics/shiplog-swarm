@@ -115,6 +115,14 @@ handoff to swarm** rather than fixing the tree in place:
    an issue pointing at the swarm remediation.
 3. Leave every product file untouched.
 
+The source-side [`Source Automation Guard`](../../.github/workflows/source-automation-guard.yml)
+also fails closed for routine product PRs authored by `dependabot[bot]` or
+`factory-droid[bot]`. It uses `pull_request_target` only to read pull-request
+metadata, never checks out the untrusted head, and grants no write permission.
+The guard is intentionally repository-gated, so the same workflow can travel
+through the swarm promotion tree without rejecting the swarm's authoritative
+automation. A failed guard is a handoff signal, not a source-side mutation path.
+
 Swarm then originates the fix as a normal `product-pr`, and the fix reaches source
 only through the next promotion `merge-checkpoint`.
 
