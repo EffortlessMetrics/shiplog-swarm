@@ -39,7 +39,7 @@ use anyhow::{Context, Result, bail};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-use super::promotion_state::{Transition, TransitionDisposition, TransitionPath};
+use super::promotion_state::{Transition, TransitionDisposition, TransitionPath, TreeEntry};
 
 /// Divergence the transition receipts justify, split by the shape of the
 /// difference they actually prove.
@@ -90,13 +90,6 @@ pub struct TransitionRefs<'a> {
     pub swarm_target: &'a str,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct TreeEntry {
-    mode: String,
-    object_type: String,
-    oid: String,
-}
-
 /// Check every active transition receipt and return the divergence they earn.
 pub fn derive_authority(
     port: &impl TransitionPort,
@@ -112,6 +105,7 @@ pub fn derive_authority(
         if entry.consumed_by().is_some() {
             continue;
         }
+        ensure_exact_targets(entry, refs)?;
         check_merged_at(
             port,
             workspace_root,
@@ -209,6 +203,8 @@ fn check_path(
         swarm_patches.push(pull_request_patch(port, refs.swarm_repo, swarm_pr)?);
     }
 
+    let mut current_tree_entries = None;
+
     match path.disposition {
         TransitionDisposition::Equivalent => {
             if path.swarm_chain.len() != 1 {
@@ -246,6 +242,7 @@ fn check_path(
                     "claimed tree_equivalent but the resulting tree entries differ: source {source_entry:?}, swarm {swarm_entry:?}"
                 );
             }
+            current_tree_entries = Some((source_entry, swarm_entry));
         }
         TransitionDisposition::SupersededInSwarm => {
             // The chain must begin by reproducing the source change, not merely
@@ -271,6 +268,16 @@ fn check_path(
         }
         _ => unreachable!("handled above"),
     }
+    if current_tree_entries.is_none() {
+        current_tree_entries = Some((
+            tree_entry(port, workspace_root, refs.source_target, &path.path)?,
+            tree_entry(port, workspace_root, refs.swarm_target, &path.path)?,
+        ));
+    }
+    let Some((source_entry, swarm_entry)) = current_tree_entries.as_ref() else {
+        bail!("resolved transition path has no current tree entries");
+    };
+    verify_recorded_tree_entries(path, source_entry.as_ref(), swarm_entry.as_ref())?;
     // A resolved receipt reconciles a path both sides touched. It deliberately
     // does not grant one-sided source authority: only
     // `policy/source-only-paths.toml` may select source content, so a settled
@@ -283,6 +290,47 @@ fn check_path(
             disposition: path.disposition,
         },
     );
+    Ok(())
+}
+
+fn ensure_exact_targets(entry: &Transition, refs: &TransitionRefs<'_>) -> Result<()> {
+    if entry.source_target.is_empty() || entry.swarm_target.is_empty() {
+        bail!(
+            "active transition {} has no exact source_target/swarm_target binding",
+            entry.source_pr
+        );
+    }
+    if entry.source_target != refs.source_target || entry.swarm_target != refs.swarm_target {
+        bail!(
+            "receipt targets ({}, {}) do not match promotion targets ({}, {})",
+            entry.source_target,
+            entry.swarm_target,
+            refs.source_target,
+            refs.swarm_target
+        );
+    }
+    Ok(())
+}
+
+fn verify_recorded_tree_entries(
+    path: &TransitionPath,
+    source_entry: Option<&TreeEntry>,
+    swarm_entry: Option<&TreeEntry>,
+) -> Result<()> {
+    if path.source_tree_entry.as_ref() != source_entry {
+        bail!(
+            "recorded source tree entry does not match the exact promotion target: recorded {:?}, current {:?}",
+            path.source_tree_entry,
+            source_entry
+        );
+    }
+    if path.swarm_tree_entry.as_ref() != swarm_entry {
+        bail!(
+            "recorded swarm tree entry does not match the exact promotion target: recorded {:?}, current {:?}",
+            path.swarm_tree_entry,
+            swarm_entry
+        );
+    }
     Ok(())
 }
 
@@ -352,10 +400,18 @@ fn tree_entry(
     git_target: &str,
     path: &str,
 ) -> Result<Option<TreeEntry>> {
+    let literal_path = format!(":(literal){path}");
     let output = port
         .git_output(
             workspace_root,
-            &["ls-tree", "-z", "--full-tree", git_target, "--", path],
+            &[
+                "ls-tree",
+                "-z",
+                "--full-tree",
+                git_target,
+                "--",
+                &literal_path,
+            ],
         )
         .with_context(|| format!("inspect {git_target}:{path}"))?;
     let Some(record) = output.split('\0').find(|record| !record.is_empty()) else {
@@ -749,7 +805,10 @@ mod tests {
             }
             if args.first() == Some(&"ls-tree") {
                 let git_target = args.get(3).context("stub: ls-tree without a target")?;
-                let path = args.last().context("stub: ls-tree without a path")?;
+                let pathspec = args.last().context("stub: ls-tree without a path")?;
+                let path = pathspec
+                    .strip_prefix(":(literal)")
+                    .context("stub: ls-tree path was not literal")?;
                 let key = format!("{git_target}:{path}");
                 return match self.tree_entries.get(&key) {
                     Some(Some(entry)) => Ok(format!(
@@ -812,6 +871,8 @@ mod tests {
         Transition {
             source_pr: format!("{SOURCE}#657"),
             source_merge_sha: "e6a72ad11ab22d03b1cf434b237bf0fff9c145bf".to_string(),
+            source_target: "origin/main".to_string(),
+            swarm_target: "swarm/main".to_string(),
             consumed_by: String::new(),
             swarm_merge_sha,
             path: vec![TransitionPath {
@@ -821,7 +882,27 @@ mod tests {
                     .iter()
                     .map(|(receipt, _)| (*receipt).to_string())
                     .collect(),
+                source_tree_entry: None,
+                swarm_tree_entry: None,
             }],
+        }
+    }
+
+    fn bind_entries(
+        mut transition: Transition,
+        source: Option<TreeEntry>,
+        swarm: Option<TreeEntry>,
+    ) -> Transition {
+        transition.path[0].source_tree_entry = source;
+        transition.path[0].swarm_tree_entry = swarm;
+        transition
+    }
+
+    fn blob_entry(oid: &str) -> TreeEntry {
+        TreeEntry {
+            mode: "100644".to_string(),
+            object_type: "blob".to_string(),
+            oid: oid.to_string(),
         }
     }
 
@@ -838,10 +919,24 @@ mod tests {
                 "e6a72ad11ab22d03b1cf434b237bf0fff9c145bf",
                 &patch,
             )
-            .merged(&swarm, "ba4aeaf78cb17f980f1da05d24d9638033b95f68", &patch);
-        let entries = vec![entry(
-            TransitionDisposition::Equivalent,
-            &[(swarm.as_str(), "ba4aeaf78cb17f980f1da05d24d9638033b95f68")],
+            .merged(&swarm, "ba4aeaf78cb17f980f1da05d24d9638033b95f68", &patch)
+            .blob(
+                "origin/main",
+                CARGO_LOCK,
+                "9f2c1b6a0d4e5f708192a3b4c5d6e7f809a1b2c3",
+            )
+            .blob(
+                "swarm/main",
+                CARGO_LOCK,
+                "9f2c1b6a0d4e5f708192a3b4c5d6e7f809a1b2c3",
+            );
+        let entries = vec![bind_entries(
+            entry(
+                TransitionDisposition::Equivalent,
+                &[(swarm.as_str(), "ba4aeaf78cb17f980f1da05d24d9638033b95f68")],
+            ),
+            Some(blob_entry("9f2c1b6a0d4e5f708192a3b4c5d6e7f809a1b2c3")),
+            Some(blob_entry("9f2c1b6a0d4e5f708192a3b4c5d6e7f809a1b2c3")),
         )];
 
         let authority = derive_authority(&port, Path::new("."), &refs(), &entries)?;
@@ -934,11 +1029,25 @@ mod tests {
         let swarm = format!("{SWARM}#269");
         let port = StubPort::new()
             .merged(&source, "e6a72ad11ab22d03b1cf434b237bf0fff9c145bf", &patch)
-            .merged(&swarm, "ba4aeaf78cb17f980f1da05d24d9638033b95f68", &patch);
+            .merged(&swarm, "ba4aeaf78cb17f980f1da05d24d9638033b95f68", &patch)
+            .blob(
+                "origin/main",
+                CARGO_LOCK,
+                "9f2c1b6a0d4e5f708192a3b4c5d6e7f809a1b2c3",
+            )
+            .blob(
+                "swarm/main",
+                CARGO_LOCK,
+                "9f2c1b6a0d4e5f708192a3b4c5d6e7f809a1b2c3",
+            );
         let entries = vec![
-            entry(
-                TransitionDisposition::Equivalent,
-                &[(swarm.as_str(), "ba4aeaf78cb17f980f1da05d24d9638033b95f68")],
+            bind_entries(
+                entry(
+                    TransitionDisposition::Equivalent,
+                    &[(swarm.as_str(), "ba4aeaf78cb17f980f1da05d24d9638033b95f68")],
+                ),
+                Some(blob_entry("9f2c1b6a0d4e5f708192a3b4c5d6e7f809a1b2c3")),
+                Some(blob_entry("9f2c1b6a0d4e5f708192a3b4c5d6e7f809a1b2c3")),
             ),
             entry(TransitionDisposition::MissingInSwarm, &[]),
         ];
@@ -1066,9 +1175,13 @@ mod tests {
             .merged(&swarm, swarm_sha, &swarm_patch)
             .blob("origin/main", CARGO_LOCK, converged)
             .blob("swarm/main", CARGO_LOCK, converged);
-        let entries = vec![entry(
-            TransitionDisposition::TreeEquivalent,
-            &[(swarm.as_str(), swarm_sha)],
+        let entries = vec![bind_entries(
+            entry(
+                TransitionDisposition::TreeEquivalent,
+                &[(swarm.as_str(), swarm_sha)],
+            ),
+            Some(blob_entry(converged)),
+            Some(blob_entry(converged)),
         )];
 
         let authority = derive_authority(&port, Path::new("."), &refs(), &entries)?;
@@ -1084,6 +1197,54 @@ mod tests {
         );
         assert!(authority.awaiting_swarm.is_empty());
         Ok(())
+    }
+
+    #[test]
+    fn active_receipt_rejects_stale_recorded_tree_entry() {
+        let patch = section(CARGO_LOCK, "1.52.3", "1.53.0", "tokio");
+        let swarm = format!("{SWARM}#269");
+        let swarm_sha = "ba4aeaf78cb17f980f1da05d24d9638033b95f68";
+        let current = "9f2c1b6a0d4e5f708192a3b4c5d6e7f809a1b2c3";
+        let port = StubPort::new()
+            .merged(
+                &format!("{SOURCE}#657"),
+                "e6a72ad11ab22d03b1cf434b237bf0fff9c145bf",
+                &patch,
+            )
+            .merged(&swarm, swarm_sha, &patch)
+            .blob("origin/main", CARGO_LOCK, current)
+            .blob("swarm/main", CARGO_LOCK, current);
+        let entries = vec![bind_entries(
+            entry(
+                TransitionDisposition::Equivalent,
+                &[(swarm.as_str(), swarm_sha)],
+            ),
+            Some(TreeEntry {
+                mode: "100755".to_string(),
+                object_type: "blob".to_string(),
+                oid: current.to_string(),
+            }),
+            Some(blob_entry(current)),
+        )];
+
+        let error = derive_authority(&port, Path::new("."), &refs(), &entries)
+            .expect_err("an active receipt must not reuse stale path metadata");
+        assert!(
+            format!("{error:#}").contains("recorded source tree entry does not match"),
+            "unexpected error: {error:#}"
+        );
+    }
+
+    #[test]
+    fn active_receipt_cannot_be_reused_for_different_promotion_targets() {
+        let mut entries = vec![entry(TransitionDisposition::MissingInSwarm, &[])];
+        entries[0].source_target = "source-old-target".to_string();
+        let error = derive_authority(&StubPort::new(), Path::new("."), &refs(), &entries)
+            .expect_err("a receipt bound to another target must fail closed");
+        assert!(
+            format!("{error:#}").contains("do not match promotion targets"),
+            "unexpected error: {error:#}"
+        );
     }
 
     /// `tree_equivalent` is a claim about the outcome, so differing outcomes
@@ -1246,6 +1407,9 @@ mod tests {
             TransitionDisposition::TreeEquivalent,
             &[(swarm.as_str(), swarm_sha)],
         )];
+        let mut entries = entries;
+        entries[0].source_target = old_refs.source_target.to_string();
+        entries[0].swarm_target = old_refs.swarm_target.to_string();
 
         let error = derive_authority(&port, Path::new("."), &old_refs, &entries)
             .expect_err("historical target disagreement must not use later branch convergence");
@@ -1277,9 +1441,13 @@ mod tests {
             .merged(&swarm, swarm_sha, &swarm_patch)
             .blob("origin/main", CARGO_LOCK, converged)
             .blob("swarm/main", CARGO_LOCK, converged);
-        let entries = vec![entry(
-            TransitionDisposition::Equivalent,
-            &[(swarm.as_str(), swarm_sha)],
+        let entries = vec![bind_entries(
+            entry(
+                TransitionDisposition::Equivalent,
+                &[(swarm.as_str(), swarm_sha)],
+            ),
+            Some(blob_entry(converged)),
+            Some(blob_entry(converged)),
         )];
         let error = derive_authority(&port, Path::new("."), &refs(), &entries)
             .expect_err("equivalent must still require matching patch ids");
@@ -1288,15 +1456,19 @@ mod tests {
             "unexpected error: {error:#}"
         );
 
-        // Matching patches: still accepted, and with no blobs recorded at all,
-        // which proves `equivalent` did not start depending on blob evidence.
+        // Matching patches: still accepted. The disposition-specific
+        // equivalence check ignores blob evidence, while the universal
+        // recorded-tree check now requires matching current and recorded
+        // entries for every active resolved path.
         let matching = StubPort::new()
             .merged(
                 &format!("{SOURCE}#657"),
                 "e6a72ad11ab22d03b1cf434b237bf0fff9c145bf",
                 &source_patch,
             )
-            .merged(&swarm, swarm_sha, &source_patch);
+            .merged(&swarm, swarm_sha, &source_patch)
+            .blob("origin/main", CARGO_LOCK, converged)
+            .blob("swarm/main", CARGO_LOCK, converged);
         let authority = derive_authority(&matching, Path::new("."), &refs(), &entries)?;
         let receipt = authority
             .two_sided
@@ -1388,10 +1560,24 @@ mod tests {
                 &source_patch,
             )
             .merged(&first, first_sha, &reproduce)
-            .merged(&second, second_sha, &advance);
-        let entries = vec![entry(
-            TransitionDisposition::SupersededInSwarm,
-            &[(first.as_str(), first_sha), (second.as_str(), second_sha)],
+            .merged(&second, second_sha, &advance)
+            .blob(
+                "origin/main",
+                CARGO_LOCK,
+                "9f2c1b6a0d4e5f708192a3b4c5d6e7f809a1b2c3",
+            )
+            .blob(
+                "swarm/main",
+                CARGO_LOCK,
+                "9f2c1b6a0d4e5f708192a3b4c5d6e7f809a1b2c3",
+            );
+        let entries = vec![bind_entries(
+            entry(
+                TransitionDisposition::SupersededInSwarm,
+                &[(first.as_str(), first_sha), (second.as_str(), second_sha)],
+            ),
+            Some(blob_entry("9f2c1b6a0d4e5f708192a3b4c5d6e7f809a1b2c3")),
+            Some(blob_entry("9f2c1b6a0d4e5f708192a3b4c5d6e7f809a1b2c3")),
         )];
 
         let authority = derive_authority(&port, Path::new("."), &refs(), &entries)?;
