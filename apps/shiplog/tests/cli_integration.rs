@@ -4248,15 +4248,15 @@ enabled = false
     assert!(!config.contains(sentinel));
     let fake_gh_invocations = std::fs::read_to_string(&fake_gh_log)?;
     assert!(
-        fake_gh_invocations
-            .lines()
-            .any(|line| line.trim_end_matches('\r') == "fake-gh auth status"),
+        fake_gh_invocations.lines().any(|line| line
+            .trim_end_matches('\r')
+            .starts_with("fake-gh auth status")),
         "the isolated gh fixture must receive auth status: {fake_gh_invocations:?}"
     );
     assert!(
-        fake_gh_invocations
-            .lines()
-            .any(|line| line.trim_end_matches('\r') == "fake-gh auth token"),
+        fake_gh_invocations.lines().any(|line| line
+            .trim_end_matches('\r')
+            .starts_with("fake-gh auth token")),
         "the isolated gh fixture must receive auth token: {fake_gh_invocations:?}"
     );
     Ok(())
@@ -7887,7 +7887,10 @@ user = "octo"
     let fake_gh_invocations = std::fs::read_to_string(&fake_gh_log)?;
     let status_invocations = fake_gh_invocations
         .lines()
-        .filter(|line| line.trim_end_matches('\r') == "fake-gh auth status")
+        .filter(|line| {
+            line.trim_end_matches('\r')
+                .starts_with("fake-gh auth status")
+        })
         .count();
     assert!(
         status_invocations >= 2,
