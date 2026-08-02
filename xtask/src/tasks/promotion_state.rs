@@ -102,9 +102,9 @@ pub struct TransitionPath {
     /// Human-readable reason for the exceptional resolution.
     #[serde(default)]
     pub reason: String,
-    /// Ordered swarm PRs that carried this path. `equivalent` and
-    /// `tree_equivalent` each name exactly one; `superseded_in_swarm` names the
-    /// steps that continue the source history.
+    /// Ordered swarm PRs that carried this path. `equivalent`,
+    /// `dependency_equivalent`, and `tree_equivalent` each name exactly one;
+    /// `superseded_in_swarm` names the steps that continue the source history.
     #[serde(default)]
     pub swarm_chain: Vec<String>,
     /// Complete source-side tree entry at `Transition::source_target`.
@@ -135,6 +135,9 @@ pub struct TreeEntry {
 pub enum TransitionDisposition {
     /// Both sides made the same change to this path.
     Equivalent,
+    /// Both sides made the same Cargo.lock package-version transition, even
+    /// when lockfile context makes the raw patch identities differ.
+    DependencyEquivalent,
     /// Both sides arrived at the same resulting content for this path by
     /// different patches. Distinct from `equivalent`, which asserts the two
     /// changes are the same change; here only the outcome agrees.
@@ -160,6 +163,7 @@ impl std::fmt::Display for TransitionDisposition {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let name = match self {
             Self::Equivalent => "equivalent",
+            Self::DependencyEquivalent => "dependency_equivalent",
             Self::TreeEquivalent => "tree_equivalent",
             Self::SupersededInSwarm => "superseded_in_swarm",
             Self::MissingInSwarm => "missing_in_swarm",
@@ -404,6 +408,15 @@ fn validate_transitions(transitions: &[Transition]) -> Result<()> {
                     if path.swarm_chain.len() != 1 {
                         bail!(
                             "transition {} path {} is equivalent and must name exactly one swarm PR",
+                            entry.source_pr,
+                            path.path
+                        );
+                    }
+                }
+                TransitionDisposition::DependencyEquivalent => {
+                    if path.swarm_chain.len() != 1 {
+                        bail!(
+                            "transition {} path {} is dependency_equivalent and must name exactly one swarm PR",
                             entry.source_pr,
                             path.path
                         );
