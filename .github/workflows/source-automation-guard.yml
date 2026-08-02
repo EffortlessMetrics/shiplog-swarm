@@ -4,6 +4,7 @@ on:
   pull_request_target:
     types: [opened, reopened, synchronize]
 
+# Metadata-only guard: no checkout, named secrets, or write access.
 permissions:
   contents: read
   pull-requests: read
