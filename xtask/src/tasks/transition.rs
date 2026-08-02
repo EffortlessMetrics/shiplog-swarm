@@ -84,8 +84,17 @@ pub trait TransitionPort {
 pub struct TransitionRefs<'a> {
     pub source_repo: &'a str,
     pub swarm_repo: &'a str,
-    pub source_ref: &'a str,
-    pub swarm_ref: &'a str,
+    /// Exact source commit selected for this promotion.
+    pub source_target: &'a str,
+    /// Exact swarm commit selected for this promotion.
+    pub swarm_target: &'a str,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct TreeEntry {
+    mode: String,
+    object_type: String,
+    oid: String,
 }
 
 /// Check every active transition receipt and return the divergence they earn.
@@ -109,7 +118,7 @@ pub fn derive_authority(
             refs.source_repo,
             &entry.source_pr,
             &entry.source_merge_sha,
-            refs.source_ref,
+            refs.source_target,
         )
         .with_context(|| format!("transition {}: source merge evidence", entry.source_pr))?;
 
@@ -195,7 +204,7 @@ fn check_path(
             refs.swarm_repo,
             swarm_pr,
             merge_sha,
-            refs.swarm_ref,
+            refs.swarm_target,
         )?;
         swarm_patches.push(pull_request_patch(port, refs.swarm_repo, swarm_pr)?);
     }
@@ -230,11 +239,11 @@ fn check_path(
             // The evidence is the outcome, not the edit: the resulting blob at
             // this path must be byte-identical on both promoted refs. Blob ids
             // are content hashes, so equal ids mean equal bytes.
-            let source_blob = blob_id(port, workspace_root, refs.source_ref, &path.path)?;
-            let swarm_blob = blob_id(port, workspace_root, refs.swarm_ref, &path.path)?;
-            if source_blob != swarm_blob {
+            let source_entry = tree_entry(port, workspace_root, refs.source_target, &path.path)?;
+            let swarm_entry = tree_entry(port, workspace_root, refs.swarm_target, &path.path)?;
+            if source_entry != swarm_entry {
                 bail!(
-                    "claimed tree_equivalent but the resulting blobs differ: source {source_blob}, swarm {swarm_blob}"
+                    "claimed tree_equivalent but the resulting tree entries differ: source {source_entry:?}, swarm {swarm_entry:?}"
                 );
             }
         }
@@ -331,25 +340,54 @@ fn check_merged_at(
     Ok(())
 }
 
-/// The blob id of `path` as it stands on `git_ref`.
+/// The complete tree entry for `path` as it stands on an exact commit.
 ///
-/// A blob id is a hash of the file's bytes, so two refs sharing one is proof
-/// the resulting content is byte-identical without reading either file.
-fn blob_id(
+/// Absence is meaningful: two missing paths are equivalent, while a missing
+/// path and a present path are not. Mode and object type are part of the
+/// result, so executable files, symlinks, and gitlinks cannot be confused with
+/// regular files that happen to share an object id.
+fn tree_entry(
     port: &impl TransitionPort,
     workspace_root: &Path,
-    git_ref: &str,
+    git_target: &str,
     path: &str,
-) -> Result<String> {
-    let spec = format!("{git_ref}:{path}");
+) -> Result<Option<TreeEntry>> {
     let output = port
-        .git_output(workspace_root, &["rev-parse", "--verify", &spec])
-        .with_context(|| format!("resolve {spec}"))?;
-    output
-        .split_whitespace()
+        .git_output(
+            workspace_root,
+            &["ls-tree", "-z", "--full-tree", git_target, "--", path],
+        )
+        .with_context(|| format!("inspect {git_target}:{path}"))?;
+    let Some(record) = output.split('\0').find(|record| !record.is_empty()) else {
+        return Ok(None);
+    };
+    let (metadata, recorded_path) = record
+        .split_once('\t')
+        .with_context(|| format!("parse tree entry for {git_target}:{path}"))?;
+    if recorded_path != path {
+        bail!("tree lookup for {git_target}:{path} returned unexpected path {recorded_path}");
+    }
+    let mut fields = metadata.split_whitespace();
+    let mode = fields
         .next()
-        .map(str::to_string)
-        .with_context(|| format!("{spec} resolved to no blob id"))
+        .context("tree entry is missing its mode")?
+        .to_string();
+    let object_type = fields
+        .next()
+        .context("tree entry is missing its object type")?
+        .to_string();
+    let oid = fields
+        .next()
+        .context("tree entry is missing its object id")?
+        .to_string();
+    if fields.next().is_some() {
+        bail!("tree entry for {git_target}:{path} has unexpected fields");
+    }
+    Ok(Some(TreeEntry {
+        mode,
+        object_type,
+        oid,
+    }))
 }
 
 /// Require the swarm steps to form an unbroken version chain that starts where
@@ -608,8 +646,8 @@ mod tests {
         patches: BTreeMap<String, String>,
         /// SHAs that are reachable from the ref they are checked against.
         reachable: BTreeSet<String>,
-        /// `<ref>:<path>` to the blob id that rev spec resolves to.
-        blobs: BTreeMap<String, String>,
+        /// `<commit>:<path>` to the complete tree entry, or explicit absence.
+        tree_entries: BTreeMap<String, Option<TreeEntry>>,
         ancestry_checks: RefCell<Vec<String>>,
     }
 
@@ -619,15 +657,46 @@ mod tests {
                 views: BTreeMap::new(),
                 patches: BTreeMap::new(),
                 reachable: BTreeSet::new(),
-                blobs: BTreeMap::new(),
+                tree_entries: BTreeMap::new(),
                 ancestry_checks: RefCell::new(Vec::new()),
             }
         }
 
-        /// Record what `<git_ref>:<path>` resolves to.
+        /// Record a regular-file tree entry for `<git_target>:<path>`.
         fn blob(mut self, git_ref: &str, path: &str, blob: &str) -> Self {
-            self.blobs
-                .insert(format!("{git_ref}:{path}"), blob.to_string());
+            self.tree_entries.insert(
+                format!("{git_ref}:{path}"),
+                Some(TreeEntry {
+                    mode: "100644".to_string(),
+                    object_type: "blob".to_string(),
+                    oid: blob.to_string(),
+                }),
+            );
+            self
+        }
+
+        fn tree(
+            mut self,
+            git_target: &str,
+            path: &str,
+            mode: &str,
+            object_type: &str,
+            oid: &str,
+        ) -> Self {
+            self.tree_entries.insert(
+                format!("{git_target}:{path}"),
+                Some(TreeEntry {
+                    mode: mode.to_string(),
+                    object_type: object_type.to_string(),
+                    oid: oid.to_string(),
+                }),
+            );
+            self
+        }
+
+        fn absent(mut self, git_target: &str, path: &str) -> Self {
+            self.tree_entries
+                .insert(format!("{git_target}:{path}"), None);
             self
         }
 
@@ -676,12 +745,20 @@ mod tests {
                 return Ok(String::new());
             }
             if args.first() == Some(&"rev-parse") {
-                let spec = args.last().context("stub: rev-parse without a spec")?;
-                let blob = self
-                    .blobs
-                    .get(*spec)
-                    .with_context(|| format!("stub: no blob recorded for {spec}"))?;
-                return Ok(format!("{blob}\n"));
+                bail!("stub: unexpected legacy rev-parse lookup {args:?}");
+            }
+            if args.first() == Some(&"ls-tree") {
+                let git_target = args.get(3).context("stub: ls-tree without a target")?;
+                let path = args.last().context("stub: ls-tree without a path")?;
+                let key = format!("{git_target}:{path}");
+                return match self.tree_entries.get(&key) {
+                    Some(Some(entry)) => Ok(format!(
+                        "{} {} {}\t{}\0",
+                        entry.mode, entry.object_type, entry.oid, path
+                    )),
+                    Some(None) => Ok(String::new()),
+                    None => bail!("stub: no tree entry recorded for {key}"),
+                };
             }
             bail!("stub: unexpected git {args:?}")
         }
@@ -722,8 +799,8 @@ mod tests {
         TransitionRefs {
             source_repo: SOURCE,
             swarm_repo: SWARM,
-            source_ref: "origin/main",
-            swarm_ref: "swarm/main",
+            source_target: "origin/main",
+            swarm_target: "swarm/main",
         }
     }
 
@@ -1041,9 +1118,142 @@ mod tests {
         let error = derive_authority(&port, Path::new("."), &refs(), &entries)
             .expect_err("differing resulting blobs must not be accepted as tree_equivalent");
         assert!(
-            format!("{error:#}").contains("the resulting blobs differ"),
+            format!("{error:#}").contains("the resulting tree entries differ"),
             "unexpected error: {error:#}"
         );
+    }
+
+    #[test]
+    fn tree_equivalent_rejects_matching_oid_with_different_mode_or_type() -> Result<()> {
+        let source_patch = section(CARGO_LOCK, "1.52.3", "1.53.0", "tokio");
+        let swarm = format!("{SWARM}#269");
+        let swarm_sha = "ba4aeaf78cb17f980f1da05d24d9638033b95f68";
+        let oid = "9f2c1b6a0d4e5f708192a3b4c5d6e7f809a1b2c3";
+        let source = format!("{SOURCE}#657");
+
+        for (source_mode, source_type, swarm_mode, swarm_type) in [
+            ("100644", "blob", "100755", "blob"),
+            ("100644", "blob", "160000", "commit"),
+        ] {
+            let port = StubPort::new()
+                .merged(
+                    &source,
+                    "e6a72ad11ab22d03b1cf434b237bf0fff9c145bf",
+                    &source_patch,
+                )
+                .merged(&swarm, swarm_sha, &source_patch)
+                .tree("origin/main", CARGO_LOCK, source_mode, source_type, oid)
+                .tree("swarm/main", CARGO_LOCK, swarm_mode, swarm_type, oid);
+            let entries = vec![entry(
+                TransitionDisposition::TreeEquivalent,
+                &[(swarm.as_str(), swarm_sha)],
+            )];
+            let error = derive_authority(&port, Path::new("."), &refs(), &entries)
+                .expect_err("tree entry metadata differences must not be accepted");
+            assert!(
+                format!("{error:#}").contains("the resulting tree entries differ"),
+                "unexpected error: {error:#}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn tree_equivalent_treats_matching_absence_as_equal() -> Result<()> {
+        let source_patch = section(CARGO_LOCK, "1.52.3", "1.53.0", "tokio");
+        let swarm = format!("{SWARM}#269");
+        let swarm_sha = "ba4aeaf78cb17f980f1da05d24d9638033b95f68";
+        let source = format!("{SOURCE}#657");
+        let entries = vec![entry(
+            TransitionDisposition::TreeEquivalent,
+            &[(swarm.as_str(), swarm_sha)],
+        )];
+        let both_absent = StubPort::new()
+            .merged(
+                &source,
+                "e6a72ad11ab22d03b1cf434b237bf0fff9c145bf",
+                &source_patch,
+            )
+            .merged(&swarm, swarm_sha, &source_patch)
+            .absent("origin/main", CARGO_LOCK)
+            .absent("swarm/main", CARGO_LOCK);
+        derive_authority(&both_absent, Path::new("."), &refs(), &entries)?;
+
+        let one_present = StubPort::new()
+            .merged(
+                &source,
+                "e6a72ad11ab22d03b1cf434b237bf0fff9c145bf",
+                &source_patch,
+            )
+            .merged(&swarm, swarm_sha, &source_patch)
+            .absent("origin/main", CARGO_LOCK)
+            .blob(
+                "swarm/main",
+                CARGO_LOCK,
+                "9f2c1b6a0d4e5f708192a3b4c5d6e7f809a1b2c3",
+            );
+        let error = derive_authority(&one_present, Path::new("."), &refs(), &entries)
+            .expect_err("one absent and one present path must not be equivalent");
+        assert!(
+            format!("{error:#}").contains("the resulting tree entries differ"),
+            "unexpected error: {error:#}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn tree_equivalent_binds_evidence_to_historical_targets() -> Result<()> {
+        let source_patch = section(CARGO_LOCK, "1.52.3", "1.53.0", "tokio");
+        let swarm = format!("{SWARM}#269");
+        let swarm_sha = "ba4aeaf78cb17f980f1da05d24d9638033b95f68";
+        let source = format!("{SOURCE}#657");
+        let old_refs = TransitionRefs {
+            source_repo: SOURCE,
+            swarm_repo: SWARM,
+            source_target: "source-old-target",
+            swarm_target: "swarm-old-target",
+        };
+        let port = StubPort::new()
+            .merged(
+                &source,
+                "e6a72ad11ab22d03b1cf434b237bf0fff9c145bf",
+                &source_patch,
+            )
+            .merged(&swarm, swarm_sha, &source_patch)
+            // The branch tips later converged, but the proposed historical
+            // promotion targets still disagree and must be rejected.
+            .blob(
+                "source-old-target",
+                CARGO_LOCK,
+                "1111111111111111111111111111111111111111",
+            )
+            .blob(
+                "swarm-old-target",
+                CARGO_LOCK,
+                "2222222222222222222222222222222222222222",
+            )
+            .blob(
+                "source/main",
+                CARGO_LOCK,
+                "9f2c1b6a0d4e5f708192a3b4c5d6e7f809a1b2c3",
+            )
+            .blob(
+                "swarm/main",
+                CARGO_LOCK,
+                "9f2c1b6a0d4e5f708192a3b4c5d6e7f809a1b2c3",
+            );
+        let entries = vec![entry(
+            TransitionDisposition::TreeEquivalent,
+            &[(swarm.as_str(), swarm_sha)],
+        )];
+
+        let error = derive_authority(&port, Path::new("."), &old_refs, &entries)
+            .expect_err("historical target disagreement must not use later branch convergence");
+        assert!(
+            format!("{error:#}").contains("the resulting tree entries differ"),
+            "unexpected error: {error:#}"
+        );
+        Ok(())
     }
 
     /// Adding `tree_equivalent` must not soften `equivalent`. `equivalent` still
