@@ -1729,7 +1729,7 @@ exit /b 1
     let script = match auth {
         FakeGhAuth::LoggedIn => {
             r##"#!/bin/sh
-if [ -n "${SHIPLOG_FAKE_GH_LOG:-}" ]; then printf '%s\n' "$*" >> "$SHIPLOG_FAKE_GH_LOG"; fi
+if [ -n "${SHIPLOG_FAKE_GH_LOG:-}" ]; then printf '%s\n' "fake-gh $*" >> "$SHIPLOG_FAKE_GH_LOG"; fi
 case "$*" in
   *"auth token"*) printf '%s\n' 'shiplog-gh-secret' ;;
   *) printf '%s\n' '{"hosts":{"github.com":[{"user":"octocat"}],"127.0.0.1":[{"user":"octocat"}]}}' ;;
@@ -1738,7 +1738,7 @@ esac
         }
         FakeGhAuth::LoggedOut => {
             r##"#!/bin/sh
-if [ -n "${SHIPLOG_FAKE_GH_LOG:-}" ]; then printf '%s\n' "$*" >> "$SHIPLOG_FAKE_GH_LOG"; fi
+if [ -n "${SHIPLOG_FAKE_GH_LOG:-}" ]; then printf '%s\n' "fake-gh $*" >> "$SHIPLOG_FAKE_GH_LOG"; fi
 exit 1
 "##
         }
