@@ -319,8 +319,8 @@ fn run_with_port_to(
         &super::transition::TransitionRefs {
             source_repo: SOURCE_REPO,
             swarm_repo: SWARM_REPO,
-            source_ref: &inputs.source_ref,
-            swarm_ref: &inputs.swarm_ref,
+            source_target: &source_head,
+            swarm_target: &swarm_sha,
         },
         &state.transition,
     )?;

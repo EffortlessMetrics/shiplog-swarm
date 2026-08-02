@@ -79,8 +79,9 @@ impl Transition {
 pub struct TransitionPath {
     pub path: String,
     pub disposition: TransitionDisposition,
-    /// Ordered swarm PRs that carried this path. `equivalent` names exactly one;
-    /// `superseded_in_swarm` names the steps that continue the source history.
+    /// Ordered swarm PRs that carried this path. `equivalent` and
+    /// `tree_equivalent` each name exactly one; `superseded_in_swarm` names the
+    /// steps that continue the source history.
     #[serde(default)]
     pub swarm_chain: Vec<String>,
 }
@@ -90,6 +91,10 @@ pub struct TransitionPath {
 pub enum TransitionDisposition {
     /// Both sides made the same change to this path.
     Equivalent,
+    /// Both sides arrived at the same resulting content for this path by
+    /// different patches. Distinct from `equivalent`, which asserts the two
+    /// changes are the same change; here only the outcome agrees.
+    TreeEquivalent,
     /// The swarm side continued past what source landed.
     SupersededInSwarm,
     /// Source changed it and swarm has not caught up.
@@ -102,6 +107,7 @@ impl std::fmt::Display for TransitionDisposition {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let name = match self {
             Self::Equivalent => "equivalent",
+            Self::TreeEquivalent => "tree_equivalent",
             Self::SupersededInSwarm => "superseded_in_swarm",
             Self::MissingInSwarm => "missing_in_swarm",
             Self::Conflicting => "conflicting",
@@ -299,6 +305,15 @@ fn validate_transitions(transitions: &[Transition]) -> Result<()> {
                     if path.swarm_chain.len() != 1 {
                         bail!(
                             "transition {} path {} is equivalent and must name exactly one swarm PR",
+                            entry.source_pr,
+                            path.path
+                        );
+                    }
+                }
+                TransitionDisposition::TreeEquivalent => {
+                    if path.swarm_chain.len() != 1 {
+                        bail!(
+                            "transition {} path {} is tree_equivalent and must name exactly one swarm PR",
                             entry.source_pr,
                             path.path
                         );
@@ -543,6 +558,45 @@ disposition = "equivalent"
             format!("{error:#}").contains("must name exactly one swarm PR"),
             "unexpected error: {error:#}"
         );
+    }
+
+    /// `tree_equivalent` is its own recorded name, so an existing `equivalent`
+    /// receipt keeps meaning exactly what it meant when it was written.
+    #[test]
+    fn transition_tree_equivalent_is_a_distinct_recorded_disposition() -> Result<()> {
+        let state = manifest_with_transition(
+            r#"
+[[transition]]
+source_pr = "EffortlessMetrics/shiplog#666"
+source_merge_sha = "d88d59a1a5af338537e35ff98b8ddda14d4673cf"
+swarm_merge_sha = { "EffortlessMetrics/shiplog-swarm#274" = "1ca35e97ba506062376e6f78b6633003e25db963" }
+[[transition.path]]
+path = "xtask/tests/cli.rs"
+disposition = "tree_equivalent"
+swarm_chain = ["EffortlessMetrics/shiplog-swarm#274"]
+"#,
+        )?;
+        let path = &state.transition[0].path[0];
+        assert_eq!(path.disposition, TransitionDisposition::TreeEquivalent);
+        assert_eq!(path.disposition.to_string(), "tree_equivalent");
+        assert_ne!(path.disposition, TransitionDisposition::Equivalent);
+
+        let error = manifest_with_transition(
+            r#"
+[[transition]]
+source_pr = "EffortlessMetrics/shiplog#666"
+source_merge_sha = "d88d59a1a5af338537e35ff98b8ddda14d4673cf"
+[[transition.path]]
+path = "xtask/tests/cli.rs"
+disposition = "tree_equivalent"
+"#,
+        )
+        .expect_err("tree_equivalent without a swarm PR must be rejected");
+        assert!(
+            format!("{error:#}").contains("tree_equivalent and must name exactly one swarm PR"),
+            "unexpected error: {error:#}"
+        );
+        Ok(())
     }
 
     /// Naming a chain step without recording its merge commit would leave the
