@@ -21,6 +21,9 @@
 //!   demonstrably already carries or supersedes the source change.
 //!   `missing_in_swarm` grants nothing and blocks: swarm does not carry the
 //!   change, so promoting would revert it. `conflicting` blocks outright.
+//!   An exceptional `resolution = "discard_source"` may explicitly choose the
+//!   swarm tree for a missing-in-swarm path, but only with exact tree entries,
+//!   a decision receipt, and a reason; it is bounded by `consumed_by`.
 //!
 //! Evidence is checked rather than assumed: the recorded merge SHAs must belong
 //! to merged PRs and be reachable from the relevant branch, `equivalent` must
@@ -39,7 +42,9 @@ use anyhow::{Context, Result, bail};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-use super::promotion_state::{Transition, TransitionDisposition, TransitionPath, TreeEntry};
+use super::promotion_state::{
+    Transition, TransitionDisposition, TransitionPath, TransitionResolution, TreeEntry,
+};
 
 /// Divergence the transition receipts justify, split by the shape of the
 /// difference they actually prove.
@@ -58,6 +63,9 @@ pub struct TransitionAuthority {
     /// source change. They are carried only so the refusal can name the receipt
     /// and say what to do about it.
     pub awaiting_swarm: BTreeMap<String, String>,
+    /// Explicit human-reviewed decisions to discard a source-side change and
+    /// take the exact swarm tree entry for this bounded promotion.
+    pub discard_source: BTreeMap<String, DiscardSourceDecision>,
     /// Source merge commits an active receipt accounts for. A source commit that
     /// followed the last promotion merge is otherwise unapproved divergence, so
     /// without this the path-level authority above could never be reached.
@@ -70,6 +78,15 @@ pub struct ResolvedReceipt {
     pub source_pr: String,
     pub swarm_chain: Vec<String>,
     pub disposition: TransitionDisposition,
+}
+
+/// The reviewable decision behind an exceptional discard-source resolution.
+#[derive(Clone, Debug)]
+pub struct DiscardSourceDecision {
+    pub source_pr: String,
+    pub decision_receipt: String,
+    pub decision_merge_sha: String,
+    pub reason: String,
 }
 
 /// Repository access the evidence checks need.
@@ -170,6 +187,42 @@ fn check_path(
         if !path.swarm_chain.is_empty() {
             bail!("missing_in_swarm must not name swarm PRs");
         }
+        if path.resolution == Some(TransitionResolution::DiscardSource) {
+            let source_entry = tree_entry(port, workspace_root, refs.source_target, &path.path)?;
+            let swarm_entry = tree_entry(port, workspace_root, refs.swarm_target, &path.path)?;
+            if source_entry == swarm_entry {
+                bail!(
+                    "discard_source requires differing source and swarm tree entries, but both are {source_entry:?}"
+                );
+            }
+            verify_recorded_tree_entries(path, source_entry.as_ref(), swarm_entry.as_ref())?;
+            check_merged_at(
+                port,
+                workspace_root,
+                refs.swarm_repo,
+                &path.decision_receipt,
+                &path.decision_merge_sha,
+                refs.swarm_target,
+            )
+            .with_context(|| {
+                format!(
+                    "discard_source decision {}: decision receipt evidence",
+                    path.decision_receipt
+                )
+            })?;
+            authority.two_sided.remove(&path.path);
+            authority.awaiting_swarm.remove(&path.path);
+            authority.discard_source.insert(
+                path.path.clone(),
+                DiscardSourceDecision {
+                    source_pr: entry.source_pr.clone(),
+                    decision_receipt: path.decision_receipt.clone(),
+                    decision_merge_sha: path.decision_merge_sha.clone(),
+                    reason: path.reason.clone(),
+                },
+            );
+            return Ok(());
+        }
         // Deliberately not an authority grant. Swarm does not carry this change,
         // and the overlay keeps swarm content for paths outside
         // `policy/source-only-paths.toml`, so promoting would revert it. Record
@@ -178,6 +231,7 @@ fn check_path(
         // for this path. Keeping both would let the planner select stale
         // two-sided authority before it sees the newer blocking evidence.
         authority.two_sided.remove(&path.path);
+        authority.discard_source.remove(&path.path);
         authority
             .awaiting_swarm
             .insert(path.path.clone(), entry.source_pr.clone());
@@ -290,6 +344,7 @@ fn check_path(
             disposition: path.disposition,
         },
     );
+    authority.discard_source.remove(&path.path);
     Ok(())
 }
 
@@ -878,6 +933,10 @@ mod tests {
             path: vec![TransitionPath {
                 path: CARGO_LOCK.to_string(),
                 disposition,
+                resolution: None,
+                decision_receipt: String::new(),
+                decision_merge_sha: String::new(),
+                reason: String::new(),
                 swarm_chain: chain
                     .iter()
                     .map(|(receipt, _)| (*receipt).to_string())
@@ -1017,6 +1076,72 @@ mod tests {
             consumed.awaiting_swarm.is_empty() && consumed.two_sided.is_empty(),
             "a consumed receipt still granted authority"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn discard_source_grants_only_the_explicit_bounded_swarm_resolution() -> Result<()> {
+        let patch = section(CARGO_LOCK, "1.52.3", "1.53.0", "tokio");
+        let source_oid = "9f2c1b6a0d4e5f708192a3b4c5d6e7f809a1b2c3";
+        let swarm_oid = "8e1b2c3d4f5061728394a5b6c7d8e9f0a1b2c3d4";
+        let decision_sha = "7d0a1b2c3d4e5f60718293a4b5c6d7e8f9a0b1c2";
+        let source = format!("{SOURCE}#657");
+        let port = StubPort::new()
+            .merged(&source, "e6a72ad11ab22d03b1cf434b237bf0fff9c145bf", &patch)
+            .merged(&format!("{SWARM}#242"), decision_sha, "")
+            .blob("origin/main", CARGO_LOCK, source_oid)
+            .blob("swarm/main", CARGO_LOCK, swarm_oid);
+        let mut transition = entry(TransitionDisposition::MissingInSwarm, &[]);
+        let path = &mut transition.path[0];
+        path.resolution = Some(TransitionResolution::DiscardSource);
+        path.decision_receipt = format!("{SWARM}#242");
+        path.decision_merge_sha = decision_sha.to_string();
+        path.reason = "Reviewed swarm state supersedes the source transition copy.".to_string();
+        path.source_tree_entry = Some(blob_entry(source_oid));
+        path.swarm_tree_entry = Some(blob_entry(swarm_oid));
+
+        let authority = derive_authority(&port, Path::new("."), &refs(), &[transition.clone()])?;
+        let decision = authority
+            .discard_source
+            .get(CARGO_LOCK)
+            .context("discard_source must record its bounded decision")?;
+        assert_eq!(decision.source_pr, source);
+        assert_eq!(decision.decision_receipt, format!("{SWARM}#242"));
+        assert_eq!(decision.decision_merge_sha, decision_sha);
+        assert!(authority.awaiting_swarm.is_empty());
+        assert!(authority.two_sided.is_empty());
+
+        let unreachable_port = StubPort::new()
+            .merged(&source, "e6a72ad11ab22d03b1cf434b237bf0fff9c145bf", &patch)
+            .merged(&format!("{SWARM}#242"), decision_sha, "")
+            .unreachable(decision_sha)
+            .blob("origin/main", CARGO_LOCK, source_oid)
+            .blob("swarm/main", CARGO_LOCK, swarm_oid);
+        let error = derive_authority(
+            &unreachable_port,
+            Path::new("."),
+            &refs(),
+            &[transition.clone()],
+        )
+        .expect_err("an unreachable decision receipt must not grant authority");
+        assert!(format!("{error:#}").contains("decision receipt evidence"));
+        assert!(format!("{error:#}").contains("not reachable from swarm/main"));
+
+        let mut absent_source_transition = transition.clone();
+        absent_source_transition.path[0].source_tree_entry = None;
+        absent_source_transition.path[0].swarm_tree_entry = Some(blob_entry(swarm_oid));
+        let absent_source_port = StubPort::new()
+            .merged(&source, "e6a72ad11ab22d03b1cf434b237bf0fff9c145bf", &patch)
+            .merged(&format!("{SWARM}#242"), decision_sha, "")
+            .absent("origin/main", CARGO_LOCK)
+            .blob("swarm/main", CARGO_LOCK, swarm_oid);
+        let authority = derive_authority(
+            &absent_source_port,
+            Path::new("."),
+            &refs(),
+            &[absent_source_transition],
+        )?;
+        assert!(authority.discard_source.contains_key(CARGO_LOCK));
         Ok(())
     }
 

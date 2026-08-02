@@ -1122,6 +1122,14 @@ enum ResolutionBasis {
         swarm_chain: Vec<String>,
         disposition: String,
     },
+    /// An explicit reviewed decision discards a source-only transition change
+    /// and keeps the exact swarm tree entry for this bounded promotion.
+    DiscardedSource {
+        source_pr: String,
+        decision_receipt: String,
+        decision_merge_sha: String,
+        reason: String,
+    },
     /// Swarm changed a path the policy reserves to source, so the overlay would
     /// revert it.
     SwarmChangedSourceAuthoritative,
@@ -1152,7 +1160,10 @@ impl ResolutionBasis {
             Self::UnprovenTwoSided => format!(
                 "{path}: both repositories changed this path with no receipt proving they are reconciled"
             ),
-            Self::SourceOnlyPolicy | Self::SwarmProductChange | Self::ResolvedTransition { .. } => {
+            Self::SourceOnlyPolicy
+            | Self::SwarmProductChange
+            | Self::ResolvedTransition { .. }
+            | Self::DiscardedSource { .. } => {
                 format!("{path}: resolved")
             }
         }
@@ -1263,6 +1274,20 @@ fn plan_path_resolutions(
                     source_pr: receipt.source_pr.clone(),
                     swarm_chain: receipt.swarm_chain.clone(),
                     disposition: receipt.disposition.to_string(),
+                },
+            )
+        } else if let Some(decision) = transition_authority
+            .discard_source
+            .get(path.as_str())
+            .filter(|_| touched_by_source && !touched_by_swarm)
+        {
+            (
+                PathEffect::TakeSwarm,
+                ResolutionBasis::DiscardedSource {
+                    source_pr: decision.source_pr.clone(),
+                    decision_receipt: decision.decision_receipt.clone(),
+                    decision_merge_sha: decision.decision_merge_sha.clone(),
+                    reason: decision.reason.clone(),
                 },
             )
         } else if touched_by_source && !touched_by_swarm {
@@ -2598,6 +2623,57 @@ merge-old source-parent another-swarm-head
         // The exact blobs bind the decision to the trees it was made against.
         ensure!(decision["source_blob"].is_string() && decision["swarm_blob"].is_string());
         ensure!(decision["source_blob"] != decision["swarm_blob"]);
+        Ok(())
+    }
+
+    #[test]
+    fn discard_source_resolution_selects_swarm_content_for_source_only_drift() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let root = dir.path();
+        git_fixture(root, &["init", "--initial-branch=main"])?;
+        git_fixture(root, &["config", "user.email", "test@example.com"])?;
+        git_fixture(root, &["config", "user.name", "Promotion Test"])?;
+        fs::write(root.join("governance.md"), "base\n")?;
+        git_fixture(root, &["add", "-A"])?;
+        git_fixture(root, &["commit", "-m", "base"])?;
+        let base = git_fixture(root, &["rev-parse", "HEAD"])?;
+
+        git_fixture(root, &["switch", "-c", "swarm"])?;
+        let swarm_sha = git_fixture(root, &["rev-parse", "HEAD"])?;
+        git_fixture(root, &["switch", "main"])?;
+        fs::write(root.join("governance.md"), "source transition\n")?;
+        git_fixture(root, &["add", "-A"])?;
+        git_fixture(root, &["commit", "-m", "chore: source transition copy"])?;
+        let source_head = git_fixture(root, &["rev-parse", "HEAD"])?;
+
+        let mut authority = super::super::transition::TransitionAuthority::default();
+        authority.discard_source.insert(
+            "governance.md".to_string(),
+            super::super::transition::DiscardSourceDecision {
+                source_pr: "EffortlessMetrics/shiplog#674".to_string(),
+                decision_receipt: "EffortlessMetrics/shiplog-swarm#242".to_string(),
+                decision_merge_sha: "7d0a1b2c3d4e5f60718293a4b5c6d7e8f9a0b1c2".to_string(),
+                reason: "Reviewed swarm state supersedes the source transition copy.".to_string(),
+            },
+        );
+
+        let plan = plan_path_resolutions(
+            &SystemPort,
+            root,
+            &source_head,
+            &swarm_sha,
+            &base,
+            &[],
+            &authority,
+        )?;
+        ensure!(plan.decisions.len() == 1);
+        let decision = &plan.decisions[0];
+        ensure!(decision.effect == PathEffect::TakeSwarm);
+        ensure!(matches!(
+            decision.basis,
+            ResolutionBasis::DiscardedSource { .. }
+        ));
+        ensure_no_blocked_paths(&plan, &mut Vec::new())?;
         Ok(())
     }
 
