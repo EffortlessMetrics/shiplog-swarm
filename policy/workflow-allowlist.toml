@@ -13,6 +13,16 @@ status = "advisory"
 # See docs/FILE_POLICY.md.
 
 [[entry]]
+path = ".github/workflows/source-automation-guard.yml"
+owner = "repo-infra/release"
+reason = "Source-side fail-closed guard for routine Dependabot and Factory Droid product PRs. It runs only in canonical source, reads pull-request metadata without checkout, and leaves remediation in shiplog-swarm."
+permissions = ["contents:read", "pull-requests:read"]
+secrets_used = []
+external_actions = []
+created = "2026-08-02"
+expires = "permanent"
+
+[[entry]]
 path = ".github/workflows/contributor-acceptance.yml"
 owner = "repo-infra/ci"
 reason = "Fresh Linux and Windows contributor acceptance from a credential-free shiplog-swarm checkout. Proves the pinned toolchain, locked workspace build, canonical wrapper gate, and clean post-check worktree."
@@ -266,7 +276,7 @@ reason = "Out-of-band @droid mention handler (interactive)."
 permissions = ["contents:read", "pull-requests:write", "issues:write", "id-token:write", "actions:read"]
 secrets_used = ["MINIMAX_API_KEY", "FACTORY_API_KEY"]
 external_actions = [
-  "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0",
+  "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
   "EffortlessMetrics/droid-action-safe@7c1377ccbacddc95560d1570547a5baa51de01ec",
 ]
 created = "2026-05-09"
@@ -279,7 +289,7 @@ reason = "Factory Droid auto-review on PR open/sync/ready_for_review/reopened. A
 permissions = ["contents:write", "pull-requests:write", "issues:write", "id-token:write", "actions:read"]
 secrets_used = ["MINIMAX_API_KEY", "FACTORY_API_KEY"]
 external_actions = [
-  "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0",
+  "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
   "EffortlessMetrics/droid-action-safe@7c1377ccbacddc95560d1570547a5baa51de01ec",
 ]
 created = "2026-05-09"
@@ -292,7 +302,7 @@ reason = "Factory Droid weekly security scan."
 permissions = ["contents:write", "pull-requests:write", "issues:write", "id-token:write", "actions:read"]
 secrets_used = ["MINIMAX_API_KEY", "FACTORY_API_KEY"]
 external_actions = [
-  "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0",
+  "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
   "EffortlessMetrics/droid-action-safe@7c1377ccbacddc95560d1570547a5baa51de01ec",
 ]
 created = "2026-05-09"
