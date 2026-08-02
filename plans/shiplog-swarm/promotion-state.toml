@@ -68,7 +68,7 @@ deferred_receipt_carry = []
 source_pr = "EffortlessMetrics/shiplog#657"
 source_merge_sha = "e6a72ad11ab22d03b1cf434b237bf0fff9c145bf"
 source_target = "b31d5f6d9700698b463d8f2b71b9d48a191f433c"
-swarm_target = "b5c4a117083e7a4a4668a43d67ff02d465d83990"
+swarm_target = "166ed9ca95751840dc8d775c72382d244d3b4bf8"
 
 [[transition.path]]
 path = "Cargo.lock"
@@ -77,10 +77,104 @@ source_tree_entry = { mode = "100644", object_type = "blob", oid = "7f132aa20e8b
 swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "620299ce104f116305997015c47ac697876981eb" }
 
 [[transition]]
+source_pr = "EffortlessMetrics/shiplog#666"
+source_merge_sha = "d88d59a8afd7eee445c3214c5f89ca7ccd50e4de"
+source_target = "b31d5f6d9700698b463d8f2b71b9d48a191f433c"
+swarm_target = "166ed9ca95751840dc8d775c72382d244d3b4bf8"
+
+[transition.swarm_merge_sha]
+"EffortlessMetrics/shiplog-swarm#274" = "1ca35e97ba506062376e6f78b6633003e25db963"
+
+[[transition.path]]
+path = ".codex/goals/README.md"
+disposition = "tree_equivalent"
+swarm_chain = ["EffortlessMetrics/shiplog-swarm#274"]
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "2d6d4158c44cdf05b9441f53165a386ccccb39ba" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "2d6d4158c44cdf05b9441f53165a386ccccb39ba" }
+
+[[transition.path]]
+path = ".codex/goals/active.toml"
+disposition = "missing_in_swarm"
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "a8992784bb0da816d3506aa392310a1555adcfe3" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "e26282c9fa2e9d5102f2fb918be3494cbf40d46d" }
+
+[[transition.path]]
+path = "AGENTS.md"
+disposition = "missing_in_swarm"
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "5d24413ccc6b77e293d7c035be16440c82934322" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "85abfd3f0b7fe11d1b5c2a98bd64f3e1159521b9" }
+
+[[transition.path]]
+path = "docs/specs/SHIPLOG-SPEC-0010-source-of-truth-stack.md"
+disposition = "tree_equivalent"
+swarm_chain = ["EffortlessMetrics/shiplog-swarm#274"]
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "d5626f43b1d2f0fa5d7aefb3f9bd764a1f6b9fcf" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "d5626f43b1d2f0fa5d7aefb3f9bd764a1f6b9fcf" }
+
+[[transition.path]]
+path = "docs/specs/SHIPLOG-SPEC-0011-shiplog-swarm-cutover-contract.md"
+disposition = "missing_in_swarm"
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "f7d992c257002e21a812ba06a64866cb0e318ebe" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "5e1ce6c156a072ce62b73aae644e0a44704e9516" }
+
+[[transition.path]]
+path = "docs/status/SUPPORT_TIERS.md"
+disposition = "missing_in_swarm"
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "b9360f08d0468d7e7d1b5b79b98d69e0bf8fd0a2" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "301913b6034d03b6fce6b1adb4ad48b22a89bac7" }
+
+[[transition.path]]
+path = "docs/templates/plan-item.md"
+disposition = "tree_equivalent"
+swarm_chain = ["EffortlessMetrics/shiplog-swarm#274"]
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "8ba419c7b3dc69f0377e4d9d65dd93187c459609" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "8ba419c7b3dc69f0377e4d9d65dd93187c459609" }
+
+[[transition.path]]
+path = "docs/xtask.md"
+disposition = "missing_in_swarm"
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "55a4b4ee289575f2c3478e9bc9ac06b2ac382b93" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "6fcb4394cfaa1323a355cb627c100fd429bed27c" }
+
+[[transition.path]]
+path = "plans/shiplog-swarm/promotion-runbook.md"
+disposition = "missing_in_swarm"
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "b56d190691c1c674918da9989d79d112b7d45e92" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "da7873d45b82bce0192eb959d47478c41ee891aa" }
+
+[[transition.path]]
+path = "xtask/src/tasks/check_goals.rs"
+disposition = "tree_equivalent"
+swarm_chain = ["EffortlessMetrics/shiplog-swarm#274"]
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "acec1fa76f35afcf2ad9f83415966f6c24860247" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "acec1fa76f35afcf2ad9f83415966f6c24860247" }
+
+[[transition.path]]
+path = "xtask/src/tasks/check_support_tiers.rs"
+disposition = "tree_equivalent"
+swarm_chain = ["EffortlessMetrics/shiplog-swarm#274"]
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "ab13ee6831f15e5764f04c566c12a25f8d342ccd" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "ab13ee6831f15e5764f04c566c12a25f8d342ccd" }
+
+[[transition.path]]
+path = "xtask/tests/check_goals_direct_commands.rs"
+disposition = "tree_equivalent"
+swarm_chain = ["EffortlessMetrics/shiplog-swarm#274"]
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "f868ab64a4b3982329f4e5257b98490e4d7f25b2" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "f868ab64a4b3982329f4e5257b98490e4d7f25b2" }
+
+[[transition.path]]
+path = "xtask/tests/cli.rs"
+disposition = "tree_equivalent"
+swarm_chain = ["EffortlessMetrics/shiplog-swarm#274"]
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "ce70e4c73f91f8fb9d40e2c1c5103bc8291249c8" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "ce70e4c73f91f8fb9d40e2c1c5103bc8291249c8" }
+
+[[transition]]
 source_pr = "EffortlessMetrics/shiplog#658"
 source_merge_sha = "1d24d256fa9e976bc608e54cf176364a4791273e"
 source_target = "b31d5f6d9700698b463d8f2b71b9d48a191f433c"
-swarm_target = "b5c4a117083e7a4a4668a43d67ff02d465d83990"
+swarm_target = "166ed9ca95751840dc8d775c72382d244d3b4bf8"
 
 [transition.swarm_merge_sha]
 "EffortlessMetrics/shiplog-swarm#247" = "ba4aeaf78cb17f980f1da05d24d9638033b95f68"
@@ -96,7 +190,7 @@ swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "620299ce104f1
 source_pr = "EffortlessMetrics/shiplog#659"
 source_merge_sha = "0da4b68ccc8763375aaa1422b6d2d3280c3fe3c9"
 source_target = "b31d5f6d9700698b463d8f2b71b9d48a191f433c"
-swarm_target = "b5c4a117083e7a4a4668a43d67ff02d465d83990"
+swarm_target = "166ed9ca95751840dc8d775c72382d244d3b4bf8"
 
 [transition.swarm_merge_sha]
 "EffortlessMetrics/shiplog-swarm#248" = "2437c0c54dbdcd3a62fb3e9573363d8e6027d1ef"
@@ -112,7 +206,7 @@ swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "620299ce104f1
 source_pr = "EffortlessMetrics/shiplog#660"
 source_merge_sha = "de23dcb67d17242f081e73eb81f47b8fc07a8773"
 source_target = "b31d5f6d9700698b463d8f2b71b9d48a191f433c"
-swarm_target = "b5c4a117083e7a4a4668a43d67ff02d465d83990"
+swarm_target = "166ed9ca95751840dc8d775c72382d244d3b4bf8"
 
 [transition.swarm_merge_sha]
 "EffortlessMetrics/shiplog-swarm#249" = "1543c9f543778a17ebf2ef2b654b29e24cd1dc32"
@@ -128,7 +222,7 @@ swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "620299ce104f1
 source_pr = "EffortlessMetrics/shiplog#661"
 source_merge_sha = "a94bfaf6880c6873d4dd0fce7bf9733fb1b61734"
 source_target = "b31d5f6d9700698b463d8f2b71b9d48a191f433c"
-swarm_target = "b5c4a117083e7a4a4668a43d67ff02d465d83990"
+swarm_target = "166ed9ca95751840dc8d775c72382d244d3b4bf8"
 
 [transition.swarm_merge_sha]
 "EffortlessMetrics/shiplog-swarm#250" = "abb7fae01d1c04217ea275a819f932dc98e9dd0c"
