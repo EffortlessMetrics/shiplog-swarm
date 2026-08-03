@@ -1,9 +1,18 @@
 # Bounded Transition Decisions
 
-This record captures the reviewed decision for the next bounded promotion of
-`shiplog-swarm` into `shiplog`. It is evidence for a later
-`promotion-state.toml` update; it is not a source-authority policy and it does
-not authorize a promotion by itself.
+This record captured the reviewed decisions for the bounded promotion of
+`shiplog-swarm` into `shiplog` that landed as source PR #682. It is historical
+evidence, not a source-authority policy, and it does not authorize a future
+promotion by itself.
+
+## Closeout
+
+The decisions in this ledger were bound to exact tree entries and consumed by
+`EffortlessMetrics/shiplog#682`, regular-merge source commit
+`2f69daf921d74fb9472584c2a0df31857cfa2384`. The post-merge routed proof is
+run `30806322336`. The current bounded state is recorded in
+[`promotion-state.toml`](promotion-state.toml); these entries remain here so
+their evidence and review reasoning are not lost.
 
 ## Decision boundary
 

@@ -39,17 +39,34 @@ docs-only PR, fuzz on a docs PR, BDD on a docs PR) should report
 acceptable. The lane map is the source of truth for which skips are
 allowed.
 
+## Current enforcement state
+
+The two repositories have different GitHub branch-protection state:
+
+- `EffortlessMetrics/shiplog-swarm/main` is protected. It requires exactly
+  `Shiplog Rust Small Result`, with strict status checks enabled. Force pushes
+  and branch deletion are disabled; administrator enforcement is disabled.
+- `EffortlessMetrics/shiplog/main` is currently unprotected. Its protection
+  endpoint returns 404 (`Branch not protected`), so no GitHub-level required
+  check is enforced there. Source-side enforcement remains the separate work
+  tracked by issue #294.
+
+The swarm setting is the normal-development merge gate. The source setting is
+the release/public-surface boundary and must not be changed as part of an
+ordinary swarm PR.
+
 ## Required checks (target steady state)
 
 These describe what should appear in branch-protection settings for
-`main` once protection is enabled. **`main` is currently unprotected**
-at the GitHub level (verified via the `/repos/.../branches/main/protection`
-endpoint returning 404 "Branch not protected"). The table is the
-**target** set, encoded by the routed default PR summary and by
+`shiplog/main` once source protection is enabled. The source `main` branch is
+currently unprotected at the GitHub level (verified via the
+`/repos/EffortlessMetrics/shiplog/branches/main/protection` endpoint returning
+404 "Branch not protected"). The table is the **target** set, encoded by the
+routed default PR summary and by
 `blocking = true` lanes in
 [`policy/ci-lanes.toml`](../../policy/ci-lanes.toml). It describes what
-would be required-enforced if protection were enabled, not what is
-currently enforced.
+would be required-enforced on `shiplog/main` if source protection were
+enabled, not what is currently enforced on either repository.
 
 | Required check | Source | Why required |
 |---|---|---|
@@ -81,10 +98,11 @@ These should **not** be required:
 ## Migration history
 
 The v0.5.0 ladder shipped every PR that would have triggered a
-branch-protection setting change under the rule above. Because `main`
-was never protected during the ladder, those rule-triggered setting
-changes were not actually performed — they remain forward-looking
-guidance.
+branch-protection setting change under the rule above. Because
+`shiplog/main` was never protected during the ladder, those source-side
+setting changes
+were not actually performed — they remain forward-looking guidance. Swarm
+protection is recorded separately in the current enforcement section above.
 
 - **PR #146** added `pr-plan / forecast` as a check. Required-eligible
   but not enforced (no protection setting was added).
@@ -100,26 +118,30 @@ guidance.
 - **PR #165** added `Policy gates` to `ci.yml` as a blocking job and
   registered `[lane.ci_policy]` with `blocking = true`.
 
-When/if branch-protection is enabled on `main`, the sequencing rules
+When/if branch-protection is enabled on `shiplog/main`, the sequencing rules
 in [`required-check-migration.md`](required-check-migration.md)
 describe how to make those required-check changes safely (avoid
 pending-check deadlocks, rename in-merge, etc.).
 
-## Why no checks are blocking today
+## Why source checks are not blocking today
 
-GitHub branch-protection on `main` is disabled. The
+GitHub branch-protection on `shiplog/main` is disabled. The
 `/repos/EffortlessMetrics/shiplog/branches/main/protection` endpoint
 returns 404 "Branch not protected"; no required-check enforcement is
-active. The "target steady state" table above describes what
+active on the source repository. The `shiplog-swarm/main` branch does
+enforce `Shiplog Rust Small Result`; that is the normal-development gate.
+The "target steady state" table above describes what
 `blocking = true` lanes in `policy/ci-lanes.toml` would require if
-protection were enabled — it is the source of truth for the **intended**
-required-check set, not a description of currently-enforced behavior.
+source protection were enabled — it is the source of truth for the
+**intended** source required-check set, not a description of currently
+enforced behavior.
 
-Enabling protection (and choosing the corresponding required-check
-list) is a separate release decision. Until that happens, every
-`ci.yml` job runs but no GitHub-level gate forces a green status
-before merge — reviewers and the CodeRabbit/Droid advisory lanes
-provide the practical merge gate today.
+Enabling protection (and choosing the corresponding required-check list) on
+`shiplog/main` is a separate release decision. Until that happens, the
+configured `ci.yml` routes still run for pushes to `main` and `full-ci` pull
+requests, but no source GitHub-level gate forces a green status before merge
+— reviewers and the CodeRabbit/Droid advisory lanes provide the practical
+source merge gate today.
 
 ## See also
 
