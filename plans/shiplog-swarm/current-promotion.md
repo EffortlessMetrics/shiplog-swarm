@@ -6,6 +6,7 @@
 **Source promotion:** `EffortlessMetrics/shiplog#655`
 **Source merge commit:** `160d430f1a5af338537e35ff98b8ddda14d4673c`
 **Source governance:** `EffortlessMetrics/shiplog#656`
+**Source governance:** `EffortlessMetrics/shiplog#679`
 
 ## Included work
 
@@ -56,8 +57,8 @@
   - decision receipt: `EffortlessMetrics/shiplog-swarm#322` at `e0c132d363c77b15ff2b16d04b6b1e60f0c192a0`
   - consumed by: `(active)`
 - path: `policy/automation-authority.toml`
-  - reason: The repository-role policy is a swarm control-plane artifact; canonical source intentionally retains its absence.
-  - source target: `b31d5f6d9700698b463d8f2b71b9d48a191f433c`
+  - reason: Canonical source now carries its explicit source-role policy from #679; this bounded decision retains that release-governance file while swarm keeps its distinct swarm-role policy.
+  - source target: `3551eb9d5b5d448d9f3d3f4df6b7398b46346595`
   - swarm target: `e0c132d363c77b15ff2b16d04b6b1e60f0c192a0`
   - decision receipt: `EffortlessMetrics/shiplog-swarm#322` at `e0c132d363c77b15ff2b16d04b6b1e60f0c192a0`
   - consumed by: `(active)`
