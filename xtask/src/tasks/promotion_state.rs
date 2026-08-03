@@ -671,6 +671,33 @@ fn render_markdown(state: &PromotionState) -> String {
         }
     }
 
+    out.push_str("\n## Source-authority decisions\n\n");
+    if state.source_authority.is_empty() {
+        out.push_str("- (none recorded)\n");
+    } else {
+        for decision in &state.source_authority {
+            out.push_str(&format!("- path: `{}`\n", decision.path));
+            out.push_str(&format!("  - reason: {}\n", decision.reason));
+            out.push_str(&format!(
+                "  - source target: `{}`\n",
+                decision.source_target
+            ));
+            out.push_str(&format!("  - swarm target: `{}`\n", decision.swarm_target));
+            out.push_str(&format!(
+                "  - decision receipt: `{}` at `{}`\n",
+                decision.decision_receipt, decision.decision_merge_sha
+            ));
+            out.push_str(&format!(
+                "  - consumed by: `{}`\n",
+                if decision.consumed_by.is_empty() {
+                    "(active)"
+                } else {
+                    decision.consumed_by.as_str()
+                }
+            ));
+        }
+    }
+
     out.push_str("\n## Truth hierarchy\n\n");
     out.push_str(
         "1. Git refs and ancestry\n\
@@ -1241,5 +1268,29 @@ deferred_receipt_carry = ["EffortlessMetrics/shiplog-swarm#240"]
         assert!(first.contains("c4fdba223d1c5c5b99a95b159ab8123d83d4b842"));
         assert!(first.contains("EffortlessMetrics/shiplog-swarm#248"));
         assert!(first.contains("## Truth hierarchy"));
+    }
+
+    #[test]
+    fn generated_markdown_includes_source_authority_metadata() {
+        let mut state = completed_manifest();
+        state.source_authority.push(SourceAuthorityDecision {
+            path: ".github/workflows/release.yml".to_string(),
+            source_target: "1111111111111111111111111111111111111111".to_string(),
+            swarm_target: "2222222222222222222222222222222222222222".to_string(),
+            decision_receipt: "EffortlessMetrics/shiplog-swarm#319".to_string(),
+            decision_merge_sha: "7d0a1b2c3d4e5f60718293a4b5c6d7e8f9a0b1c2".to_string(),
+            reason: "Source retains release-writer authority.".to_string(),
+            consumed_by: String::new(),
+            source_tree_entry: None,
+            swarm_tree_entry: None,
+        });
+
+        let rendered = render_markdown(&state);
+        assert!(rendered.contains("## Source-authority decisions"));
+        assert!(rendered.contains(".github/workflows/release.yml"));
+        assert!(rendered.contains("Source retains release-writer authority."));
+        assert!(rendered.contains("source target: `1111111111111111111111111111111111111111`"));
+        assert!(rendered.contains("swarm target: `2222222222222222222222222222222222222222`"));
+        assert!(rendered.contains("consumed by: `(active)`"));
     }
 }

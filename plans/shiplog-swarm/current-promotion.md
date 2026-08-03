@@ -29,6 +29,10 @@
 - `EffortlessMetrics/shiplog-swarm#260`
 - `EffortlessMetrics/shiplog-swarm#261`
 
+## Source-authority decisions
+
+- (none recorded)
+
 ## Truth hierarchy
 
 1. Git refs and ancestry

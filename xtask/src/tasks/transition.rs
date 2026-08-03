@@ -183,6 +183,12 @@ pub fn derive_source_authority(
         if decision.consumed_by().is_some() {
             continue;
         }
+        if authority.contains_key(&decision.path) {
+            bail!(
+                "source_authority path {} appears more than once",
+                decision.path
+            );
+        }
         if !source_only_paths.iter().any(|path| path == &decision.path) {
             bail!(
                 "source_authority path {} is not listed in policy/source-only-paths.toml",
@@ -223,15 +229,7 @@ pub fn derive_source_authority(
                 decision.path
             )
         })?;
-        if authority
-            .insert(decision.path.clone(), decision.clone())
-            .is_some()
-        {
-            bail!(
-                "source_authority path {} appears more than once",
-                decision.path
-            );
-        }
+        authority.insert(decision.path.clone(), decision.clone());
     }
     Ok(authority)
 }
@@ -475,7 +473,7 @@ fn ensure_exact_target_values(
     }
     if source_target != refs.source_target || swarm_target != refs.swarm_target {
         bail!(
-            "receipt targets ({}, {}) do not match promotion targets ({}, {})",
+            "{label}: receipt targets ({}, {}) do not match promotion targets ({}, {})",
             source_target,
             swarm_target,
             refs.source_target,
@@ -1306,6 +1304,28 @@ mod tests {
             authority.get(path).map(|value| value.reason.as_str()),
             Some(decision.reason.as_str())
         );
+        Ok(())
+    }
+
+    #[test]
+    fn consumed_source_authority_grants_nothing() -> Result<()> {
+        let path = "governance.yml";
+        let mut decision = source_authority_decision(
+            path,
+            "9f2c1b6a0d4e5f708192a3b4c5d6e7f809a1b2c3",
+            "8e1b2c3d4f5061728394a5b6c7d8e9f0a1b2c3d4",
+            "7d0a1b2c3d4e5f60718293a4b5c6d7e8f9a0b1c2",
+        );
+        decision.consumed_by = format!("{SOURCE}#655");
+
+        let authority = derive_source_authority(
+            &StubPort::new(),
+            Path::new("."),
+            &refs(),
+            &[path.to_string()],
+            &[decision],
+        )?;
+        assert!(authority.is_empty());
         Ok(())
     }
 

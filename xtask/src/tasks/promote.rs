@@ -315,7 +315,7 @@ fn run_with_port_to(
         &["rev-parse", &format!("{}^{{commit}}", inputs.source_ref)],
     )?;
     let source_only_paths = load_source_only_paths(&inputs.workspace_root)?;
-    let transition_authority = super::transition::derive_authority(
+    let mut transition_authority = super::transition::derive_authority(
         port,
         &inputs.workspace_root,
         &super::transition::TransitionRefs {
@@ -338,7 +338,6 @@ fn run_with_port_to(
         &source_only_paths,
         &state.source_authority,
     )?;
-    let mut transition_authority = transition_authority;
     transition_authority.source_authority = source_authority;
     // Commits the ancestry walk may step over: approved governance, plus source
     // merges an active transition receipt accounts for. Both are recorded

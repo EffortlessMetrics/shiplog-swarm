@@ -178,9 +178,23 @@ source-only policy.
 The source-only policy remains blocking when swarm changes one of its paths.
 When review confirms that the source copy must win for one bounded promotion,
 record a separate top-level `[[source_authority]]` decision in
-`promotion-state.toml`. This is an explicit `keep_source` outcome; it is not a
-change to `source-only-paths.toml` and does not grant permanent source
-authority.
+`promotion-state.toml`. The planner records this as a `kept-source` resolution
+basis; it is not a change to `source-only-paths.toml` and does not grant
+permanent source authority.
+
+Example shape:
+
+```toml
+[[source_authority]]
+path = ".github/workflows/release.yml"
+source_target = "<exact-source-target-sha>"
+swarm_target = "<exact-swarm-target-sha>"
+decision_receipt = "EffortlessMetrics/shiplog-swarm#319"
+decision_merge_sha = "<decision-receipt-merge-sha>"
+reason = "The canonical source repository retains release-writer authority."
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "<source-target-oid>" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "<swarm-target-oid>" }
+```
 
 An active decision must name the exact `source_target` and `swarm_target`, the
 merged decision receipt and full `decision_merge_sha`, a human-readable
