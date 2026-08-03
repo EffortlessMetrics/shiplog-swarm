@@ -498,6 +498,26 @@ source_tree_entry = { mode = "100644", object_type = "blob", oid = "3d58577fa9e5
 swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "3d58577fa9e518b76d22c266b8c861f6dca36335" }
 
 [[transition.path]]
+path = "xtask/src/tasks/promotion_state.rs"
+disposition = "converged_at_target"
+resolution = "discard_source"
+decision_receipt = "EffortlessMetrics/shiplog-swarm#353"
+decision_merge_sha = "fc19c648c9eba8a76a67d55af55cd2a5bc77291c"
+reason = "The source and swarm copies matched at the reviewed evidence target; the later swarm transition-verifier fix is a product change that must remain on swarm."
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "64694806eb77e36c98dcdf52d790acd24eb16add" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "64694806eb77e36c98dcdf52d790acd24eb16add" }
+
+[[transition.path]]
+path = "xtask/src/tasks/transition.rs"
+disposition = "converged_at_target"
+resolution = "discard_source"
+decision_receipt = "EffortlessMetrics/shiplog-swarm#353"
+decision_merge_sha = "fc19c648c9eba8a76a67d55af55cd2a5bc77291c"
+reason = "The source and swarm copies matched at the reviewed evidence target; the later swarm transition-verifier fix is a product change that must remain on swarm."
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "7a0f071dfb0e14cc1bb5b45b5c4611982b523503" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "7a0f071dfb0e14cc1bb5b45b5c4611982b523503" }
+
+[[transition.path]]
 path = "plans/shiplog-swarm/transition-decisions.md"
 disposition = "missing_in_swarm"
 resolution = "discard_source"
