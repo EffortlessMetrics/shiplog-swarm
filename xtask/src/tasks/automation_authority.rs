@@ -345,6 +345,8 @@ fn inspect_workflow(path: &Path, role: RepositoryRole, findings: &mut Vec<String
         let contents = permission(effective, "contents");
         let source_writer =
             name == "release.yml" && matches!(job_name, "create-release" | "upload-assets");
+        let source_review_bot =
+            role == RepositoryRole::Source && matches!(name, "droid-review.yml" | "droid.yml");
         match role {
             RepositoryRole::Swarm if name == "release.yml" && contents != Some("read") => {
                 findings.push(format!(
@@ -368,7 +370,9 @@ fn inspect_workflow(path: &Path, role: RepositoryRole, findings: &mut Vec<String
         }
         if role == RepositoryRole::Source {
             for scope in write_scopes(effective) {
-                if !(source_writer && scope == "contents") {
+                let allowed = (source_writer && scope == "contents")
+                    || (source_review_bot && matches!(scope.as_str(), "issues" | "pull-requests"));
+                if !allowed {
                     findings.push(format!(
                         "source workflow {name:?} job {job_name:?} enables forbidden {scope}: write"
                     ));
@@ -482,10 +486,15 @@ mod tests {
         } else {
             "swarm"
         };
-        let policy = include_str!("../../../policy/automation-authority.toml").replace(
-            "repository_role = \"swarm\"",
-            &format!("repository_role = \"{role_name}\""),
-        );
+        let policy = include_str!("../../../policy/automation-authority.toml")
+            .replace(
+                "repository_role = \"swarm\"",
+                &format!("repository_role = \"{role_name}\""),
+            )
+            .replace(
+                "repository_role = \"source\"",
+                &format!("repository_role = \"{role_name}\""),
+            );
         fs::write(dir.path().join("policy/automation-authority.toml"), policy)?;
         let updates = if role == RepositoryRole::Source {
             "updates: []\n"
@@ -548,6 +557,19 @@ mod tests {
     #[test]
     fn accepts_read_only_source_verification() -> Result<()> {
         let dir = fixture(RepositoryRole::Source, false)?;
+        ensure!(inspect(dir.path(), RepositoryRole::Source)?.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn source_review_bots_may_write_comments_without_repository_contents() -> Result<()> {
+        let dir = fixture(RepositoryRole::Source, false)?;
+        for name in ["droid-review.yml", "droid.yml"] {
+            fs::write(
+                dir.path().join(".github/workflows").join(name),
+                "permissions:\n  contents: read\n  pull-requests: write\n  issues: write\n  actions: read\njobs:\n  review:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo review\n",
+            )?;
+        }
         ensure!(inspect(dir.path(), RepositoryRole::Source)?.is_empty());
         Ok(())
     }
