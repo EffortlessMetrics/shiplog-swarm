@@ -185,7 +185,8 @@ fn inspect_source_bot_guard(workflows: &Path, findings: &mut Vec<String>) -> Res
     let yaml: Yaml = serde_yaml::from_str(&text)
         .with_context(|| format!("parse source guard workflow {}", path.display()))?;
 
-    let trigger = yaml_get(&yaml, "on").and_then(|value| yaml_get(value, "pull_request_target"));
+    let on = yaml_get(&yaml, "on").context("source automation guard must define triggers")?;
+    let trigger = yaml_get(on, "pull_request_target");
     let trigger_types = trigger
         .and_then(|value| yaml_get(value, "types"))
         .and_then(Yaml::as_sequence);
@@ -196,6 +197,31 @@ fn inspect_source_bot_guard(workflows: &Path, findings: &mut Vec<String>) -> Res
             findings.push(format!(
                 "source automation guard must trigger pull_request_target on {required:?}"
             ));
+        }
+    }
+
+    let Some(dispatch) = yaml_get(on, "workflow_dispatch") else {
+        findings.push(
+            "source automation guard must expose workflow_dispatch for synthetic actor proof"
+                .to_string(),
+        );
+        return Ok(());
+    };
+    let author_login =
+        yaml_get(dispatch, "inputs").and_then(|value| yaml_get(value, "author_login"));
+    if author_login.is_none() {
+        findings.push(
+            "source automation guard workflow_dispatch must define author_login input".to_string(),
+        );
+    } else if let Some(author_login) = author_login {
+        if yaml_get(author_login, "required").and_then(Yaml::as_bool) != Some(true) {
+            findings
+                .push("source automation guard author_login input must be required".to_string());
+        }
+        if yaml_get(author_login, "type").and_then(Yaml::as_str) != Some("string") {
+            findings.push(
+                "source automation guard author_login input must have type string".to_string(),
+            );
         }
     }
 
@@ -223,8 +249,8 @@ fn inspect_source_bot_guard(workflows: &Path, findings: &mut Vec<String>) -> Res
         .unwrap_or_default();
     for required in [
         "github.repository == 'EffortlessMetrics/shiplog'",
-        "dependabot[bot]",
-        "factory-droid[bot]",
+        "github.event_name == 'pull_request_target'",
+        "github.event_name == 'workflow_dispatch'",
     ] {
         if !condition.contains(required) {
             findings.push(format!(
@@ -246,6 +272,19 @@ fn inspect_source_bot_guard(workflows: &Path, findings: &mut Vec<String>) -> Res
     let mut strings = Vec::new();
     collect_strings(job, &mut strings);
     let joined = strings.join("\n");
+    for required in [
+        "github.event.pull_request.user.login",
+        "inputs.author_login",
+        "case \"$PR_AUTHOR\" in",
+        "'dependabot[bot]'",
+        "'factory-droid[bot]'",
+    ] {
+        if !joined.contains(required) {
+            findings.push(format!(
+                "source automation guard must evaluate required actor marker {required:?}"
+            ));
+        }
+    }
     if joined.contains("actions/checkout") {
         findings.push("source automation guard must not check out an untrusted head".to_string());
     }
@@ -541,7 +580,7 @@ mod tests {
             fs::write(
                 dir.path()
                     .join(".github/workflows/source-automation-guard.yml"),
-                "name: Source Automation Guard\non:\n  pull_request_target:\n    types: [opened, reopened, synchronize]\npermissions:\n  contents: read\n  pull-requests: read\njobs:\n  reject-routine-bot-pr:\n    if: >-\n      github.repository == 'EffortlessMetrics/shiplog' &&\n      (github.event.pull_request.user.login == 'dependabot[bot]' ||\n      github.event.pull_request.user.login == 'factory-droid[bot]')\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo guard && exit 1\n",
+                "name: Source Automation Guard\non:\n  pull_request_target:\n    types: [opened, reopened, synchronize]\n  workflow_dispatch:\n    inputs:\n      author_login:\n        required: true\n        type: string\npermissions:\n  contents: read\n  pull-requests: read\njobs:\n  reject-routine-bot-pr:\n    if: >-\n      github.repository == 'EffortlessMetrics/shiplog' &&\n      (github.event_name == 'pull_request_target' ||\n      github.event_name == 'workflow_dispatch')\n    runs-on: ubuntu-latest\n    steps:\n      - name: Evaluate actor\n        env:\n          PR_AUTHOR: ${{ github.event_name == 'workflow_dispatch' && inputs.author_login || github.event.pull_request.user.login }}\n        run: |\n          case \"$PR_AUTHOR\" in\n            'dependabot[bot]'|'factory-droid[bot]')\n              exit 1\n              ;;\n            *)\n              echo allowed\n              ;;\n          esac\n",
             )?;
         }
         Ok(dir)
@@ -636,14 +675,33 @@ mod tests {
     }
 
     #[test]
+    fn source_guard_requires_synthetic_actor_input() -> Result<()> {
+        let dir = fixture(RepositoryRole::Source, false)?;
+        let path = dir
+            .path()
+            .join(".github/workflows/source-automation-guard.yml");
+        let text = fs::read_to_string(&path)?.replace("author_login:", "unexpected_input:");
+        fs::write(path, text)?;
+
+        let findings = inspect(dir.path(), RepositoryRole::Source)?;
+
+        ensure!(
+            findings
+                .iter()
+                .any(|finding| finding.contains("author_login input"))
+        );
+        Ok(())
+    }
+
+    #[test]
     fn source_guard_rejects_checkout_and_named_secrets() -> Result<()> {
         let dir = fixture(RepositoryRole::Source, false)?;
         let path = dir
             .path()
             .join(".github/workflows/source-automation-guard.yml");
         let text = fs::read_to_string(&path)?.replace(
-            "steps:\n      - run: echo guard && exit 1",
-            "steps:\n      - uses: actions/checkout@pinned\n        env:\n          TOKEN: ${{ secrets.TOKEN }}\n      - run: echo guard && exit 1",
+            "    steps:\n",
+            "    steps:\n      - uses: actions/checkout@pinned\n        env:\n          TOKEN: ${{ secrets.TOKEN }}\n      - run: echo guard && exit 1\n",
         );
         fs::write(path, text)?;
 
