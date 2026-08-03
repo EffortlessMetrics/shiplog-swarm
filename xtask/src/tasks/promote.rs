@@ -1760,7 +1760,7 @@ fn prepare_source_overlay(
         // reverted, reintroduced, or type-changed surfaces here no matter which
         // step got it wrong.
         let read_entries = |revision: &str| -> Result<BTreeMap<String, TreeEntry>> {
-            let listing = git(&["ls-tree", "-rz", "--full-tree", revision])?;
+            let listing = git(&["ls-tree", "-rz", "-r", "--full-tree", revision])?;
             parse_tree_entries(&listing)
         };
         let overlay_entries = read_entries(&overlay_sha)?;
@@ -3389,6 +3389,56 @@ merge-old source-parent another-swarm-head
         ensure!(
             error.to_string().contains("must have exactly one parent"),
             "unexpected error: {error}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn overlay_verifies_nested_source_and_swarm_paths() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let root = dir.path();
+        git_fixture(root, &["init", "--initial-branch=main"])?;
+        git_fixture(root, &["config", "user.email", "test@example.com"])?;
+        git_fixture(root, &["config", "user.name", "Promotion Test"])?;
+        fs::create_dir_all(root.join("nested"))?;
+        fs::write(root.join("nested/source.txt"), "base source\n")?;
+        fs::write(root.join("nested/product.txt"), "base product\n")?;
+        git_fixture(root, &["add", "nested"])?;
+        git_fixture(root, &["commit", "-m", "base"])?;
+
+        git_fixture(root, &["switch", "-c", "swarm"])?;
+        fs::write(root.join("nested/source.txt"), "swarm source\n")?;
+        fs::write(root.join("nested/product.txt"), "swarm product\n")?;
+        git_fixture(root, &["add", "nested"])?;
+        git_fixture(root, &["commit", "-m", "swarm nested changes"])?;
+        let swarm_sha = git_fixture(root, &["rev-parse", "HEAD"])?;
+
+        git_fixture(root, &["switch", "main"])?;
+        fs::write(root.join("nested/source.txt"), "source authority\n")?;
+        git_fixture(root, &["add", "nested/source.txt"])?;
+        git_fixture(root, &["commit", "-m", "source nested change"])?;
+        let source_head = git_fixture(root, &["rev-parse", "HEAD"])?;
+
+        let overlay = prepare_source_overlay(
+            &SystemPort,
+            root,
+            &source_head,
+            &swarm_sha,
+            &["nested/source.txt".to_string()],
+            "1234567890abcdef1234567890abcdef12345678",
+            false,
+        )?;
+        ensure!(
+            git_fixture(
+                root,
+                &["show", &format!("{}:nested/source.txt", overlay.sha)]
+            )? == "source authority"
+        );
+        ensure!(
+            git_fixture(
+                root,
+                &["show", &format!("{}:nested/product.txt", overlay.sha)]
+            )? == "swarm product"
         );
         Ok(())
     }
