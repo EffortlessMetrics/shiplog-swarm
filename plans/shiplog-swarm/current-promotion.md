@@ -7,6 +7,7 @@
 **Source merge commit:** `160d430f1a5af338537e35ff98b8ddda14d4673c`
 **Source governance:** `EffortlessMetrics/shiplog#656`
 **Source governance:** `EffortlessMetrics/shiplog#679`
+**Source governance:** `EffortlessMetrics/shiplog#681`
 
 ## Included work
 
@@ -34,33 +35,39 @@
 
 - path: `.github/workflows/droid-review.yml`
   - reason: The canonical source repository retains authority for the release and security automation surface during this bounded promotion.
-  - source target: `b31d5f6d9700698b463d8f2b71b9d48a191f433c`
-  - swarm target: `e0c132d363c77b15ff2b16d04b6b1e60f0c192a0`
-  - decision receipt: `EffortlessMetrics/shiplog-swarm#322` at `e0c132d363c77b15ff2b16d04b6b1e60f0c192a0`
+  - source target: `6471f50912d645447ebda94c3b2f1babcc24dfef`
+  - swarm target: `b75893463c466990122d51b3290287b107b0388e`
+  - decision receipt: `EffortlessMetrics/shiplog-swarm#334` at `b75893463c466990122d51b3290287b107b0388e`
   - consumed by: `(active)`
 - path: `.github/workflows/droid-security-scan.yml`
   - reason: The canonical source repository retains authority for the release and security automation surface during this bounded promotion.
-  - source target: `b31d5f6d9700698b463d8f2b71b9d48a191f433c`
-  - swarm target: `e0c132d363c77b15ff2b16d04b6b1e60f0c192a0`
-  - decision receipt: `EffortlessMetrics/shiplog-swarm#322` at `e0c132d363c77b15ff2b16d04b6b1e60f0c192a0`
+  - source target: `6471f50912d645447ebda94c3b2f1babcc24dfef`
+  - swarm target: `b75893463c466990122d51b3290287b107b0388e`
+  - decision receipt: `EffortlessMetrics/shiplog-swarm#334` at `b75893463c466990122d51b3290287b107b0388e`
   - consumed by: `(active)`
 - path: `.github/workflows/release.yml`
   - reason: The canonical source repository retains authority for the release and security automation surface during this bounded promotion.
-  - source target: `b31d5f6d9700698b463d8f2b71b9d48a191f433c`
-  - swarm target: `e0c132d363c77b15ff2b16d04b6b1e60f0c192a0`
-  - decision receipt: `EffortlessMetrics/shiplog-swarm#322` at `e0c132d363c77b15ff2b16d04b6b1e60f0c192a0`
+  - source target: `6471f50912d645447ebda94c3b2f1babcc24dfef`
+  - swarm target: `b75893463c466990122d51b3290287b107b0388e`
+  - decision receipt: `EffortlessMetrics/shiplog-swarm#334` at `b75893463c466990122d51b3290287b107b0388e`
+  - consumed by: `(active)`
+- path: `.github/workflows/droid.yml`
+  - reason: The canonical source review automation may publish comments but cannot mint identity or write product contents.
+  - source target: `6471f50912d645447ebda94c3b2f1babcc24dfef`
+  - swarm target: `b75893463c466990122d51b3290287b107b0388e`
+  - decision receipt: `EffortlessMetrics/shiplog-swarm#334` at `b75893463c466990122d51b3290287b107b0388e`
   - consumed by: `(active)`
 - path: `.github/workflows/security.yml`
   - reason: The canonical source repository retains authority for the release and security automation surface during this bounded promotion.
-  - source target: `b31d5f6d9700698b463d8f2b71b9d48a191f433c`
-  - swarm target: `e0c132d363c77b15ff2b16d04b6b1e60f0c192a0`
-  - decision receipt: `EffortlessMetrics/shiplog-swarm#322` at `e0c132d363c77b15ff2b16d04b6b1e60f0c192a0`
+  - source target: `6471f50912d645447ebda94c3b2f1babcc24dfef`
+  - swarm target: `b75893463c466990122d51b3290287b107b0388e`
+  - decision receipt: `EffortlessMetrics/shiplog-swarm#334` at `b75893463c466990122d51b3290287b107b0388e`
   - consumed by: `(active)`
 - path: `policy/automation-authority.toml`
   - reason: Canonical source now carries its explicit source-role policy from #679; this bounded decision retains that release-governance file while swarm keeps its distinct swarm-role policy.
-  - source target: `3551eb9d5b5d448d9f3d3f4df6b7398b46346595`
-  - swarm target: `e0c132d363c77b15ff2b16d04b6b1e60f0c192a0`
-  - decision receipt: `EffortlessMetrics/shiplog-swarm#322` at `e0c132d363c77b15ff2b16d04b6b1e60f0c192a0`
+  - source target: `6471f50912d645447ebda94c3b2f1babcc24dfef`
+  - swarm target: `b75893463c466990122d51b3290287b107b0388e`
+  - decision receipt: `EffortlessMetrics/shiplog-swarm#334` at `b75893463c466990122d51b3290287b107b0388e`
   - consumed by: `(active)`
 
 ## Truth hierarchy
