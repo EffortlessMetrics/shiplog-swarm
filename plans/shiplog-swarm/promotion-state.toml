@@ -99,7 +99,7 @@ included_swarm_prs = [
 
 [pending]
 # Merged swarm PRs after `promoted_swarm_head` that are not yet promoted.
-swarm_pr_range = ["EffortlessMetrics/shiplog-swarm#336", "EffortlessMetrics/shiplog-swarm#338", "EffortlessMetrics/shiplog-swarm#339", "EffortlessMetrics/shiplog-swarm#340", "EffortlessMetrics/shiplog-swarm#341", "EffortlessMetrics/shiplog-swarm#342", "EffortlessMetrics/shiplog-swarm#344"]
+swarm_pr_range = ["EffortlessMetrics/shiplog-swarm#336", "EffortlessMetrics/shiplog-swarm#338", "EffortlessMetrics/shiplog-swarm#339", "EffortlessMetrics/shiplog-swarm#340", "EffortlessMetrics/shiplog-swarm#341", "EffortlessMetrics/shiplog-swarm#342", "EffortlessMetrics/shiplog-swarm#344", "EffortlessMetrics/shiplog-swarm#346", "EffortlessMetrics/shiplog-swarm#348", "EffortlessMetrics/shiplog-swarm#351", "EffortlessMetrics/shiplog-swarm#352", "EffortlessMetrics/shiplog-swarm#353", "EffortlessMetrics/shiplog-swarm#354", "EffortlessMetrics/shiplog-swarm#355", "EffortlessMetrics/shiplog-swarm#356", "EffortlessMetrics/shiplog-swarm#357", "EffortlessMetrics/shiplog-swarm#359"]
 # Receipts explicitly deferred to a later substantive carry-forward. A
 # receipt listed here is treated as pending-substantive-carry, not stale.
 deferred_receipt_carry = []
@@ -518,16 +518,6 @@ source_tree_entry = { mode = "100644", object_type = "blob", oid = "7a0f071dfb0e
 swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "7a0f071dfb0e14cc1bb5b45b5c4611982b523503" }
 
 [[transition.path]]
-path = "plans/shiplog-swarm/transition-decisions.md"
-disposition = "missing_in_swarm"
-resolution = "discard_source"
-decision_receipt = "EffortlessMetrics/shiplog-swarm#353"
-decision_merge_sha = "fc19c648c9eba8a76a67d55af55cd2a5bc77291c"
-reason = "The swarm ledger is the maintained record of current transition evidence and bounded decisions."
-source_tree_entry = { mode = "100644", object_type = "blob", oid = "bbe7516331ab7e132aea0026049d61cb1040accd" }
-swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "faa0a3451de4a06abd4872b7fe34282afbb6ab1e" }
-
-[[transition.path]]
 path = "policy/source-only-paths.toml"
 disposition = "missing_in_swarm"
 resolution = "discard_source"
@@ -566,3 +556,44 @@ decision_merge_sha = "fc19c648c9eba8a76a67d55af55cd2a5bc77291c"
 reason = "The swarm report carries the current exact promotion, branch-protection, and source-of-truth behavior."
 source_tree_entry = { mode = "100644", object_type = "blob", oid = "fab37f26423e06a97326b521706c7067432a571f" }
 swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "583b32574ca60f3b60517bf1724c76c9d1041644" }
+
+# A later exact-target binding for the three documentation paths changed by
+# source-merge-control PR #357 and reviewed by swarm PR #359. The earlier #682
+# transition remains anchored at the #353 evidence target for its original
+# paths; this disjoint entry keeps that historical binding intact while
+# consuming the #359 decision for all three paths at the current source target.
+[[transition]]
+source_pr = "EffortlessMetrics/shiplog#682"
+source_merge_sha = "2f69daf921d74fb9472584c2a0df31857cfa2384"
+source_target = "175e8c8cee8110c4cf4a42d5534f5dffe45bf426"
+swarm_target = "2570bf7862a36ab0e005037215261308faac741a"
+
+[[transition.path]]
+path = "docs/xtask.md"
+disposition = "missing_in_swarm"
+resolution = "discard_source"
+decision_receipt = "EffortlessMetrics/shiplog-swarm#359"
+decision_merge_sha = "2570bf7862a36ab0e005037215261308faac741a"
+reason = "The reviewed swarm command reference records the source merge-control precondition for this bounded promotion."
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "6fcb4394cfaa1323a355cb627c100fd429bed27c" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "31df1696da97dc42315ad89ddbff8a800b1e4d89" }
+
+[[transition.path]]
+path = "plans/shiplog-swarm/promotion-runbook.md"
+disposition = "missing_in_swarm"
+resolution = "discard_source"
+decision_receipt = "EffortlessMetrics/shiplog-swarm#359"
+decision_merge_sha = "2570bf7862a36ab0e005037215261308faac741a"
+reason = "The reviewed swarm runbook records the same source merge-control precondition in the operator sequence."
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "126d86717c1e6c74602b979fc628b81bcf011054" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "242960879e57e71b643bc0f2b545133822ec6888" }
+
+[[transition.path]]
+path = "plans/shiplog-swarm/transition-decisions.md"
+disposition = "missing_in_swarm"
+resolution = "discard_source"
+decision_receipt = "EffortlessMetrics/shiplog-swarm#359"
+decision_merge_sha = "2570bf7862a36ab0e005037215261308faac741a"
+reason = "The swarm transition ledger records this reviewed decision and remains the maintained source-of-truth evidence record."
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "bbe7516331ab7e132aea0026049d61cb1040accd" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "1bfbb5e5e764e86da8254bcf32c1f6946ccacbe1" }

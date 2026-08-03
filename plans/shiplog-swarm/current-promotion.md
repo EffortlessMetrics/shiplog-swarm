@@ -77,6 +77,16 @@
 - `EffortlessMetrics/shiplog-swarm#341`
 - `EffortlessMetrics/shiplog-swarm#342`
 - `EffortlessMetrics/shiplog-swarm#344`
+- `EffortlessMetrics/shiplog-swarm#346`
+- `EffortlessMetrics/shiplog-swarm#348`
+- `EffortlessMetrics/shiplog-swarm#351`
+- `EffortlessMetrics/shiplog-swarm#352`
+- `EffortlessMetrics/shiplog-swarm#353`
+- `EffortlessMetrics/shiplog-swarm#354`
+- `EffortlessMetrics/shiplog-swarm#355`
+- `EffortlessMetrics/shiplog-swarm#356`
+- `EffortlessMetrics/shiplog-swarm#357`
+- `EffortlessMetrics/shiplog-swarm#359`
 
 ## Source-authority decisions
 
