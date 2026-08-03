@@ -128,7 +128,14 @@ pub fn derive_authority(
         if entry.consumed_by().is_some() {
             continue;
         }
-        ensure_exact_targets(entry, refs)?;
+        ensure_evidence_targets(
+            port,
+            workspace_root,
+            &format!("active transition {}", entry.source_pr),
+            &entry.source_target,
+            &entry.swarm_target,
+            refs,
+        )?;
         check_merged_at(
             port,
             workspace_root,
@@ -195,25 +202,43 @@ pub fn derive_source_authority(
                 decision.path
             );
         }
-        ensure_exact_target_values(
+        ensure_evidence_targets(
+            port,
+            workspace_root,
             &format!("source_authority {}", decision.path),
             &decision.source_target,
             &decision.swarm_target,
             refs,
         )?;
-        let source_entry = tree_entry(port, workspace_root, refs.source_target, &decision.path)?;
-        let swarm_entry = tree_entry(port, workspace_root, refs.swarm_target, &decision.path)?;
-        if source_entry == swarm_entry {
+        let evidence_source_entry = tree_entry(
+            port,
+            workspace_root,
+            &decision.source_target,
+            &decision.path,
+        )?;
+        let evidence_swarm_entry =
+            tree_entry(port, workspace_root, &decision.swarm_target, &decision.path)?;
+        verify_tree_entries(
+            decision.source_tree_entry.as_ref(),
+            decision.swarm_tree_entry.as_ref(),
+            evidence_source_entry.as_ref(),
+            evidence_swarm_entry.as_ref(),
+        )?;
+        let current_source_entry =
+            tree_entry(port, workspace_root, refs.source_target, &decision.path)?;
+        let current_swarm_entry =
+            tree_entry(port, workspace_root, refs.swarm_target, &decision.path)?;
+        if current_source_entry == current_swarm_entry {
             bail!(
-                "source_authority path {} requires differing source and swarm tree entries, but both are {source_entry:?}",
-                decision.path
+                "source_authority path {} requires differing source and swarm tree entries at the current promotion targets, but both are {current_source_entry:?}",
+                decision.path,
             );
         }
         verify_tree_entries(
             decision.source_tree_entry.as_ref(),
             decision.swarm_tree_entry.as_ref(),
-            source_entry.as_ref(),
-            swarm_entry.as_ref(),
+            current_source_entry.as_ref(),
+            current_swarm_entry.as_ref(),
         )?;
         check_merged_at(
             port,
@@ -261,18 +286,30 @@ fn check_path(
             bail!("missing_in_swarm must not name swarm PRs");
         }
         if path.resolution == Some(TransitionResolution::DiscardSource) {
-            let source_entry = tree_entry(port, workspace_root, refs.source_target, &path.path)?;
-            let swarm_entry = tree_entry(port, workspace_root, refs.swarm_target, &path.path)?;
-            if source_entry == swarm_entry {
+            let evidence_source_entry =
+                tree_entry(port, workspace_root, &entry.source_target, &path.path)?;
+            let evidence_swarm_entry =
+                tree_entry(port, workspace_root, &entry.swarm_target, &path.path)?;
+            verify_tree_entries(
+                path.source_tree_entry.as_ref(),
+                path.swarm_tree_entry.as_ref(),
+                evidence_source_entry.as_ref(),
+                evidence_swarm_entry.as_ref(),
+            )?;
+            let current_source_entry =
+                tree_entry(port, workspace_root, refs.source_target, &path.path)?;
+            let current_swarm_entry =
+                tree_entry(port, workspace_root, refs.swarm_target, &path.path)?;
+            if current_source_entry == current_swarm_entry {
                 bail!(
-                    "discard_source requires differing source and swarm tree entries, but both are {source_entry:?}"
+                    "discard_source requires differing source and swarm tree entries at the current promotion targets, but both are {current_source_entry:?}"
                 );
             }
             verify_tree_entries(
                 path.source_tree_entry.as_ref(),
                 path.swarm_tree_entry.as_ref(),
-                source_entry.as_ref(),
-                swarm_entry.as_ref(),
+                current_source_entry.as_ref(),
+                current_swarm_entry.as_ref(),
             )?;
             check_merged_at(
                 port,
@@ -431,6 +468,14 @@ fn check_path(
     let Some((source_entry, swarm_entry)) = current_tree_entries.as_ref() else {
         bail!("resolved transition path has no current tree entries");
     };
+    let evidence_source_entry = tree_entry(port, workspace_root, &entry.source_target, &path.path)?;
+    let evidence_swarm_entry = tree_entry(port, workspace_root, &entry.swarm_target, &path.path)?;
+    verify_tree_entries(
+        path.source_tree_entry.as_ref(),
+        path.swarm_tree_entry.as_ref(),
+        evidence_source_entry.as_ref(),
+        evidence_swarm_entry.as_ref(),
+    )?;
     verify_tree_entries(
         path.source_tree_entry.as_ref(),
         path.swarm_tree_entry.as_ref(),
@@ -453,32 +498,35 @@ fn check_path(
     Ok(())
 }
 
-fn ensure_exact_targets(entry: &Transition, refs: &TransitionRefs<'_>) -> Result<()> {
-    ensure_exact_target_values(
-        &format!("active transition {}", entry.source_pr),
-        &entry.source_target,
-        &entry.swarm_target,
-        refs,
-    )
-}
-
-fn ensure_exact_target_values(
+/// Evidence targets are immutable observations. They must remain ancestors of
+/// the current promotion targets, while the recorded tree entries are checked
+/// again at both target pairs below. This permits unrelated tip advancement
+/// without allowing a later path change or historical convergence to reuse an
+/// old decision.
+fn ensure_evidence_targets(
+    port: &impl TransitionPort,
+    workspace_root: &Path,
     label: &str,
     source_target: &str,
     swarm_target: &str,
     refs: &TransitionRefs<'_>,
 ) -> Result<()> {
     if source_target.is_empty() || swarm_target.is_empty() {
-        bail!("{label} has no exact source_target/swarm_target binding");
+        bail!("{label} has no source_target/swarm_target evidence binding");
     }
-    if source_target != refs.source_target || swarm_target != refs.swarm_target {
-        bail!(
-            "{label}: receipt targets ({}, {}) do not match promotion targets ({}, {})",
-            source_target,
-            swarm_target,
-            refs.source_target,
-            refs.swarm_target
-        );
+    for (side, evidence_target, current_target) in [
+        ("source", source_target, refs.source_target),
+        ("swarm", swarm_target, refs.swarm_target),
+    ] {
+        port.git_output(
+            workspace_root,
+            &["merge-base", "--is-ancestor", evidence_target, current_target],
+        )
+        .with_context(|| {
+            format!(
+                "{label}: {side} evidence target {evidence_target} is not an ancestor of current promotion target {current_target}"
+            )
+        })?;
     }
     Ok(())
 }
@@ -953,6 +1001,11 @@ mod tests {
             self.reachable.remove(merge_sha);
             self
         }
+
+        fn ancestor(mut self, target: &str) -> Self {
+            self.reachable.insert(target.to_string());
+            self
+        }
     }
 
     fn key_for(receipt: &str) -> String {
@@ -966,8 +1019,11 @@ mod tests {
                     .get(2)
                     .context("stub: merge-base without a sha")?
                     .to_string();
+                let current = args
+                    .get(3)
+                    .context("stub: merge-base without a current target")?;
                 self.ancestry_checks.borrow_mut().push(sha.clone());
-                if !self.reachable.contains(&sha) {
+                if sha != *current && !self.reachable.contains(&sha) {
                     bail!("stub: {sha} is not an ancestor");
                 }
                 return Ok(String::new());
@@ -1358,10 +1414,16 @@ mod tests {
         let source_oid = "9f2c1b6a0d4e5f708192a3b4c5d6e7f809a1b2c3";
         let swarm_oid = "8e1b2c3d4f5061728394a5b6c7d8e9f0a1b2c3d4";
         let decision_sha = "7d0a1b2c3d4e5f60718293a4b5c6d7e8f9a0b1c2";
-        let decision = source_authority_decision(path, source_oid, swarm_oid, decision_sha);
+        let mut decision = source_authority_decision(path, source_oid, swarm_oid, decision_sha);
+        decision.source_target = "source-evidence".to_string();
+        decision.swarm_target = "swarm-evidence".to_string();
 
         let equal_port = StubPort::new()
             .merged(&decision.decision_receipt, decision_sha, "")
+            .ancestor("source-evidence")
+            .ancestor("swarm-evidence")
+            .blob("source-evidence", path, source_oid)
+            .blob("swarm-evidence", path, swarm_oid)
             .blob("origin/main", path, source_oid)
             .blob("swarm/main", path, source_oid);
         let error = derive_source_authority(
@@ -1380,6 +1442,10 @@ mod tests {
 
         let stale_port = StubPort::new()
             .merged(&decision.decision_receipt, decision_sha, "")
+            .ancestor("source-evidence")
+            .ancestor("swarm-evidence")
+            .blob("source-evidence", path, source_oid)
+            .blob("swarm-evidence", path, swarm_oid)
             .blob(
                 "origin/main",
                 path,
@@ -1694,7 +1760,87 @@ mod tests {
         let error = derive_authority(&StubPort::new(), Path::new("."), &refs(), &entries)
             .expect_err("a receipt bound to another target must fail closed");
         assert!(
-            format!("{error:#}").contains("do not match promotion targets"),
+            format!("{error:#}").contains("not an ancestor of current promotion target"),
+            "unexpected error: {error:#}"
+        );
+    }
+
+    #[test]
+    fn active_receipt_allows_unrelated_tip_when_recorded_entries_are_unchanged() -> Result<()> {
+        let source_patch = section(CARGO_LOCK, "1.52.3", "1.53.0", "tokio");
+        let swarm = format!("{SWARM}#269");
+        let swarm_sha = "ba4aeaf78cb17f980f1da05d24d9638033b95f68";
+        let converged = "9f2c1b6a0d4e5f708192a3b4c5d6e7f809a1b2c3";
+        let source = format!("{SOURCE}#657");
+        let mut transition = bind_entries(
+            entry(
+                TransitionDisposition::TreeEquivalent,
+                &[(swarm.as_str(), swarm_sha)],
+            ),
+            Some(blob_entry(converged)),
+            Some(blob_entry(converged)),
+        );
+        transition.source_target = "source-evidence".to_string();
+        transition.swarm_target = "swarm-evidence".to_string();
+
+        let port = StubPort::new()
+            .merged(
+                &source,
+                "e6a72ad11ab22d03b1cf434b237bf0fff9c145bf",
+                &source_patch,
+            )
+            .merged(&swarm, swarm_sha, &source_patch)
+            .ancestor("source-evidence")
+            .ancestor("swarm-evidence")
+            .blob("source-evidence", CARGO_LOCK, converged)
+            .blob("swarm-evidence", CARGO_LOCK, converged)
+            // The current tips advanced for unrelated paths, but this path's
+            // complete tree entries remain exactly the recorded evidence.
+            .blob("origin/main", CARGO_LOCK, converged)
+            .blob("swarm/main", CARGO_LOCK, converged);
+
+        let authority = derive_authority(&port, Path::new("."), &refs(), &[transition])?;
+        assert!(authority.two_sided.contains_key(CARGO_LOCK));
+        Ok(())
+    }
+
+    #[test]
+    fn active_receipt_rejects_governed_path_change_after_evidence() {
+        let source_patch = section(CARGO_LOCK, "1.52.3", "1.53.0", "tokio");
+        let swarm = format!("{SWARM}#269");
+        let swarm_sha = "ba4aeaf78cb17f980f1da05d24d9638033b95f68";
+        let recorded = "9f2c1b6a0d4e5f708192a3b4c5d6e7f809a1b2c3";
+        let changed = "1111111111111111111111111111111111111111";
+        let source = format!("{SOURCE}#657");
+        let mut transition = bind_entries(
+            entry(
+                TransitionDisposition::Equivalent,
+                &[(swarm.as_str(), swarm_sha)],
+            ),
+            Some(blob_entry(recorded)),
+            Some(blob_entry(recorded)),
+        );
+        transition.source_target = "source-evidence".to_string();
+        transition.swarm_target = "swarm-evidence".to_string();
+
+        let port = StubPort::new()
+            .merged(
+                &source,
+                "e6a72ad11ab22d03b1cf434b237bf0fff9c145bf",
+                &source_patch,
+            )
+            .merged(&swarm, swarm_sha, &source_patch)
+            .ancestor("source-evidence")
+            .ancestor("swarm-evidence")
+            .blob("source-evidence", CARGO_LOCK, recorded)
+            .blob("swarm-evidence", CARGO_LOCK, recorded)
+            .blob("origin/main", CARGO_LOCK, changed)
+            .blob("swarm/main", CARGO_LOCK, recorded);
+
+        let error = derive_authority(&port, Path::new("."), &refs(), &[transition])
+            .expect_err("a later governed-path change must invalidate old evidence");
+        assert!(
+            format!("{error:#}").contains("recorded source tree entry does not match"),
             "unexpected error: {error:#}"
         );
     }

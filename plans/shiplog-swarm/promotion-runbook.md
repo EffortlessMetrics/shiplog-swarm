@@ -140,11 +140,17 @@ An active transition receipt records two separate questions for each path:
    decision may explicitly set `resolution = "discard_source"`.
 
 `discard_source` is valid only with a non-empty `decision_receipt`, its full
-`decision_merge_sha` reachable from the exact swarm target, a human-readable
+`decision_merge_sha` reachable from the current swarm target, a human-readable
 `reason`, exact `source_tree_entry` and `swarm_tree_entry` bindings for the
-promotion targets, and differing source/swarm entries. It selects the swarm
-tree entry for that path for this promotion only; it does not create permanent
-source authority or replace `source-only-paths.toml`.
+immutable evidence targets, and differing source/swarm entries. The recorded
+`source_target` and `swarm_target` values are evidence commits, not frozen
+promotion refs: each must be an ancestor of the current promotion target, and
+the recorded complete tree entries must still match at both the evidence
+targets and the current targets. It selects the swarm tree entry for that path
+for this promotion only; it does not create permanent source authority or
+replace `source-only-paths.toml`. Unrelated tip advancement is therefore safe,
+but a later change to the governed path fails closed and requires a new
+reviewed decision.
 
 For dependency-only lockfile transitions, use
 `disposition = "dependency_equivalent"`. This is limited to `Cargo.lock` and
@@ -187,8 +193,8 @@ Example shape:
 ```toml
 [[source_authority]]
 path = ".github/workflows/release.yml"
-source_target = "<exact-source-target-sha>"
-swarm_target = "<exact-swarm-target-sha>"
+source_target = "<immutable-source-evidence-sha>"
+swarm_target = "<immutable-swarm-evidence-sha>"
 decision_receipt = "EffortlessMetrics/shiplog-swarm#319"
 decision_merge_sha = "<decision-receipt-merge-sha>"
 reason = "The canonical source repository retains release-writer authority."
@@ -196,13 +202,15 @@ source_tree_entry = { mode = "100644", object_type = "blob", oid = "<source-targ
 swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "<swarm-target-oid>" }
 ```
 
-An active decision must name the exact `source_target` and `swarm_target`, the
-merged decision receipt and full `decision_merge_sha`, a human-readable
-`reason`, and complete `source_tree_entry` / `swarm_tree_entry` values. The
-promotion verifies that the path is still policy-listed, the entries still
-differ at those exact targets, and the decision merge is reachable from the
-exact swarm target. After the promotion consumes it, set `consumed_by`; the
-historical record remains visible but grants no further authority.
+An active decision must name the exact immutable evidence `source_target` and
+`swarm_target`, the merged decision receipt and full `decision_merge_sha`, a
+human-readable `reason`, and complete `source_tree_entry` /
+`swarm_tree_entry` values. The promotion verifies that the path is still
+policy-listed, each evidence target is an ancestor of the current promotion
+target, the entries still differ and match at both target pairs, and the
+decision merge is reachable from the current swarm target. After the promotion
+consumes it, set `consumed_by`; the historical record remains visible but
+grants no further authority.
 
 The same decision must appear in the structured path plan and determine the
 overlay effect. Missing, stale, unmerged, unreachable, or target-mismatched
