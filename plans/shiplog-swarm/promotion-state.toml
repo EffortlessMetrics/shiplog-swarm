@@ -262,7 +262,7 @@ swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "620299ce104f1
 source_pr = "EffortlessMetrics/shiplog#676"
 source_merge_sha = "b31d5f6d9700698b463d8f2b71b9d48a191f433c"
 source_target = "b31d5f6d9700698b463d8f2b71b9d48a191f433c"
-swarm_target = "e0c132d363c77b15ff2b16d04b6b1e60f0c192a0"
+swarm_target = "fc9886fa3d7f2c615def25d5d75174f62570e974"
 
 [transition.swarm_merge_sha]
 "EffortlessMetrics/shiplog-swarm#282" = "dcbf5b3d8fe94dbc57e816ac737677b1caed4ee4"
@@ -282,7 +282,7 @@ decision_receipt = "EffortlessMetrics/shiplog-swarm#317"
 decision_merge_sha = "7884dec5eefeba3a81aa6139923c817632ce7116"
 reason = "The generated promotion summary must follow the swarm manifest and current promotion state."
 source_tree_entry = { mode = "100644", object_type = "blob", oid = "4e28955f45a4aa42a5702ee7f6049d8bb496781a" }
-swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "12fd2b7d13de94e8f7b6c371bafc137d456d5fc2" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "65c250c6136354140979d6685574aca0578c9d9f" }
 
 [[transition.path]]
 path = "xtask/src/tasks/closeout.rs"

@@ -93,14 +93,16 @@ impl Transition {
 #[serde(deny_unknown_fields)]
 pub struct SourceAuthorityDecision {
     pub path: String,
-    /// Exact source and swarm commits whose tree entries this decision binds.
+    /// Immutable evidence commits whose tree entries this decision binds. They
+    /// must remain ancestors of the current promotion targets; the entries are
+    /// revalidated at both the evidence and current target pairs.
     #[serde(default)]
     pub source_target: String,
     #[serde(default)]
     pub swarm_target: String,
     /// The merged swarm PR that records the human-reviewed decision.
     pub decision_receipt: String,
-    /// Merge SHA of `decision_receipt`, reachable from `swarm_target`.
+    /// Merge SHA of `decision_receipt`, reachable from the current swarm target.
     pub decision_merge_sha: String,
     /// Human-readable reason for retaining source content.
     pub reason: String,
@@ -108,10 +110,12 @@ pub struct SourceAuthorityDecision {
     /// retained as history and grant no authority.
     #[serde(default)]
     pub consumed_by: String,
-    /// Complete source-side tree entry at `source_target`; absence is valid.
+    /// Complete source-side tree entry at the evidence `source_target`; absence
+    /// is valid.
     #[serde(default)]
     pub source_tree_entry: Option<TreeEntry>,
-    /// Complete swarm-side tree entry at `swarm_target`; absence is valid.
+    /// Complete swarm-side tree entry at the evidence `swarm_target`; absence
+    /// is valid.
     #[serde(default)]
     pub swarm_tree_entry: Option<TreeEntry>,
 }
@@ -138,7 +142,7 @@ pub struct TransitionPath {
     #[serde(default)]
     pub decision_receipt: String,
     /// Merge SHA of the decision receipt, which must be reachable from the
-    /// exact swarm promotion target before it can grant authority.
+    /// current swarm promotion target before it can grant authority.
     #[serde(default)]
     pub decision_merge_sha: String,
     /// Human-readable reason for the exceptional resolution.
@@ -149,12 +153,12 @@ pub struct TransitionPath {
     /// `superseded_in_swarm` names the steps that continue the source history.
     #[serde(default)]
     pub swarm_chain: Vec<String>,
-    /// Complete source-side tree entry at `Transition::source_target`.
-    /// `None` records that the path was absent at that exact target.
+    /// Complete source-side tree entry at the evidence `source_target`.
+    /// `None` records that the path was absent at that evidence target.
     #[serde(default)]
     pub source_tree_entry: Option<TreeEntry>,
-    /// Complete swarm-side tree entry at `Transition::swarm_target`.
-    /// `None` records that the path was absent at that exact target.
+    /// Complete swarm-side tree entry at the evidence `swarm_target`.
+    /// `None` records that the path was absent at that evidence target.
     #[serde(default)]
     pub swarm_tree_entry: Option<TreeEntry>,
 }
