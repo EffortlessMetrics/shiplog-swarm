@@ -247,16 +247,14 @@ fn inspect_source_bot_guard(workflows: &Path, findings: &mut Vec<String>) -> Res
     let condition = yaml_get(job, "if")
         .and_then(Yaml::as_str)
         .unwrap_or_default();
-    for required in [
-        "github.repository == 'EffortlessMetrics/shiplog'",
-        "github.event_name == 'pull_request_target'",
-        "github.event_name == 'workflow_dispatch'",
-    ] {
-        if !condition.contains(required) {
-            findings.push(format!(
-                "source automation guard job condition is missing required marker {required:?}"
-            ));
-        }
+    let normalized_condition = condition.split_whitespace().collect::<String>();
+    if normalized_condition
+        != "github.repository=='EffortlessMetrics/shiplog'&&(github.event_name=='pull_request_target'||github.event_name=='workflow_dispatch')"
+    {
+        findings.push(
+            "source automation guard job condition must match the source pull-request and synthetic dispatch events"
+                .to_string(),
+        );
     }
     let steps = yaml_get(job, "steps")
         .and_then(Yaml::as_sequence)
@@ -265,9 +263,14 @@ fn inspect_source_bot_guard(workflows: &Path, findings: &mut Vec<String>) -> Res
         .iter()
         .filter_map(|step| yaml_get(step, "run").and_then(Yaml::as_str))
         .collect::<Vec<_>>();
-    if !run_scripts.iter().any(|run| run.contains("exit 1")) {
-        findings
-            .push("source automation guard must run an explicit exit 1 failure step".to_string());
+    let guard_run = run_scripts.iter().find(|run| {
+        run.lines()
+            .any(|line| line.trim() == r#"case "$PR_AUTHOR" in"#)
+    });
+    if !guard_run.is_some_and(|run| source_guard_run_is_fail_closed(run)) {
+        findings.push(
+            "source automation guard must contain an active fail-closed actor case".to_string(),
+        );
     }
     let mut strings = Vec::new();
     collect_strings(job, &mut strings);
@@ -292,6 +295,42 @@ fn inspect_source_bot_guard(workflows: &Path, findings: &mut Vec<String>) -> Res
         findings.push("source automation guard must not consume named secrets".to_string());
     }
     Ok(())
+}
+
+fn source_guard_run_is_fail_closed(run: &str) -> bool {
+    let mut in_case = false;
+    let mut saw_default = false;
+    let mut saw_bot_clause = false;
+    let mut bot_clause_exits = false;
+
+    for raw_line in run.lines() {
+        let line = raw_line
+            .split_once('#')
+            .map_or(raw_line, |(code, _)| code)
+            .trim();
+        if !in_case {
+            if line == r#"case "$PR_AUTHOR" in"# {
+                in_case = true;
+            }
+            continue;
+        }
+        if line == "esac" {
+            break;
+        }
+        if line == "*)" {
+            saw_default = true;
+            continue;
+        }
+        if line == "'dependabot[bot]'|'factory-droid[bot]')" {
+            saw_bot_clause = !saw_default;
+            continue;
+        }
+        if saw_bot_clause && !saw_default && line == "exit 1" {
+            bot_clause_exits = true;
+        }
+    }
+
+    in_case && saw_bot_clause && bot_clause_exits
 }
 
 fn validate_policy(policy: &Policy) -> Vec<String> {
@@ -658,10 +697,11 @@ mod tests {
         let path = dir
             .path()
             .join(".github/workflows/source-automation-guard.yml");
-        let text = fs::read_to_string(&path)?
+        let text = fs::read_to_string(&path)
+            .with_context(|| format!("read {}", path.display()))?
             .replace("factory-droid[bot]", "unexpected-bot")
             .replace("exit 1", "echo allowed");
-        fs::write(path, text)?;
+        fs::write(&path, text).with_context(|| format!("write {}", path.display()))?;
 
         let findings = inspect(dir.path(), RepositoryRole::Source)?;
 
@@ -670,7 +710,11 @@ mod tests {
                 .iter()
                 .any(|finding| finding.contains("factory-droid[bot]"))
         );
-        ensure!(findings.iter().any(|finding| finding.contains("exit 1")));
+        ensure!(
+            findings
+                .iter()
+                .any(|finding| finding.contains("active fail-closed actor case"))
+        );
         Ok(())
     }
 
@@ -680,8 +724,10 @@ mod tests {
         let path = dir
             .path()
             .join(".github/workflows/source-automation-guard.yml");
-        let text = fs::read_to_string(&path)?.replace("author_login:", "unexpected_input:");
-        fs::write(path, text)?;
+        let text = fs::read_to_string(&path)
+            .with_context(|| format!("read {}", path.display()))?
+            .replace("author_login:", "unexpected_input:");
+        fs::write(&path, text).with_context(|| format!("write {}", path.display()))?;
 
         let findings = inspect(dir.path(), RepositoryRole::Source)?;
 
@@ -694,16 +740,57 @@ mod tests {
     }
 
     #[test]
+    fn source_guard_rejects_impossible_event_and_permissive_actor_case() -> Result<()> {
+        let impossible_dir = fixture(RepositoryRole::Source, false)?;
+        let impossible_path = impossible_dir
+            .path()
+            .join(".github/workflows/source-automation-guard.yml");
+        let impossible_text = fs::read_to_string(&impossible_path)
+            .with_context(|| format!("read {}", impossible_path.display()))?
+            .replace(
+                "github.event_name == 'pull_request_target'",
+                "github.event_name == 'never'",
+            );
+        fs::write(&impossible_path, impossible_text)
+            .with_context(|| format!("write {}", impossible_path.display()))?;
+        let impossible_findings = inspect(impossible_dir.path(), RepositoryRole::Source)?;
+        ensure!(
+            impossible_findings
+                .iter()
+                .any(|finding| finding.contains("condition must match the source pull-request"))
+        );
+
+        let permissive_dir = fixture(RepositoryRole::Source, false)?;
+        let permissive_path = permissive_dir
+            .path()
+            .join(".github/workflows/source-automation-guard.yml");
+        let permissive_text = fs::read_to_string(&permissive_path)
+            .with_context(|| format!("read {}", permissive_path.display()))?
+            .replace("'dependabot[bot]'|'factory-droid[bot]'", "*)");
+        fs::write(&permissive_path, permissive_text)
+            .with_context(|| format!("write {}", permissive_path.display()))?;
+        let permissive_findings = inspect(permissive_dir.path(), RepositoryRole::Source)?;
+        ensure!(
+            permissive_findings
+                .iter()
+                .any(|finding| finding.contains("active fail-closed actor case"))
+        );
+        Ok(())
+    }
+
+    #[test]
     fn source_guard_rejects_checkout_and_named_secrets() -> Result<()> {
         let dir = fixture(RepositoryRole::Source, false)?;
         let path = dir
             .path()
             .join(".github/workflows/source-automation-guard.yml");
-        let text = fs::read_to_string(&path)?.replace(
+        let text = fs::read_to_string(&path)
+            .with_context(|| format!("read {}", path.display()))?
+            .replace(
             "    steps:\n",
             "    steps:\n      - uses: actions/checkout@pinned\n        env:\n          TOKEN: ${{ secrets.TOKEN }}\n      - run: echo guard && exit 1\n",
         );
-        fs::write(path, text)?;
+        fs::write(&path, text).with_context(|| format!("write {}", path.display()))?;
 
         let findings = inspect(dir.path(), RepositoryRole::Source)?;
 
