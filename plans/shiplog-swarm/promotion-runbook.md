@@ -26,6 +26,10 @@ an ambiguous open release-blocking PR.
 - `shiplog/main` and `shiplog-swarm/main` share history.
 - The promotion branch contains only the intended `origin/main..swarm/main`
   range.
+- `shiplog/main` branch protection requires the exact
+  `reject-routine-bot-pr` Source Automation Guard check. This is the merge
+  control that prevents routine Dependabot and Factory Droid product PRs from
+  landing directly on source.
 
 ## Prepare The Promotion Branch
 
@@ -52,6 +56,12 @@ git push origin "swarm/main:refs/heads/$branch"
 
 Stop if `git merge-base` prints nothing, if the log contains unintended work,
 or if the diff is broader than the swarm PRs being promoted.
+
+`cargo xtask promote --dry-run` may be used before source merge-control is
+configured. A real promotion execution fails closed unless source `main` branch
+protection requires `reject-routine-bot-pr`; it refuses before overlay, branch,
+receipt, or source PR mutation when that check is absent or the protection
+response is unavailable.
 
 ## Open The Source PR
 
