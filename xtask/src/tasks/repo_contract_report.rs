@@ -1767,15 +1767,10 @@ fn inspect_promotion_pr_contract(
 
     let latest_promotion_merge = git_topology.source_ahead_promotion_merges.first();
     let expected_source_head = latest_promotion_merge
-        .and_then(|merge| extract_commit_hash(merge))
-        .map(ToOwned::to_owned);
-    let expected_swarm_head = expected_source_head.as_deref().and_then(|head| {
-        git_line(
-            workspace_root,
-            &["rev-parse", &format!("{head}^2")],
-            &mut notes,
-        )
-    });
+        .and_then(|merge| resolve_commit_hash(workspace_root, merge, &mut notes));
+    let expected_swarm_head = expected_source_head
+        .as_deref()
+        .and_then(|head| promotion_swarm_head_from_checkpoint(workspace_root, head, &mut notes));
     let Some(pr_number) = latest_promotion_merge
         .and_then(|merge| extract_merge_pull_request_number(merge))
         .or_else(|| {
@@ -2039,13 +2034,49 @@ fn expected_promotion_title(swarm_head: Option<&str>) -> Option<String> {
     swarm_head.map(|head| {
         format!(
             "merge(swarm): promote shiplog-swarm through {}",
-            short_sha(head)
+            promotion_title_sha(head)
         )
     })
 }
 
+fn promotion_title_sha(value: &str) -> String {
+    value.chars().take(12).collect()
+}
+
 fn short_sha(value: &str) -> String {
     value.chars().take(7).collect()
+}
+
+fn resolve_commit_hash(
+    workspace_root: &Path,
+    commit: &str,
+    notes: &mut Vec<String>,
+) -> Option<String> {
+    let hash = extract_commit_hash(commit)?;
+    git_line(workspace_root, &["rev-parse", hash], notes)
+}
+
+fn promotion_swarm_head_from_checkpoint(
+    workspace_root: &Path,
+    source_merge: &str,
+    notes: &mut Vec<String>,
+) -> Option<String> {
+    let overlay = git_line(
+        workspace_root,
+        &["rev-parse", &format!("{source_merge}^2")],
+        notes,
+    )?;
+    let message = git_lines(
+        workspace_root,
+        &["show", "-s", "--format=%B", &overlay],
+        notes,
+    );
+    message
+        .iter()
+        .find_map(|line| line.strip_prefix("Shiplog-Swarm-Head:").map(str::trim))
+        .filter(|head| !head.is_empty())
+        .map(ToOwned::to_owned)
+        .or(Some(overlay))
 }
 
 fn promotion_pr_contract_next_actions(status: &str, failed_checks: &[String]) -> Vec<String> {
@@ -4637,7 +4668,7 @@ Merge this PR with a regular merge commit; do not squash.
             Some("474bf93ad7f120d173136f474e8e912b08005798".to_string()),
             Some("491dd34b4f3e2fb1c7588679d6832c09f6257924".to_string()),
             serde_json::json!({
-                "title": "merge(swarm): promote shiplog-swarm through 491dd34",
+                "title": "merge(swarm): promote shiplog-swarm through 491dd34b4f3e",
                 "body": body,
                 "state": "MERGED",
                 "mergeCommit": {"oid": "474bf93ad7f120d173136f474e8e912b08005798"},
@@ -4669,7 +4700,7 @@ Merge this PR with a regular merge commit; do not squash.
             Some("474bf93ad7f120d173136f474e8e912b08005798".to_string()),
             Some("491dd34b4f3e2fb1c7588679d6832c09f6257924".to_string()),
             serde_json::json!({
-                "title": "merge(swarm): promote shiplog-swarm through 491dd34",
+                "title": "merge(swarm): promote shiplog-swarm through 491dd34b4f3e",
                 "body": "Promotes shiplog-swarm/main through 491dd34.",
                 "state": "MERGED",
                 "mergeCommit": {"oid": "474bf93ad7f120d173136f474e8e912b08005798"}
@@ -4704,7 +4735,9 @@ Merge this PR with a regular merge commit; do not squash.
         let report = promotion_pr_contract_from_parts(PromotionPrContractParts {
             latest_promotion_pr: Some("EffortlessMetrics/shiplog#556".to_string()),
             latest_promotion_url: None,
-            expected_title: Some("merge(swarm): promote shiplog-swarm through 491dd34".to_string()),
+            expected_title: Some(
+                "merge(swarm): promote shiplog-swarm through 491dd34b4f3e".to_string(),
+            ),
             actual_title: None,
             state: None,
             merge_commit: None,
