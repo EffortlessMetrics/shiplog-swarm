@@ -69,6 +69,32 @@ source-side transition copy does not represent separate release authority.
 | `plans/shiplog-swarm/current-promotion.md` | `100644/blob/4e28955f45a4aa42a5702ee7f6049d8bb496781a` | `100644/blob/1f0d11fc5fe0b4deec71054a8940d0ba26a43c88` | The generated summary must follow the swarm manifest and current promotion state. |
 | `xtask/src/tasks/repo_contract_report.rs` | `100644/blob/af4b3f7193d1a72f5aec735134e29809e9726652` | `100644/blob/fab37f26423e06a97326b521706c7067432a571f` | The swarm implementation includes the source cleanup plus the maintained control-plane behavior. |
 
+## Source-authoritative release and security surfaces
+
+The exact source target reviewed for these decisions is
+`b31d5f6d9700698b463d8f2b71b9d48a191f433c`. The exact swarm target inspected
+is `c836620e3b85473aeddf799a8cf32de78546f789`, the merge of the bounded
+source-authority implementation. The source-only policy remains unchanged.
+
+For each path below, the reviewed decision is:
+
+> Retain the exact source tree entry for this bounded promotion and discard the
+> swarm-side change. Bind it as a `source_authority` decision with this ledger's
+> merged PR as the decision receipt, then consume it at the promotion
+> checkpoint.
+
+These paths are release, security, or repository-role surfaces. The decision
+does not make source content generally authoritative for future swarm changes;
+any later target divergence requires a new reviewed decision.
+
+| Path | Source target entry | Swarm target entry | Decision reason |
+|---|---|---|---|
+| `.github/workflows/droid-review.yml` | `100644/blob/28fbc4ce0e64de244d1f5008b63f1515b9cf29e0` | `100644/blob/353675f6651afacad517e26d2e793ce571a72a77` | Canonical source review automation may publish reviews but cannot write product contents. |
+| `.github/workflows/droid-security-scan.yml` | `100644/blob/ee9e6428d3fa9a9bd84d22d3f93c6e1955273ae2` | `100644/blob/ce1faad0893020958cc836a24c0339e07e7c8d50` | Canonical source scheduled security verification remains read-only while swarm may originate remediation. |
+| `.github/workflows/release.yml` | `100644/blob/c529b478c8deced8ac0f1754b4596888c3469d75` | `100644/blob/bb443555426c638046a8aecc48502229f1c04e8b` | Only canonical source carries explicitly authorized release-writer jobs; swarm retains verification-only release behavior. |
+| `.github/workflows/security.yml` | `100644/blob/b6c76f6dede6c3a0eebe9dfcc3d456ad7deac52d` | `100644/blob/8ab39d95d4f579f3d08c2c288053e3a0fc9d4f1f` | Canonical source scheduled security verification declares read-only permissions and the swarm remediation handoff. |
+| `policy/automation-authority.toml` | absent | `100644/blob/aa3b2ba0ca50acf4a5540a7b2e8f3eca4c7e26cc` | The repository-role policy is a swarm control-plane artifact; canonical source retains its intentional absence. |
+
 ## Deliberate exclusions
 
 This decision does not resolve any other promotion blocker:
@@ -76,8 +102,7 @@ This decision does not resolve any other promotion blocker:
 - source #657 `Cargo.lock` remains `missing_in_swarm`; no dependency decision is
   inferred from this ledger;
 - source-authoritative workflow paths and `policy/automation-authority.toml`
-  remain governed by `policy/source-only-paths.toml` and require their own
-  source-role proof;
+  are now recorded above but remain unbound until the later manifest PR;
 - no source refs, source files, or promotion manifest entries are changed by
   this record;
 - the later manifest PR must prove the decision receipt is merged and
