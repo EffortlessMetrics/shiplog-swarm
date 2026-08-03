@@ -40,6 +40,14 @@ created = "2026-07-18"
 review_after = "2027-01-18"
 
 [[allow]]
+path = ".github/workflows/droid.yml"
+owner = "repo-infra/security"
+reason = "Source review automation may publish comments but cannot mint identity or write product contents."
+classification = "release-governance"
+created = "2026-08-03"
+review_after = "2027-02-03"
+
+[[allow]]
 path = ".github/workflows/security.yml"
 owner = "repo-infra/security"
 reason = "Source scheduled security verification declares explicit read-only permissions and swarm remediation handoff."
