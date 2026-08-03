@@ -137,10 +137,11 @@ source protection were enabled — it is the source of truth for the
 enforced behavior.
 
 Enabling protection (and choosing the corresponding required-check list) on
-`shiplog/main` is a separate release decision. Until that happens, every
-`ci.yml` job runs but no source GitHub-level gate forces a green status before
-merge — reviewers and the CodeRabbit/Droid advisory lanes provide the
-practical source merge gate today.
+`shiplog/main` is a separate release decision. Until that happens, the
+configured `ci.yml` routes still run for pushes to `main` and `full-ci` pull
+requests, but no source GitHub-level gate forces a green status before merge
+— reviewers and the CodeRabbit/Droid advisory lanes provide the practical
+source merge gate today.
 
 ## See also
 
