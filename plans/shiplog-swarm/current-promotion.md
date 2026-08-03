@@ -68,9 +68,11 @@
 
 ## Pending swarm work
 
+- `EffortlessMetrics/shiplog-swarm#336`
 - `EffortlessMetrics/shiplog-swarm#338`
 - `EffortlessMetrics/shiplog-swarm#339`
 - `EffortlessMetrics/shiplog-swarm#340`
+- `EffortlessMetrics/shiplog-swarm#341`
 
 ## Source-authority decisions
 
