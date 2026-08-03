@@ -480,11 +480,22 @@ swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "3425fd5cb0eb3
 path = "plans/shiplog-swarm/promotion-state.toml"
 disposition = "missing_in_swarm"
 resolution = "discard_source"
+self_referential = true
 decision_receipt = "EffortlessMetrics/shiplog-swarm#353"
 decision_merge_sha = "fc19c648c9eba8a76a67d55af55cd2a5bc77291c"
 reason = "The swarm manifest contains the current active source-authority receipts and pending promotion range."
 source_tree_entry = { mode = "100644", object_type = "blob", oid = "bf3cbaa556a3b3249f952742bb2c6b28847f3876" }
 swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "3eae48353c759d5936dd1fcbc3cce21b5a1debef" }
+
+[[transition.path]]
+path = "xtask/src/tasks/promote.rs"
+disposition = "converged_at_target"
+resolution = "discard_source"
+decision_receipt = "EffortlessMetrics/shiplog-swarm#353"
+decision_merge_sha = "fc19c648c9eba8a76a67d55af55cd2a5bc77291c"
+reason = "The source and swarm copies matched at the reviewed evidence target; the later swarm checkpoint-anchor fix is a product change that must remain on swarm."
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "3d58577fa9e518b76d22c266b8c861f6dca36335" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "3d58577fa9e518b76d22c266b8c861f6dca36335" }
 
 [[transition.path]]
 path = "plans/shiplog-swarm/transition-decisions.md"
