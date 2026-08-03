@@ -68,7 +68,7 @@
 
 ## Pending swarm work
 
-- (none; source is current through the promoted swarm head)
+- `EffortlessMetrics/shiplog-swarm#338`
 
 ## Source-authority decisions
 
@@ -125,4 +125,4 @@
 
 ## Next action
 
-Source is current through the promoted swarm head. Continue with the next substantive swarm PR; carry these receipts rather than opening a receipt-only PR.
+Prepare the next source promotion for the pending swarm range with `cargo xtask promote --swarm-sha $(git rev-parse swarm/main)`. Carry these receipts in the next substantive swarm PR; do not open a receipt-only refresh PR.
