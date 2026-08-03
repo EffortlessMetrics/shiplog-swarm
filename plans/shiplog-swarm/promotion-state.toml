@@ -467,16 +467,6 @@ source_tree_entry = { mode = "100644", object_type = "blob", oid = "301913b6034d
 swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "00d79b3d9d6f40f5ed2532eddc9119e2fb06a98a" }
 
 [[transition.path]]
-path = "plans/shiplog-swarm/current-promotion.md"
-disposition = "missing_in_swarm"
-resolution = "discard_source"
-decision_receipt = "EffortlessMetrics/shiplog-swarm#353"
-decision_merge_sha = "fc19c648c9eba8a76a67d55af55cd2a5bc77291c"
-reason = "The generated promotion view must follow the current swarm manifest and decision ledger."
-source_tree_entry = { mode = "100644", object_type = "blob", oid = "2cf46f2668123bb939bd5c92beb02f8e375a5664" }
-swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "3425fd5cb0eb3d2e13c3d53d19e44eb180bce09d" }
-
-[[transition.path]]
 path = "plans/shiplog-swarm/promotion-state.toml"
 disposition = "missing_in_swarm"
 resolution = "discard_source"
@@ -558,10 +548,10 @@ source_tree_entry = { mode = "100644", object_type = "blob", oid = "fab37f26423e
 swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "583b32574ca60f3b60517bf1724c76c9d1041644" }
 
 # A later exact-target binding for the three documentation paths changed by
-# source-merge-control PR #357 and reviewed by swarm PR #359. The earlier #682
-# transition remains anchored at the #353 evidence target for its original
-# paths; this disjoint entry keeps that historical binding intact while
-# consuming the #359 decision for all three paths at the current source target.
+# source-merge-control PR #357. The earlier #682 transition remains anchored
+# at the #353 evidence target for its original paths; this disjoint entry keeps
+# that historical binding intact while consuming the #359 decision for those
+# three paths at the 2570bf7 target.
 [[transition]]
 source_pr = "EffortlessMetrics/shiplog#682"
 source_merge_sha = "2f69daf921d74fb9472584c2a0df31857cfa2384"
@@ -597,3 +587,21 @@ decision_merge_sha = "2570bf7862a36ab0e005037215261308faac741a"
 reason = "The swarm transition ledger records this reviewed decision and remains the maintained source-of-truth evidence record."
 source_tree_entry = { mode = "100644", object_type = "blob", oid = "bbe7516331ab7e132aea0026049d61cb1040accd" }
 swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "1bfbb5e5e764e86da8254bcf32c1f6946ccacbe1" }
+# The generated promotion view changed in the #361 merge itself. Keep that
+# later exact-target binding separate from the three #359 documentation paths
+# above, so both target trees remain evidence-bearing and consumable.
+[[transition]]
+source_pr = "EffortlessMetrics/shiplog#682"
+source_merge_sha = "2f69daf921d74fb9472584c2a0df31857cfa2384"
+source_target = "175e8c8cee8110c4cf4a42d5534f5dffe45bf426"
+swarm_target = "af58980110c9296aeec4ab4f0c6a7c3e6de7fb0c"
+
+[[transition.path]]
+path = "plans/shiplog-swarm/current-promotion.md"
+disposition = "missing_in_swarm"
+resolution = "discard_source"
+decision_receipt = "EffortlessMetrics/shiplog-swarm#361"
+decision_merge_sha = "af58980110c9296aeec4ab4f0c6a7c3e6de7fb0c"
+reason = "The generated promotion view materialized by the #361 manifest binding must follow the current swarm manifest and decision ledger."
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "2cf46f2668123bb939bd5c92beb02f8e375a5664" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "eba80cd5c5cde305f38b003bf13a295c0931bf70" }
