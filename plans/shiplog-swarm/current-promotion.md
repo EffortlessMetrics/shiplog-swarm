@@ -31,7 +31,36 @@
 
 ## Source-authority decisions
 
-- (none recorded)
+- path: `.github/workflows/droid-review.yml`
+  - reason: The canonical source repository retains authority for the release and security automation surface during this bounded promotion.
+  - source target: `b31d5f6d9700698b463d8f2b71b9d48a191f433c`
+  - swarm target: `e0c132d363c77b15ff2b16d04b6b1e60f0c192a0`
+  - decision receipt: `EffortlessMetrics/shiplog-swarm#322` at `e0c132d363c77b15ff2b16d04b6b1e60f0c192a0`
+  - consumed by: `(active)`
+- path: `.github/workflows/droid-security-scan.yml`
+  - reason: The canonical source repository retains authority for the release and security automation surface during this bounded promotion.
+  - source target: `b31d5f6d9700698b463d8f2b71b9d48a191f433c`
+  - swarm target: `e0c132d363c77b15ff2b16d04b6b1e60f0c192a0`
+  - decision receipt: `EffortlessMetrics/shiplog-swarm#322` at `e0c132d363c77b15ff2b16d04b6b1e60f0c192a0`
+  - consumed by: `(active)`
+- path: `.github/workflows/release.yml`
+  - reason: The canonical source repository retains authority for the release and security automation surface during this bounded promotion.
+  - source target: `b31d5f6d9700698b463d8f2b71b9d48a191f433c`
+  - swarm target: `e0c132d363c77b15ff2b16d04b6b1e60f0c192a0`
+  - decision receipt: `EffortlessMetrics/shiplog-swarm#322` at `e0c132d363c77b15ff2b16d04b6b1e60f0c192a0`
+  - consumed by: `(active)`
+- path: `.github/workflows/security.yml`
+  - reason: The canonical source repository retains authority for the release and security automation surface during this bounded promotion.
+  - source target: `b31d5f6d9700698b463d8f2b71b9d48a191f433c`
+  - swarm target: `e0c132d363c77b15ff2b16d04b6b1e60f0c192a0`
+  - decision receipt: `EffortlessMetrics/shiplog-swarm#322` at `e0c132d363c77b15ff2b16d04b6b1e60f0c192a0`
+  - consumed by: `(active)`
+- path: `policy/automation-authority.toml`
+  - reason: The repository-role policy is a swarm control-plane artifact; canonical source intentionally retains its absence.
+  - source target: `b31d5f6d9700698b463d8f2b71b9d48a191f433c`
+  - swarm target: `e0c132d363c77b15ff2b16d04b6b1e60f0c192a0`
+  - decision receipt: `EffortlessMetrics/shiplog-swarm#322` at `e0c132d363c77b15ff2b16d04b6b1e60f0c192a0`
+  - consumed by: `(active)`
 
 ## Truth hierarchy
 
