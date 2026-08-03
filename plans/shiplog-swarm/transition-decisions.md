@@ -87,12 +87,19 @@ These paths are release, security, or repository-role surfaces. The decision
 does not make source content generally authoritative for future swarm changes;
 any later target divergence requires a new reviewed decision.
 
+The source-authority evidence was refreshed against source `main` at
+`6471f50912d645447ebda94c3b2f1babcc24dfef`, which includes source PR #681's
+permission hardening. The exact source entries below are the ones the next
+promotion must bind and consume; the corresponding manifest update must name
+the merged refresh PR as its decision receipt.
+
 | Path | Source target entry | Swarm target entry | Decision reason |
 |---|---|---|---|
-| `.github/workflows/droid-review.yml` | `100644/blob/28fbc4ce0e64de244d1f5008b63f1515b9cf29e0` | `100644/blob/353675f6651afacad517e26d2e793ce571a72a77` | Canonical source review automation may publish reviews but cannot write product contents. |
-| `.github/workflows/droid-security-scan.yml` | `100644/blob/ee9e6428d3fa9a9bd84d22d3f93c6e1955273ae2` | `100644/blob/ce1faad0893020958cc836a24c0339e07e7c8d50` | Canonical source scheduled security verification remains read-only while swarm may originate remediation. |
-| `.github/workflows/release.yml` | `100644/blob/c529b478c8deced8ac0f1754b4596888c3469d75` | `100644/blob/bb443555426c638046a8aecc48502229f1c04e8b` | Only canonical source carries explicitly authorized release-writer jobs; swarm retains verification-only release behavior. |
-| `.github/workflows/security.yml` | `100644/blob/b6c76f6dede6c3a0eebe9dfcc3d456ad7deac52d` | `100644/blob/8ab39d95d4f579f3d08c2c288053e3a0fc9d4f1f` | Canonical source scheduled security verification declares read-only permissions and the swarm remediation handoff. |
+| `.github/workflows/droid-review.yml` | `100644/blob/196b2f2316e38c6875e87c76c0969195f45bea50` | `100644/blob/353675f6651afacad517e26d2e793ce571a72a77` | Canonical source review automation may publish reviews but cannot write product contents. |
+| `.github/workflows/droid-security-scan.yml` | `100644/blob/8dba098967af002229081dc41e30b8ac39ceb842` | `100644/blob/ce1faad0893020958cc836a24c0339e07e7c8d50` | Canonical source scheduled security verification remains read-only while swarm may originate remediation. |
+| `.github/workflows/droid.yml` | `100644/blob/e80ab51682e696202d793fdf175cbe3fd2ab82a3` | `100644/blob/ec4b5257d46a456b1298e7649bcfb3b0921ddb3a` | Canonical source review automation may publish comments but cannot mint identity or write product contents. |
+| `.github/workflows/release.yml` | `100644/blob/6250b02297aa5df39f422947c486fd5e95317cbb` | `100644/blob/bb443555426c638046a8aecc48502229f1c04e8b` | Only canonical source carries explicitly authorized release-writer jobs; swarm retains verification-only release behavior. |
+| `.github/workflows/security.yml` | `100644/blob/22ca71161234b96b50b835bfc00fa9da64d00b6f` | `100644/blob/8ab39d95d4f579f3d08c2c288053e3a0fc9d4f1f` | Canonical source scheduled security verification declares read-only permissions and the swarm remediation handoff. |
 | `policy/automation-authority.toml` | absent | `100644/blob/aa3b2ba0ca50acf4a5540a7b2e8f3eca4c7e26cc` | The repository-role policy is a swarm control-plane artifact; canonical source retains its intentional absence. |
 
 ## Deliberate exclusions
@@ -102,7 +109,7 @@ This decision does not resolve any other promotion blocker:
 - source #657 `Cargo.lock` remains `missing_in_swarm`; no dependency decision is
   inferred from this ledger;
 - source-authoritative workflow paths and `policy/automation-authority.toml`
-  are now recorded above but remain unbound until the later manifest PR;
+  are recorded above but remain unbound until the later manifest PR;
 - no source refs, source files, or promotion manifest entries are changed by
   this record;
 - the later manifest PR must prove the decision receipt is merged and
