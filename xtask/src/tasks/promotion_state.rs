@@ -22,6 +22,7 @@ use std::path::Path;
 
 pub const MANIFEST_REL: &str = "plans/shiplog-swarm/promotion-state.toml";
 pub const GENERATED_REL: &str = "plans/shiplog-swarm/current-promotion.md";
+pub const PROMOTION_STATE_PATH: &str = MANIFEST_REL;
 
 const GENERATED_BANNER: &str = "<!-- GENERATED FROM plans/shiplog-swarm/promotion-state.toml BY `cargo xtask promotion-state`. DO NOT EDIT BY HAND. -->";
 const VALID_STATUSES: &[&str] = &["completed", "pending"];
@@ -148,6 +149,13 @@ pub struct TransitionPath {
     /// Human-readable reason for the exceptional resolution.
     #[serde(default)]
     pub reason: String,
+    /// The path is the manifest that stores this receipt itself. Its
+    /// historical swarm tree entry remains exact evidence, but the current
+    /// swarm entry must change when the receipt is materialized. This escape
+    /// hatch is restricted to the canonical promotion manifest and an
+    /// explicit discard-source resolution by structural validation below.
+    #[serde(default)]
+    pub self_referential: bool,
     /// Ordered swarm PRs that carried this path. `equivalent`,
     /// `dependency_equivalent`, and `tree_equivalent` each name exactly one;
     /// `superseded_in_swarm` names the steps that continue the source history.
@@ -192,6 +200,9 @@ pub enum TransitionDisposition {
     SupersededInSwarm,
     /// Source changed it and swarm has not caught up.
     MissingInSwarm,
+    /// Both repositories had the same exact tree entry at the evidence target;
+    /// a later swarm-only product change may now replace the source copy.
+    ConvergedAtTarget,
     /// The two sides disagree; promotion must not proceed.
     Conflicting,
 }
@@ -213,6 +224,7 @@ impl std::fmt::Display for TransitionDisposition {
             Self::TreeEquivalent => "tree_equivalent",
             Self::SupersededInSwarm => "superseded_in_swarm",
             Self::MissingInSwarm => "missing_in_swarm",
+            Self::ConvergedAtTarget => "converged_at_target",
             Self::Conflicting => "conflicting",
         };
         formatter.write_str(name)
@@ -436,8 +448,32 @@ fn validate_transitions(transitions: &[Transition]) -> Result<()> {
                     path.path
                 );
             }
+            if path.self_referential && path.path != PROMOTION_STATE_PATH {
+                bail!(
+                    "transition {} path {} may mark self_referential only for {}",
+                    entry.source_pr,
+                    path.path,
+                    PROMOTION_STATE_PATH
+                );
+            }
+            if path.disposition == TransitionDisposition::ConvergedAtTarget
+                && path.resolution != Some(TransitionResolution::DiscardSource)
+            {
+                bail!(
+                    "transition {} path {} converged_at_target requires discard_source resolution",
+                    entry.source_pr,
+                    path.path
+                );
+            }
             match path.resolution {
                 None => {
+                    if path.self_referential {
+                        bail!(
+                            "transition {} path {} self_referential requires discard_source resolution",
+                            entry.source_pr,
+                            path.path
+                        );
+                    }
                     if !path.decision_receipt.is_empty()
                         || !path.decision_merge_sha.is_empty()
                         || !path.reason.is_empty()
@@ -450,9 +486,13 @@ fn validate_transitions(transitions: &[Transition]) -> Result<()> {
                     }
                 }
                 Some(TransitionResolution::DiscardSource) => {
-                    if path.disposition != TransitionDisposition::MissingInSwarm {
+                    if !matches!(
+                        path.disposition,
+                        TransitionDisposition::MissingInSwarm
+                            | TransitionDisposition::ConvergedAtTarget
+                    ) {
                         bail!(
-                            "transition {} path {} discard_source requires missing_in_swarm evidence",
+                            "transition {} path {} discard_source requires missing_in_swarm or converged_at_target evidence",
                             entry.source_pr,
                             path.path
                         );
@@ -524,6 +564,15 @@ fn validate_transitions(transitions: &[Transition]) -> Result<()> {
                     if path.swarm_chain.is_empty() {
                         bail!(
                             "transition {} path {} is superseded_in_swarm and must name its chain",
+                            entry.source_pr,
+                            path.path
+                        );
+                    }
+                }
+                TransitionDisposition::ConvergedAtTarget => {
+                    if !path.swarm_chain.is_empty() {
+                        bail!(
+                            "transition {} path {} is converged_at_target and must not name swarm PRs",
                             entry.source_pr,
                             path.path
                         );
@@ -862,6 +911,53 @@ swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "bbbbbbbbbbbbb
         let path = &state.transition[0].path[0];
         assert_eq!(path.resolution, Some(TransitionResolution::DiscardSource));
         assert_eq!(path.decision_receipt, "EffortlessMetrics/shiplog-swarm#242");
+        Ok(())
+    }
+
+    #[test]
+    fn self_referential_transition_is_restricted_to_the_promotion_manifest() -> Result<()> {
+        let state = manifest_with_transition(
+            r#"
+[[transition]]
+source_pr = "EffortlessMetrics/shiplog#674"
+source_merge_sha = "b31d5f6d9700698b463d8f2b71b9d48a191f433c"
+source_target = "1111111111111111111111111111111111111111"
+swarm_target = "2222222222222222222222222222222222222222"
+[[transition.path]]
+path = "plans/shiplog-swarm/promotion-state.toml"
+disposition = "missing_in_swarm"
+resolution = "discard_source"
+self_referential = true
+decision_receipt = "EffortlessMetrics/shiplog-swarm#242"
+decision_merge_sha = "7d0a1b2c3d4e5f60718293a4b5c6d7e8f9a0b1c2"
+reason = "The active decision is stored in the promotion manifest."
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" }
+"#,
+        )?;
+        assert!(state.transition[0].path[0].self_referential);
+
+        let error = manifest_with_transition(
+            r#"
+[[transition]]
+source_pr = "EffortlessMetrics/shiplog#674"
+source_merge_sha = "b31d5f6d9700698b463d8f2b71b9d48a191f433c"
+source_target = "1111111111111111111111111111111111111111"
+swarm_target = "2222222222222222222222222222222222222222"
+[[transition.path]]
+path = "docs/xtask.md"
+disposition = "missing_in_swarm"
+resolution = "discard_source"
+self_referential = true
+decision_receipt = "EffortlessMetrics/shiplog-swarm#242"
+decision_merge_sha = "7d0a1b2c3d4e5f60718293a4b5c6d7e8f9a0b1c2"
+reason = "This path is not the promotion manifest."
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" }
+"#,
+        )
+        .expect_err("self_referential must be restricted to the promotion manifest");
+        assert!(format!("{error:#}").contains("may mark self_referential only"));
         Ok(())
     }
 
