@@ -451,6 +451,13 @@ fn validate_transitions(transitions: &[Transition]) -> Result<()> {
             if path.path.trim().is_empty() {
                 bail!("transition {} has an empty path", entry.source_pr);
             }
+            if !seen_paths.insert(path.path.as_str()) {
+                bail!(
+                    "transition {} lists path {} more than once",
+                    entry.source_pr,
+                    path.path
+                );
+            }
             if entry.consumed_by.is_empty() {
                 if let Some(previous_source_pr) = active_paths.get(&path.path) {
                     bail!(
@@ -461,13 +468,6 @@ fn validate_transitions(transitions: &[Transition]) -> Result<()> {
                     );
                 }
                 active_paths.insert(path.path.clone(), entry.source_pr.clone());
-            }
-            if !seen_paths.insert(path.path.as_str()) {
-                bail!(
-                    "transition {} lists path {} more than once",
-                    entry.source_pr,
-                    path.path
-                );
             }
             if path.self_referential && path.path != PROMOTION_STATE_PATH {
                 bail!(
@@ -1165,6 +1165,35 @@ disposition = "missing_in_swarm"
 "#,
         )
         .expect_err("an active path must not have two bindings");
+        assert!(
+            format!("{error:#}").contains("appears in both"),
+            "unexpected error: {error:#}"
+        );
+    }
+
+    #[test]
+    fn transition_rejects_overlapping_active_path_across_source_prs() {
+        let error = manifest_with_transition(
+            r#"
+[[transition]]
+source_pr = "EffortlessMetrics/shiplog#666"
+source_merge_sha = "d88d59a1a5af338537e35ff98b8ddda14d4673cf"
+source_target = "1111111111111111111111111111111111111111"
+swarm_target = "2222222222222222222222222222222222222222"
+[[transition.path]]
+path = "docs/xtask.md"
+disposition = "missing_in_swarm"
+[[transition]]
+source_pr = "EffortlessMetrics/shiplog#667"
+source_merge_sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+source_target = "3333333333333333333333333333333333333333"
+swarm_target = "4444444444444444444444444444444444444444"
+[[transition.path]]
+path = "docs/xtask.md"
+disposition = "missing_in_swarm"
+"#,
+        )
+        .expect_err("an active path must not have two source-PR bindings");
         assert!(
             format!("{error:#}").contains("appears in both"),
             "unexpected error: {error:#}"

@@ -557,10 +557,11 @@ reason = "The swarm report carries the current exact promotion, branch-protectio
 source_tree_entry = { mode = "100644", object_type = "blob", oid = "fab37f26423e06a97326b521706c7067432a571f" }
 swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "583b32574ca60f3b60517bf1724c76c9d1041644" }
 
-# A later exact-target binding for the two documentation paths changed by
-# source-merge-control PR #357. The earlier #682 transition remains anchored
-# at the #353 evidence target for its original paths; this disjoint entry keeps
-# that historical binding intact while consuming the reviewed #359 decision.
+# A later exact-target binding for the three documentation paths changed by
+# source-merge-control PR #357 and reviewed by swarm PR #359. The earlier #682
+# transition remains anchored at the #353 evidence target for its original
+# paths; this disjoint entry keeps that historical binding intact while
+# consuming the #359 decision for all three paths at the current source target.
 [[transition]]
 source_pr = "EffortlessMetrics/shiplog#682"
 source_merge_sha = "2f69daf921d74fb9472584c2a0df31857cfa2384"
