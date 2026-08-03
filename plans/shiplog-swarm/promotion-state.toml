@@ -68,7 +68,7 @@ deferred_receipt_carry = []
 source_pr = "EffortlessMetrics/shiplog#657"
 source_merge_sha = "e6a72ad11ab22d03b1cf434b237bf0fff9c145bf"
 source_target = "b31d5f6d9700698b463d8f2b71b9d48a191f433c"
-swarm_target = "7884dec5eefeba3a81aa6139923c817632ce7116"
+swarm_target = "e0c132d363c77b15ff2b16d04b6b1e60f0c192a0"
 
 [[transition.path]]
 path = "Cargo.lock"
@@ -80,7 +80,7 @@ swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "620299ce104f1
 source_pr = "EffortlessMetrics/shiplog#666"
 source_merge_sha = "d88d59a8afd7eee445c3214c5f89ca7ccd50e4de"
 source_target = "b31d5f6d9700698b463d8f2b71b9d48a191f433c"
-swarm_target = "7884dec5eefeba3a81aa6139923c817632ce7116"
+swarm_target = "e0c132d363c77b15ff2b16d04b6b1e60f0c192a0"
 
 [transition.swarm_merge_sha]
 "EffortlessMetrics/shiplog-swarm#274" = "1ca35e97ba506062376e6f78b6633003e25db963"
@@ -164,7 +164,7 @@ decision_receipt = "EffortlessMetrics/shiplog-swarm#317"
 decision_merge_sha = "7884dec5eefeba3a81aa6139923c817632ce7116"
 reason = "Reviewed swarm direct-command contract supersedes the source-side transition copy for this bounded promotion."
 source_tree_entry = { mode = "100644", object_type = "blob", oid = "b56d190691c1c674918da9989d79d112b7d45e92" }
-swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "da7873d45b82bce0192eb959d47478c41ee891aa" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "a7c57ea5e7f46b08866f860b5e3cba2dc3a25104" }
 
 [[transition.path]]
 path = "xtask/src/tasks/check_goals.rs"
@@ -198,7 +198,7 @@ swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "ce70e4c73f91f
 source_pr = "EffortlessMetrics/shiplog#658"
 source_merge_sha = "1d24d256fa9e976bc608e54cf176364a4791273e"
 source_target = "b31d5f6d9700698b463d8f2b71b9d48a191f433c"
-swarm_target = "7884dec5eefeba3a81aa6139923c817632ce7116"
+swarm_target = "e0c132d363c77b15ff2b16d04b6b1e60f0c192a0"
 
 [transition.swarm_merge_sha]
 "EffortlessMetrics/shiplog-swarm#247" = "ba4aeaf78cb17f980f1da05d24d9638033b95f68"
@@ -214,7 +214,7 @@ swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "620299ce104f1
 source_pr = "EffortlessMetrics/shiplog#659"
 source_merge_sha = "0da4b68ccc8763375aaa1422b6d2d3280c3fe3c9"
 source_target = "b31d5f6d9700698b463d8f2b71b9d48a191f433c"
-swarm_target = "7884dec5eefeba3a81aa6139923c817632ce7116"
+swarm_target = "e0c132d363c77b15ff2b16d04b6b1e60f0c192a0"
 
 [transition.swarm_merge_sha]
 "EffortlessMetrics/shiplog-swarm#248" = "2437c0c54dbdcd3a62fb3e9573363d8e6027d1ef"
@@ -230,7 +230,7 @@ swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "620299ce104f1
 source_pr = "EffortlessMetrics/shiplog#660"
 source_merge_sha = "de23dcb67d17242f081e73eb81f47b8fc07a8773"
 source_target = "b31d5f6d9700698b463d8f2b71b9d48a191f433c"
-swarm_target = "7884dec5eefeba3a81aa6139923c817632ce7116"
+swarm_target = "e0c132d363c77b15ff2b16d04b6b1e60f0c192a0"
 
 [transition.swarm_merge_sha]
 "EffortlessMetrics/shiplog-swarm#249" = "1543c9f543778a17ebf2ef2b654b29e24cd1dc32"
@@ -246,7 +246,7 @@ swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "620299ce104f1
 source_pr = "EffortlessMetrics/shiplog#661"
 source_merge_sha = "a94bfaf6880c6873d4dd0fce7bf9733fb1b61734"
 source_target = "b31d5f6d9700698b463d8f2b71b9d48a191f433c"
-swarm_target = "7884dec5eefeba3a81aa6139923c817632ce7116"
+swarm_target = "e0c132d363c77b15ff2b16d04b6b1e60f0c192a0"
 
 [transition.swarm_merge_sha]
 "EffortlessMetrics/shiplog-swarm#250" = "abb7fae01d1c04217ea275a819f932dc98e9dd0c"
@@ -262,7 +262,7 @@ swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "620299ce104f1
 source_pr = "EffortlessMetrics/shiplog#676"
 source_merge_sha = "b31d5f6d9700698b463d8f2b71b9d48a191f433c"
 source_target = "b31d5f6d9700698b463d8f2b71b9d48a191f433c"
-swarm_target = "7884dec5eefeba3a81aa6139923c817632ce7116"
+swarm_target = "e0c132d363c77b15ff2b16d04b6b1e60f0c192a0"
 
 [transition.swarm_merge_sha]
 "EffortlessMetrics/shiplog-swarm#282" = "dcbf5b3d8fe94dbc57e816ac737677b1caed4ee4"
@@ -282,7 +282,7 @@ decision_receipt = "EffortlessMetrics/shiplog-swarm#317"
 decision_merge_sha = "7884dec5eefeba3a81aa6139923c817632ce7116"
 reason = "The generated promotion summary must follow the swarm manifest and current promotion state."
 source_tree_entry = { mode = "100644", object_type = "blob", oid = "4e28955f45a4aa42a5702ee7f6049d8bb496781a" }
-swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "1f0d11fc5fe0b4deec71054a8940d0ba26a43c88" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "12fd2b7d13de94e8f7b6c371bafc137d456d5fc2" }
 
 [[transition.path]]
 path = "xtask/src/tasks/closeout.rs"
@@ -307,3 +307,56 @@ decision_merge_sha = "7884dec5eefeba3a81aa6139923c817632ce7116"
 reason = "The swarm implementation includes the source cleanup and maintained control-plane behavior; the source-side transition copy is superseded."
 source_tree_entry = { mode = "100644", object_type = "blob", oid = "af4b3f7193d1a72f5aec735134e29809e9726652" }
 swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "fab37f26423e06a97326b521706c7067432a571f" }
+
+# Reviewed release/security surfaces where canonical source remains
+# authoritative for this bounded promotion. These decisions are consumptive;
+# they do not change source-only policy or grant permanent source authority.
+
+[[source_authority]]
+path = ".github/workflows/droid-review.yml"
+source_target = "b31d5f6d9700698b463d8f2b71b9d48a191f433c"
+swarm_target = "e0c132d363c77b15ff2b16d04b6b1e60f0c192a0"
+decision_receipt = "EffortlessMetrics/shiplog-swarm#322"
+decision_merge_sha = "e0c132d363c77b15ff2b16d04b6b1e60f0c192a0"
+reason = "The canonical source repository retains authority for the release and security automation surface during this bounded promotion."
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "28fbc4ce0e64de244d1f5008b63f1515b9cf29e0" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "353675f6651afacad517e26d2e793ce571a72a77" }
+
+[[source_authority]]
+path = ".github/workflows/droid-security-scan.yml"
+source_target = "b31d5f6d9700698b463d8f2b71b9d48a191f433c"
+swarm_target = "e0c132d363c77b15ff2b16d04b6b1e60f0c192a0"
+decision_receipt = "EffortlessMetrics/shiplog-swarm#322"
+decision_merge_sha = "e0c132d363c77b15ff2b16d04b6b1e60f0c192a0"
+reason = "The canonical source repository retains authority for the release and security automation surface during this bounded promotion."
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "ee9e6428d3fa9a9bd84d22d3f93c6e1955273ae2" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "ce1faad0893020958cc836a24c0339e07e7c8d50" }
+
+[[source_authority]]
+path = ".github/workflows/release.yml"
+source_target = "b31d5f6d9700698b463d8f2b71b9d48a191f433c"
+swarm_target = "e0c132d363c77b15ff2b16d04b6b1e60f0c192a0"
+decision_receipt = "EffortlessMetrics/shiplog-swarm#322"
+decision_merge_sha = "e0c132d363c77b15ff2b16d04b6b1e60f0c192a0"
+reason = "The canonical source repository retains authority for the release and security automation surface during this bounded promotion."
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "c529b478c8deced8ac0f1754b4596888c3469d75" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "bb443555426c638046a8aecc48502229f1c04e8b" }
+
+[[source_authority]]
+path = ".github/workflows/security.yml"
+source_target = "b31d5f6d9700698b463d8f2b71b9d48a191f433c"
+swarm_target = "e0c132d363c77b15ff2b16d04b6b1e60f0c192a0"
+decision_receipt = "EffortlessMetrics/shiplog-swarm#322"
+decision_merge_sha = "e0c132d363c77b15ff2b16d04b6b1e60f0c192a0"
+reason = "The canonical source repository retains authority for the release and security automation surface during this bounded promotion."
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "b6c76f6dede6c3a0eebe9dfcc3d456ad7deac52d" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "8ab39d95d4f579f3d08c2c288053e3a0fc9d4f1f" }
+
+[[source_authority]]
+path = "policy/automation-authority.toml"
+source_target = "b31d5f6d9700698b463d8f2b71b9d48a191f433c"
+swarm_target = "e0c132d363c77b15ff2b16d04b6b1e60f0c192a0"
+decision_receipt = "EffortlessMetrics/shiplog-swarm#322"
+decision_merge_sha = "e0c132d363c77b15ff2b16d04b6b1e60f0c192a0"
+reason = "The repository-role policy is a swarm control-plane artifact; canonical source intentionally retains its absence."
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "aa3b2ba0ca50acf4a5540a7b2e8f3eca4c7e26cc" }
