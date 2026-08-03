@@ -324,8 +324,14 @@ fn run_with_port_to(
     // Commits the ancestry walk may step over: approved governance, plus source
     // merges an active transition receipt accounts for. Both are recorded
     // evidence; anything else following the promotion merge is unapproved.
-    let mut recorded_commits = approved_governance_commits(port, &state.latest_promotion)?;
-    recorded_commits.extend(transition_authority.source_commits.iter().cloned());
+    // The latest promotion merge is the checkpoint anchor, however, so it must
+    // remain visible to the checkpoint parser even when a transition receipt
+    // also records that merge as historical source evidence.
+    let recorded_commits = ancestry_skip_commits(
+        &state.latest_promotion,
+        approved_governance_commits(port, &state.latest_promotion)?,
+        &transition_authority.source_commits,
+    );
     find_latest_promotion_merge(
         port,
         &inputs.workspace_root,
@@ -2059,6 +2065,18 @@ fn approved_governance_commits(
     Ok(commits)
 }
 
+fn ancestry_skip_commits(
+    promotion: &LatestPromotion,
+    mut approved_governance: BTreeSet<String>,
+    transition_source_commits: &BTreeSet<String>,
+) -> BTreeSet<String> {
+    approved_governance.extend(transition_source_commits.iter().cloned());
+    // This merge is the checkpoint we are trying to find, not a governance
+    // commit that may be skipped while walking back through source history.
+    approved_governance.remove(&promotion.source_merge_sha);
+    approved_governance
+}
+
 fn find_latest_promotion_merge(
     port: &impl PromotePort,
     workspace_root: &Path,
@@ -2420,6 +2438,33 @@ mod tests {
             current,
             governance,
         })
+    }
+
+    #[test]
+    fn ancestry_skip_set_keeps_latest_promotion_as_checkpoint_anchor() -> Result<()> {
+        let promotion = LatestPromotion {
+            status: "completed".to_string(),
+            disposition: "completed-with-governance".to_string(),
+            source_promotion_pr: "EffortlessMetrics/shiplog#682".to_string(),
+            source_merge_sha: "promotion-merge".to_string(),
+            promoted_swarm_head: "swarm-head".to_string(),
+            source_governance: Vec::new(),
+            source_post_merge_proof: String::new(),
+            included_swarm_prs: Vec::new(),
+        };
+        let skipped = ancestry_skip_commits(
+            &promotion,
+            BTreeSet::from(["governance-merge".to_string()]),
+            &BTreeSet::from([
+                "promotion-merge".to_string(),
+                "transition-merge".to_string(),
+            ]),
+        );
+
+        ensure!(skipped.contains("governance-merge"));
+        ensure!(skipped.contains("transition-merge"));
+        ensure!(!skipped.contains("promotion-merge"));
+        Ok(())
     }
 
     fn git_fixture(workspace_root: &Path, args: &[&str]) -> Result<String> {

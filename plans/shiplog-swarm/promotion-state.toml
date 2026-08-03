@@ -494,7 +494,7 @@ decision_receipt = "EffortlessMetrics/shiplog-swarm#353"
 decision_merge_sha = "fc19c648c9eba8a76a67d55af55cd2a5bc77291c"
 reason = "The swarm ledger is the maintained record of current transition evidence and bounded decisions."
 source_tree_entry = { mode = "100644", object_type = "blob", oid = "bbe7516331ab7e132aea0026049d61cb1040accd" }
-swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "a2fa27582813c5bc8c560a29000113a7ab4325c5" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "faa0a3451de4a06abd4872b7fe34282afbb6ab1e" }
 
 [[transition.path]]
 path = "policy/source-only-paths.toml"
