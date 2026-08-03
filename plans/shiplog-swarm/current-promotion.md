@@ -8,6 +8,8 @@
 **Source governance:** `EffortlessMetrics/shiplog#656`
 **Source governance:** `EffortlessMetrics/shiplog#679`
 **Source governance:** `EffortlessMetrics/shiplog#681`
+**Source governance:** `EffortlessMetrics/shiplog#684`
+**Source governance:** `EffortlessMetrics/shiplog#686`
 **Source post-merge proof:** `https://github.com/EffortlessMetrics/shiplog/actions/runs/30806322336`
 
 ## Included work

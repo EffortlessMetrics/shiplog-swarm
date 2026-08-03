@@ -34,6 +34,8 @@ source_governance = [
   "EffortlessMetrics/shiplog#656",
   "EffortlessMetrics/shiplog#679",
   "EffortlessMetrics/shiplog#681",
+  "EffortlessMetrics/shiplog#684",
+  "EffortlessMetrics/shiplog#686",
 ]
 # Latest source post-merge routed proof, once recorded. Empty until observed.
 source_post_merge_proof = "https://github.com/EffortlessMetrics/shiplog/actions/runs/30806322336"
