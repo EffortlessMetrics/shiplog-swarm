@@ -1,7 +1,7 @@
 //! The promote command verifies an exact swarm head and prepares the source
 //! promotion branch. It deliberately stops before creating or merging a PR.
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, bail, ensure};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -24,10 +24,8 @@ const SOURCE_ONLY_PATH_POLICY: &str = "policy/source-only-paths.toml";
 const OVERLAY_SOURCE_TRAILER: &str = "Shiplog-Source-Head:";
 const OVERLAY_SWARM_TRAILER: &str = "Shiplog-Swarm-Head:";
 /// Content hash of the per-path resolution plan the overlay was built from.
-///
-/// A correlation id, not a proof: the canonical plan is written to the local
-/// receipt rather than into git history, so closeout can confirm the trailer is
-/// present and well-formed but cannot recompute it from the landed commit.
+/// Verify-only recomputes this id from the exact source parent, swarm head,
+/// policy, and active evidence before accepting a modern overlay checkpoint.
 const OVERLAY_PLAN_TRAILER: &str = "Shiplog-Resolution-Plan:";
 
 #[derive(Debug, Deserialize)]
@@ -315,30 +313,14 @@ fn run_with_port_to(
         &["rev-parse", &format!("{}^{{commit}}", inputs.source_ref)],
     )?;
     let source_only_paths = load_source_only_paths(&inputs.workspace_root)?;
-    let mut transition_authority = super::transition::derive_authority(
+    let transition_authority = derive_promotion_transition_authority(
         port,
         &inputs.workspace_root,
-        &super::transition::TransitionRefs {
-            source_repo: SOURCE_REPO,
-            swarm_repo: SWARM_REPO,
-            source_target: &source_head,
-            swarm_target: &swarm_sha,
-        },
-        &state.transition,
-    )?;
-    let source_authority = super::transition::derive_source_authority(
-        port,
-        &inputs.workspace_root,
-        &super::transition::TransitionRefs {
-            source_repo: SOURCE_REPO,
-            swarm_repo: SWARM_REPO,
-            source_target: &source_head,
-            swarm_target: &swarm_sha,
-        },
+        &source_head,
+        &swarm_sha,
         &source_only_paths,
-        &state.source_authority,
+        &state,
     )?;
-    transition_authority.source_authority = source_authority;
     // Commits the ancestry walk may step over: approved governance, plus source
     // merges an active transition receipt accounts for. Both are recorded
     // evidence; anything else following the promotion merge is unapproved.
@@ -607,8 +589,9 @@ struct PromoteVerification {
     /// Which shape carried the swarm head. Overlay checkpoints additionally
     /// proved their parent and recorded source head match the merge.
     checkpoint_shape: CheckpointShape,
-    /// Plan id the overlay recorded, when it is an overlay checkpoint. Confirmed
-    /// present and well-formed; not compared against a stored plan.
+    /// Plan id the overlay recorded, when it is an overlay checkpoint. Modern
+    /// overlays are checked against the exact plan derived from their source
+    /// parent, swarm head, policy, and active evidence.
     #[serde(skip_serializing_if = "Option::is_none")]
     resolution_plan_id: Option<String>,
     included_swarm_prs: Vec<String>,
@@ -619,11 +602,12 @@ struct PromoteVerification {
 /// Read-only post-merge verification. Confirms the requested swarm head is
 /// reachable from the swarm ref and has landed on the source ref as a
 /// regular-merge (two-parent) checkpoint whose second parent is the exact swarm
-/// head. Fails closed if the promotion has not landed or was squash-merged.
-/// Performs no ref, PR, or file mutation, and makes no `gh` calls. It confirms
-/// only that the merge landed — checking source post-merge CI and whether the
-/// source tip carries unapproved divergence remains the job of
-/// `repo-contract-report`.
+/// head. Modern overlay checkpoints also rederive and compare the exact
+/// evidence-bearing resolution plan used to build the overlay. Fails closed if
+/// the promotion has not landed, was squash-merged, or its active evidence no
+/// longer matches. Performs no ref, PR, or file mutation; checking source
+/// post-merge CI and whether the source tip carries unapproved divergence
+/// remains the job of `repo-contract-report`.
 fn run_verify_only(
     port: &impl PromotePort,
     inputs: &PromoteInputs,
@@ -657,6 +641,64 @@ fn run_verify_only(
             inputs.source_ref
         )
     })?;
+    let resolution_check = match (
+        landed_merge.shape,
+        landed_merge.resolution_plan_id.as_deref(),
+    ) {
+        (CheckpointShape::Overlay, Some(recorded_plan_id)) => {
+            let source_only_paths = load_source_only_paths(&inputs.workspace_root)?;
+            let transition_authority = derive_promotion_transition_authority(
+                port,
+                &inputs.workspace_root,
+                &landed_merge.source_parent,
+                swarm_sha,
+                &source_only_paths,
+                state,
+            )?;
+            let merge_base = port
+                .git_output(
+                    &inputs.workspace_root,
+                    &["merge-base", &landed_merge.source_parent, swarm_sha],
+                )
+                .with_context(|| {
+                    format!(
+                        "promote: determine merge base for verified overlay source parent {} and swarm head {swarm_sha}",
+                        landed_merge.source_parent
+                    )
+                })?;
+            ensure!(
+                !merge_base.is_empty(),
+                "promote: verified overlay has no merge base between source parent {} and swarm head {swarm_sha}",
+                landed_merge.source_parent
+            );
+            let plan = plan_path_resolutions(
+                port,
+                &inputs.workspace_root,
+                &landed_merge.source_parent,
+                swarm_sha,
+                &merge_base,
+                &source_only_paths,
+                &transition_authority,
+            )?;
+            ensure_no_blocked_paths(&plan, &mut Vec::new())?;
+            let derived_plan_id = resolution_plan_id(&plan)?;
+            ensure!(
+                recorded_plan_id == derived_plan_id,
+                "promote: verified overlay {} records resolution plan {recorded_plan_id}, but the current exact evidence derives {derived_plan_id}",
+                landed_merge.merge_sha
+            );
+            format!(
+                "overlay resolution plan {recorded_plan_id} matches the exact persisted promotion evidence"
+            )
+        }
+        (CheckpointShape::Overlay, None) => {
+            "legacy overlay has no resolution-plan evidence; modern per-path decision proof was not claimed"
+                .to_string()
+        }
+        (CheckpointShape::RawSwarmHead, _) => {
+            "raw swarm-head checkpoint predates overlay resolution-plan evidence".to_string()
+        }
+    };
     let included_swarm_prs = included_swarm_prs(
         port,
         &inputs.workspace_root,
@@ -686,6 +728,7 @@ fn run_verify_only(
         checks: vec![
             format!("swarm head {swarm_sha} is reachable from {}", inputs.swarm_ref),
             shape_check,
+            resolution_check,
         ],
         next_actions: vec![
             "Run `cargo xtask repo-contract-report` to check source post-merge CI and topology alignment.".to_string(),
@@ -1090,6 +1133,36 @@ fn load_source_only_paths(workspace_root: &Path) -> Result<Vec<String>> {
         }
     }
     Ok(allow)
+}
+
+/// Derive the evidence-bearing authority used by both planning and
+/// post-merge verification. Keeping this in one helper prevents verify-only
+/// from silently using a weaker policy/evidence interpretation than overlay
+/// construction.
+fn derive_promotion_transition_authority(
+    port: &impl PromotePort,
+    workspace_root: &Path,
+    source_head: &str,
+    swarm_sha: &str,
+    source_only_paths: &[String],
+    state: &PromotionState,
+) -> Result<super::transition::TransitionAuthority> {
+    let refs = super::transition::TransitionRefs {
+        source_repo: SOURCE_REPO,
+        swarm_repo: SWARM_REPO,
+        source_target: source_head,
+        swarm_target: swarm_sha,
+    };
+    let mut authority =
+        super::transition::derive_authority(port, workspace_root, &refs, &state.transition)?;
+    authority.source_authority = super::transition::derive_source_authority(
+        port,
+        workspace_root,
+        &refs,
+        source_only_paths,
+        &state.source_authority,
+    )?;
+    Ok(authority)
 }
 
 fn normalized_source_only_path(path: &str) -> Result<String> {
@@ -2459,6 +2532,118 @@ mod tests {
         // The landing is still recognized as the earlier merge, not the tip.
         ensure!(receipt["landed_merge"] == landed);
         ensure!(receipt["source_head"] != landed);
+        ensure!(port.git_mutations.borrow().is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn verify_only_recomputes_modern_overlay_resolution_plan() -> Result<()> {
+        let fixture = fixture_git()?;
+        let root = fixture.dir.path();
+        let source_only_paths = load_source_only_paths(root)?;
+        let merge_base = git_fixture(root, &["merge-base", &fixture.governance, &fixture.current])?;
+        let plan = resolve_paths(
+            root,
+            &fixture.governance,
+            &fixture.current,
+            &merge_base,
+            &source_only_paths,
+            &super::super::transition::TransitionAuthority::default(),
+        )?;
+        let plan_id = resolution_plan_id(&plan)?;
+        let overlay = prepare_source_overlay(
+            &SystemPort,
+            root,
+            &fixture.governance,
+            &fixture.current,
+            &plan.take_source(),
+            &plan_id,
+            false,
+        )?;
+        git_fixture(root, &["switch", "source"])?;
+        git_fixture(
+            root,
+            &[
+                "merge",
+                "--no-ff",
+                "-m",
+                "merge(swarm): promote through verified overlay",
+                &overlay.sha,
+            ],
+        )?;
+        let landed = git_fixture(root, &["rev-parse", "HEAD"])?;
+
+        let port = stub_port(&fixture, true, true);
+        let mut output = Vec::new();
+        run_with_port_to(&port, verify_only_inputs(&fixture), &mut output)?;
+        let receipt: serde_json::Value = serde_json::from_slice(&output)?;
+        ensure!(receipt["landed_merge"] == landed);
+        ensure!(receipt["checkpoint_shape"] == "overlay");
+        ensure!(receipt["resolution_plan_id"] == plan_id);
+        ensure!(receipt["checks"].as_array().is_some_and(|checks| {
+            checks.iter().any(|check| {
+                check.as_str().is_some_and(|text| {
+                    text.contains("matches the exact persisted promotion evidence")
+                })
+            })
+        }));
+        ensure!(port.git_mutations.borrow().is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn verify_only_rejects_changed_resolution_evidence() -> Result<()> {
+        let fixture = fixture_git()?;
+        let root = fixture.dir.path();
+        let source_only_paths = load_source_only_paths(root)?;
+        let merge_base = git_fixture(root, &["merge-base", &fixture.governance, &fixture.current])?;
+        let plan = resolve_paths(
+            root,
+            &fixture.governance,
+            &fixture.current,
+            &merge_base,
+            &source_only_paths,
+            &super::super::transition::TransitionAuthority::default(),
+        )?;
+        let plan_id = resolution_plan_id(&plan)?;
+        let overlay = prepare_source_overlay(
+            &SystemPort,
+            root,
+            &fixture.governance,
+            &fixture.current,
+            &plan.take_source(),
+            &plan_id,
+            false,
+        )?;
+        git_fixture(root, &["switch", "source"])?;
+        git_fixture(
+            root,
+            &[
+                "merge",
+                "--no-ff",
+                "-m",
+                "merge(swarm): promote through verified overlay",
+                &overlay.sha,
+            ],
+        )?;
+        let policy = root.join(SOURCE_ONLY_PATH_POLICY);
+        let policy_text = fs::read_to_string(&policy)?;
+        fs::write(
+            &policy,
+            policy_text.replace(
+                "path = \"governance.txt\"",
+                "path = \"changed-governance.txt\"",
+            ),
+        )?;
+
+        let port = stub_port(&fixture, true, true);
+        let error = run_with_port_to(&port, verify_only_inputs(&fixture), &mut Vec::new())
+            .expect_err("changed resolution evidence must fail closed");
+        let message = error.to_string();
+        ensure!(
+            message.contains("cannot resolve") || message.contains("resolution plan"),
+            "unexpected changed-evidence error: {message}"
+        );
         ensure!(port.git_mutations.borrow().is_empty());
         Ok(())
     }
