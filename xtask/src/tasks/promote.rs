@@ -105,6 +105,8 @@ struct PromotionState {
     /// here makes `promote` reject the manifest outright.
     #[serde(default)]
     transition: Vec<super::promotion_state::Transition>,
+    #[serde(default)]
+    source_authority: Vec<super::promotion_state::SourceAuthorityDecision>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -324,6 +326,20 @@ fn run_with_port_to(
         },
         &state.transition,
     )?;
+    let source_authority = super::transition::derive_source_authority(
+        port,
+        &inputs.workspace_root,
+        &super::transition::TransitionRefs {
+            source_repo: SOURCE_REPO,
+            swarm_repo: SWARM_REPO,
+            source_target: &source_head,
+            swarm_target: &swarm_sha,
+        },
+        &source_only_paths,
+        &state.source_authority,
+    )?;
+    let mut transition_authority = transition_authority;
+    transition_authority.source_authority = source_authority;
     // Commits the ancestry walk may step over: approved governance, plus source
     // merges an active transition receipt accounts for. Both are recorded
     // evidence; anything else following the promotion merge is unapproved.
@@ -1130,6 +1146,13 @@ enum ResolutionBasis {
         decision_merge_sha: String,
         reason: String,
     },
+    /// An explicit reviewed decision keeps the exact source tree entry for a
+    /// source-authoritative path that swarm changed during this promotion.
+    KeptSource {
+        decision_receipt: String,
+        decision_merge_sha: String,
+        reason: String,
+    },
     /// Swarm changed a path the policy reserves to source, so the overlay would
     /// revert it.
     SwarmChangedSourceAuthoritative,
@@ -1163,7 +1186,8 @@ impl ResolutionBasis {
             Self::SourceOnlyPolicy
             | Self::SwarmProductChange
             | Self::ResolvedTransition { .. }
-            | Self::DiscardedSource { .. } => {
+            | Self::DiscardedSource { .. }
+            | Self::KeptSource { .. } => {
                 format!("{path}: resolved")
             }
         }
@@ -1241,6 +1265,11 @@ fn plan_path_resolutions(
     source_only_paths: &[String],
     transition_authority: &super::transition::TransitionAuthority,
 ) -> Result<OverlayPlan> {
+    for path in transition_authority.source_authority.keys() {
+        if transition_authority.discard_source.contains_key(path) {
+            bail!("path {path} has both discard_source and source_authority decisions");
+        }
+    }
     let differing = git_diff_names(port, workspace_root, source_head, swarm_sha)?;
     let source_changed = git_diff_names_set(port, workspace_root, merge_base, source_head)?;
     let swarm_changed = git_diff_names_set(port, workspace_root, merge_base, swarm_sha)?;
@@ -1264,6 +1293,19 @@ fn plan_path_resolutions(
                 PathEffect::TakeSwarm,
                 ResolutionBasis::DiscardedSource {
                     source_pr: decision.source_pr.clone(),
+                    decision_receipt: decision.decision_receipt.clone(),
+                    decision_merge_sha: decision.decision_merge_sha.clone(),
+                    reason: decision.reason.clone(),
+                },
+            )
+        } else if let Some(decision) = transition_authority
+            .source_authority
+            .get(path.as_str())
+            .filter(|_| touched_by_swarm)
+        {
+            (
+                PathEffect::TakeSource,
+                ResolutionBasis::KeptSource {
                     decision_receipt: decision.decision_receipt.clone(),
                     decision_merge_sha: decision.decision_merge_sha.clone(),
                     reason: decision.reason.clone(),
@@ -3083,6 +3125,57 @@ merge-old source-parent another-swarm-head
                 .contains("swarm changed a source-authoritative path"),
             "unexpected error: {error}"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn bounded_source_authority_keeps_source_after_reviewed_decision() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let root = dir.path();
+        git_fixture(root, &["init", "--initial-branch=main"])?;
+        git_fixture(root, &["config", "user.email", "test@example.com"])?;
+        git_fixture(root, &["config", "user.name", "Promotion Test"])?;
+        fs::write(root.join("owned-by-source.toml"), "source\n")?;
+        git_fixture(root, &["add", "-A"])?;
+        git_fixture(root, &["commit", "-m", "base"])?;
+        let base = git_fixture(root, &["rev-parse", "HEAD"])?;
+
+        git_fixture(root, &["switch", "-c", "swarm"])?;
+        fs::write(root.join("owned-by-source.toml"), "swarm edit\n")?;
+        git_fixture(root, &["add", "-A"])?;
+        git_fixture(
+            root,
+            &["commit", "-m", "feat: swarm edits source-owned path"],
+        )?;
+        let swarm_sha = git_fixture(root, &["rev-parse", "HEAD"])?;
+
+        let path = "owned-by-source.toml";
+        let mut authority = super::super::transition::TransitionAuthority::default();
+        authority.source_authority.insert(
+            path.to_string(),
+            super::super::promotion_state::SourceAuthorityDecision {
+                path: path.to_string(),
+                source_target: base.clone(),
+                swarm_target: swarm_sha.clone(),
+                decision_receipt: "EffortlessMetrics/shiplog-swarm#319".to_string(),
+                decision_merge_sha: "7d0a1b2c3d4e5f60718293a4b5c6d7e8f9a0b1c2".to_string(),
+                reason: "Source release automation remains authoritative.".to_string(),
+                consumed_by: String::new(),
+                source_tree_entry: None,
+                swarm_tree_entry: None,
+            },
+        );
+
+        let plan = resolve_paths(
+            root,
+            &base,
+            &swarm_sha,
+            &base,
+            &[path.to_string()],
+            &authority,
+        )?;
+        assert_eq!(plan.take_source(), vec![path.to_string()]);
+        assert!(plan.blocked().is_empty());
         Ok(())
     }
 

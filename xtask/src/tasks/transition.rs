@@ -44,7 +44,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use super::promotion_state::{
-    Transition, TransitionDisposition, TransitionPath, TransitionResolution, TreeEntry,
+    SourceAuthorityDecision, Transition, TransitionDisposition, TransitionPath,
+    TransitionResolution, TreeEntry,
 };
 
 /// Divergence the transition receipts justify, split by the shape of the
@@ -67,6 +68,10 @@ pub struct TransitionAuthority {
     /// Explicit human-reviewed decisions to discard a source-side change and
     /// take the exact swarm tree entry for this bounded promotion.
     pub discard_source: BTreeMap<String, DiscardSourceDecision>,
+    /// Explicit human-reviewed decisions to retain the exact source tree entry
+    /// for a source-authoritative path that swarm changed during this bounded
+    /// promotion.
+    pub source_authority: BTreeMap<String, SourceAuthorityDecision>,
     /// Source merge commits an active receipt accounts for. A source commit that
     /// followed the last promotion merge is otherwise unapproved divergence, so
     /// without this the path-level authority above could never be reached.
@@ -162,6 +167,75 @@ pub fn derive_authority(
     Ok(authority)
 }
 
+/// Verify explicit source-authority decisions and return the paths they allow
+/// the overlay to keep from source. A source-only policy entry by itself is not
+/// enough when swarm touched the path: this receipt is the bounded decision
+/// that makes the discarded swarm change visible and reviewable.
+pub fn derive_source_authority(
+    port: &impl TransitionPort,
+    workspace_root: &Path,
+    refs: &TransitionRefs<'_>,
+    source_only_paths: &[String],
+    decisions: &[SourceAuthorityDecision],
+) -> Result<BTreeMap<String, SourceAuthorityDecision>> {
+    let mut authority = BTreeMap::new();
+    for decision in decisions {
+        if decision.consumed_by().is_some() {
+            continue;
+        }
+        if !source_only_paths.iter().any(|path| path == &decision.path) {
+            bail!(
+                "source_authority path {} is not listed in policy/source-only-paths.toml",
+                decision.path
+            );
+        }
+        ensure_exact_target_values(
+            &format!("source_authority {}", decision.path),
+            &decision.source_target,
+            &decision.swarm_target,
+            refs,
+        )?;
+        let source_entry = tree_entry(port, workspace_root, refs.source_target, &decision.path)?;
+        let swarm_entry = tree_entry(port, workspace_root, refs.swarm_target, &decision.path)?;
+        if source_entry == swarm_entry {
+            bail!(
+                "source_authority path {} requires differing source and swarm tree entries, but both are {source_entry:?}",
+                decision.path
+            );
+        }
+        verify_tree_entries(
+            decision.source_tree_entry.as_ref(),
+            decision.swarm_tree_entry.as_ref(),
+            source_entry.as_ref(),
+            swarm_entry.as_ref(),
+        )?;
+        check_merged_at(
+            port,
+            workspace_root,
+            refs.swarm_repo,
+            &decision.decision_receipt,
+            &decision.decision_merge_sha,
+            refs.swarm_target,
+        )
+        .with_context(|| {
+            format!(
+                "source_authority {}: decision receipt evidence",
+                decision.path
+            )
+        })?;
+        if authority
+            .insert(decision.path.clone(), decision.clone())
+            .is_some()
+        {
+            bail!(
+                "source_authority path {} appears more than once",
+                decision.path
+            );
+        }
+    }
+    Ok(authority)
+}
+
 fn check_path(
     port: &impl TransitionPort,
     workspace_root: &Path,
@@ -196,7 +270,12 @@ fn check_path(
                     "discard_source requires differing source and swarm tree entries, but both are {source_entry:?}"
                 );
             }
-            verify_recorded_tree_entries(path, source_entry.as_ref(), swarm_entry.as_ref())?;
+            verify_tree_entries(
+                path.source_tree_entry.as_ref(),
+                path.swarm_tree_entry.as_ref(),
+                source_entry.as_ref(),
+                swarm_entry.as_ref(),
+            )?;
             check_merged_at(
                 port,
                 workspace_root,
@@ -354,7 +433,12 @@ fn check_path(
     let Some((source_entry, swarm_entry)) = current_tree_entries.as_ref() else {
         bail!("resolved transition path has no current tree entries");
     };
-    verify_recorded_tree_entries(path, source_entry.as_ref(), swarm_entry.as_ref())?;
+    verify_tree_entries(
+        path.source_tree_entry.as_ref(),
+        path.swarm_tree_entry.as_ref(),
+        source_entry.as_ref(),
+        swarm_entry.as_ref(),
+    )?;
     // A resolved receipt reconciles a path both sides touched. It deliberately
     // does not grant one-sided source authority: only
     // `policy/source-only-paths.toml` may select source content, so a settled
@@ -372,17 +456,28 @@ fn check_path(
 }
 
 fn ensure_exact_targets(entry: &Transition, refs: &TransitionRefs<'_>) -> Result<()> {
-    if entry.source_target.is_empty() || entry.swarm_target.is_empty() {
-        bail!(
-            "active transition {} has no exact source_target/swarm_target binding",
-            entry.source_pr
-        );
+    ensure_exact_target_values(
+        &format!("active transition {}", entry.source_pr),
+        &entry.source_target,
+        &entry.swarm_target,
+        refs,
+    )
+}
+
+fn ensure_exact_target_values(
+    label: &str,
+    source_target: &str,
+    swarm_target: &str,
+    refs: &TransitionRefs<'_>,
+) -> Result<()> {
+    if source_target.is_empty() || swarm_target.is_empty() {
+        bail!("{label} has no exact source_target/swarm_target binding");
     }
-    if entry.source_target != refs.source_target || entry.swarm_target != refs.swarm_target {
+    if source_target != refs.source_target || swarm_target != refs.swarm_target {
         bail!(
             "receipt targets ({}, {}) do not match promotion targets ({}, {})",
-            entry.source_target,
-            entry.swarm_target,
+            source_target,
+            swarm_target,
             refs.source_target,
             refs.swarm_target
         );
@@ -390,22 +485,23 @@ fn ensure_exact_targets(entry: &Transition, refs: &TransitionRefs<'_>) -> Result
     Ok(())
 }
 
-fn verify_recorded_tree_entries(
-    path: &TransitionPath,
+fn verify_tree_entries(
+    recorded_source: Option<&TreeEntry>,
+    recorded_swarm: Option<&TreeEntry>,
     source_entry: Option<&TreeEntry>,
     swarm_entry: Option<&TreeEntry>,
 ) -> Result<()> {
-    if path.source_tree_entry.as_ref() != source_entry {
+    if recorded_source != source_entry {
         bail!(
             "recorded source tree entry does not match the exact promotion target: recorded {:?}, current {:?}",
-            path.source_tree_entry,
+            recorded_source,
             source_entry
         );
     }
-    if path.swarm_tree_entry.as_ref() != swarm_entry {
+    if recorded_swarm != swarm_entry {
         bail!(
             "recorded swarm tree entry does not match the exact promotion target: recorded {:?}, current {:?}",
-            path.swarm_tree_entry,
+            recorded_swarm,
             swarm_entry
         );
     }
@@ -1166,6 +1262,147 @@ mod tests {
         )?;
         assert!(authority.discard_source.contains_key(CARGO_LOCK));
         Ok(())
+    }
+
+    fn source_authority_decision(
+        path: &str,
+        source_oid: &str,
+        swarm_oid: &str,
+        decision_sha: &str,
+    ) -> SourceAuthorityDecision {
+        SourceAuthorityDecision {
+            path: path.to_string(),
+            source_target: "origin/main".to_string(),
+            swarm_target: "swarm/main".to_string(),
+            decision_receipt: format!("{SWARM}#319"),
+            decision_merge_sha: decision_sha.to_string(),
+            reason: "Reviewed source release workflow remains authoritative.".to_string(),
+            consumed_by: String::new(),
+            source_tree_entry: Some(blob_entry(source_oid)),
+            swarm_tree_entry: Some(blob_entry(swarm_oid)),
+        }
+    }
+
+    #[test]
+    fn source_authority_requires_exact_policy_targets_entries_and_receipt() -> Result<()> {
+        let path = "governance.yml";
+        let source_oid = "9f2c1b6a0d4e5f708192a3b4c5d6e7f809a1b2c3";
+        let swarm_oid = "8e1b2c3d4f5061728394a5b6c7d8e9f0a1b2c3d4";
+        let decision_sha = "7d0a1b2c3d4e5f60718293a4b5c6d7e8f9a0b1c2";
+        let decision = source_authority_decision(path, source_oid, swarm_oid, decision_sha);
+        let port = StubPort::new()
+            .merged(&decision.decision_receipt, decision_sha, "")
+            .blob("origin/main", path, source_oid)
+            .blob("swarm/main", path, swarm_oid);
+
+        let authority = derive_source_authority(
+            &port,
+            Path::new("."),
+            &refs(),
+            &[path.to_string()],
+            std::slice::from_ref(&decision),
+        )?;
+        assert_eq!(
+            authority.get(path).map(|value| value.reason.as_str()),
+            Some(decision.reason.as_str())
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn source_authority_rejects_an_unlisted_path() {
+        let decision = source_authority_decision(
+            "release.yml",
+            "9f2c1b6a0d4e5f708192a3b4c5d6e7f809a1b2c3",
+            "8e1b2c3d4f5061728394a5b6c7d8e9f0a1b2c3d4",
+            "7d0a1b2c3d4e5f60718293a4b5c6d7e8f9a0b1c2",
+        );
+        let error = derive_source_authority(
+            &StubPort::new(),
+            Path::new("."),
+            &refs(),
+            &["governance.yml".to_string()],
+            &[decision],
+        )
+        .expect_err("source authority must not expand the policy allowlist");
+        assert!(
+            error
+                .to_string()
+                .contains("not listed in policy/source-only-paths.toml")
+        );
+    }
+
+    #[test]
+    fn source_authority_rejects_equal_or_stale_tree_entries() {
+        let path = "governance.yml";
+        let source_oid = "9f2c1b6a0d4e5f708192a3b4c5d6e7f809a1b2c3";
+        let swarm_oid = "8e1b2c3d4f5061728394a5b6c7d8e9f0a1b2c3d4";
+        let decision_sha = "7d0a1b2c3d4e5f60718293a4b5c6d7e8f9a0b1c2";
+        let decision = source_authority_decision(path, source_oid, swarm_oid, decision_sha);
+
+        let equal_port = StubPort::new()
+            .merged(&decision.decision_receipt, decision_sha, "")
+            .blob("origin/main", path, source_oid)
+            .blob("swarm/main", path, source_oid);
+        let error = derive_source_authority(
+            &equal_port,
+            Path::new("."),
+            &refs(),
+            &[path.to_string()],
+            std::slice::from_ref(&decision),
+        )
+        .expect_err("equal trees must not create a source-authority decision");
+        assert!(
+            error
+                .to_string()
+                .contains("requires differing source and swarm")
+        );
+
+        let stale_port = StubPort::new()
+            .merged(&decision.decision_receipt, decision_sha, "")
+            .blob(
+                "origin/main",
+                path,
+                "1111111111111111111111111111111111111111",
+            )
+            .blob("swarm/main", path, swarm_oid);
+        let error = derive_source_authority(
+            &stale_port,
+            Path::new("."),
+            &refs(),
+            &[path.to_string()],
+            &[decision],
+        )
+        .expect_err("stale tree bindings must not grant source authority");
+        assert!(
+            error
+                .to_string()
+                .contains("recorded source tree entry does not match")
+        );
+    }
+
+    #[test]
+    fn source_authority_rejects_an_unreachable_decision_receipt() {
+        let path = "governance.yml";
+        let source_oid = "9f2c1b6a0d4e5f708192a3b4c5d6e7f809a1b2c3";
+        let swarm_oid = "8e1b2c3d4f5061728394a5b6c7d8e9f0a1b2c3d4";
+        let decision_sha = "7d0a1b2c3d4e5f60718293a4b5c6d7e8f9a0b1c2";
+        let decision = source_authority_decision(path, source_oid, swarm_oid, decision_sha);
+        let port = StubPort::new()
+            .merged(&decision.decision_receipt, decision_sha, "")
+            .unreachable(decision_sha)
+            .blob("origin/main", path, source_oid)
+            .blob("swarm/main", path, swarm_oid);
+        let error = derive_source_authority(
+            &port,
+            Path::new("."),
+            &refs(),
+            &[path.to_string()],
+            &[decision],
+        )
+        .expect_err("an unreachable decision receipt must not grant authority");
+        assert!(format!("{error:#}").contains("decision receipt evidence"));
+        assert!(format!("{error:#}").contains("not reachable from swarm/main"));
     }
 
     /// A newer missing-in-swarm receipt must supersede an older resolved
