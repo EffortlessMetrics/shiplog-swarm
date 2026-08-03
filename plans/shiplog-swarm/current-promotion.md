@@ -74,6 +74,7 @@
 - `EffortlessMetrics/shiplog-swarm#340`
 - `EffortlessMetrics/shiplog-swarm#341`
 - `EffortlessMetrics/shiplog-swarm#342`
+- `EffortlessMetrics/shiplog-swarm#344`
 
 ## Source-authority decisions
 
