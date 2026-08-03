@@ -361,72 +361,77 @@ reason = "The swarm implementation includes the source cleanup and maintained co
 source_tree_entry = { mode = "100644", object_type = "blob", oid = "af4b3f7193d1a72f5aec735134e29809e9726652" }
 swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "fab37f26423e06a97326b521706c7067432a571f" }
 
-# Reviewed release/security surfaces where canonical source remains
-# authoritative for this bounded promotion. These decisions are consumptive;
-# they do not change source-only policy or grant permanent source authority.
+# Refreshed from the exact source/swarm heads after the #351 decision record.
+# These active entries retain source content for one bounded promotion and are
+# consumed by the source promotion checkpoint.
+
 
 [[source_authority]]
 path = ".github/workflows/droid-review.yml"
-consumed_by = "EffortlessMetrics/shiplog#682"
-source_target = "6471f50912d645447ebda94c3b2f1babcc24dfef"
-swarm_target = "b75893463c466990122d51b3290287b107b0388e"
-decision_receipt = "EffortlessMetrics/shiplog-swarm#334"
-decision_merge_sha = "b75893463c466990122d51b3290287b107b0388e"
-reason = "The canonical source repository retains authority for the release and security automation surface during this bounded promotion."
+source_target = "175e8c8cee8110c4cf4a42d5534f5dffe45bf426"
+swarm_target = "5861dffe341d6f42cd145fe154c215c1c29836ca"
+decision_receipt = "EffortlessMetrics/shiplog-swarm#351"
+decision_merge_sha = "5861dffe341d6f42cd145fe154c215c1c29836ca"
+reason = "Canonical source review automation may publish reviews but cannot write product contents."
 source_tree_entry = { mode = "100644", object_type = "blob", oid = "196b2f2316e38c6875e87c76c0969195f45bea50" }
 swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "353675f6651afacad517e26d2e793ce571a72a77" }
 
 [[source_authority]]
 path = ".github/workflows/droid-security-scan.yml"
-consumed_by = "EffortlessMetrics/shiplog#682"
-source_target = "6471f50912d645447ebda94c3b2f1babcc24dfef"
-swarm_target = "b75893463c466990122d51b3290287b107b0388e"
-decision_receipt = "EffortlessMetrics/shiplog-swarm#334"
-decision_merge_sha = "b75893463c466990122d51b3290287b107b0388e"
-reason = "The canonical source repository retains authority for the release and security automation surface during this bounded promotion."
+source_target = "175e8c8cee8110c4cf4a42d5534f5dffe45bf426"
+swarm_target = "5861dffe341d6f42cd145fe154c215c1c29836ca"
+decision_receipt = "EffortlessMetrics/shiplog-swarm#351"
+decision_merge_sha = "5861dffe341d6f42cd145fe154c215c1c29836ca"
+reason = "Canonical source scheduled security verification remains read-only while swarm may originate remediation."
 source_tree_entry = { mode = "100644", object_type = "blob", oid = "8dba098967af002229081dc41e30b8ac39ceb842" }
 swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "ce1faad0893020958cc836a24c0339e07e7c8d50" }
 
 [[source_authority]]
-path = ".github/workflows/release.yml"
-consumed_by = "EffortlessMetrics/shiplog#682"
-source_target = "6471f50912d645447ebda94c3b2f1babcc24dfef"
-swarm_target = "b75893463c466990122d51b3290287b107b0388e"
-decision_receipt = "EffortlessMetrics/shiplog-swarm#334"
-decision_merge_sha = "b75893463c466990122d51b3290287b107b0388e"
-reason = "The canonical source repository retains authority for the release and security automation surface during this bounded promotion."
-source_tree_entry = { mode = "100644", object_type = "blob", oid = "6250b02297aa5df39f422947c486fd5e95317cbb" }
-swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "bb443555426c638046a8aecc48502229f1c04e8b" }
-
-[[source_authority]]
 path = ".github/workflows/droid.yml"
-consumed_by = "EffortlessMetrics/shiplog#682"
-source_target = "6471f50912d645447ebda94c3b2f1babcc24dfef"
-swarm_target = "b75893463c466990122d51b3290287b107b0388e"
-decision_receipt = "EffortlessMetrics/shiplog-swarm#334"
-decision_merge_sha = "b75893463c466990122d51b3290287b107b0388e"
-reason = "The canonical source review automation may publish comments but cannot mint identity or write product contents."
+source_target = "175e8c8cee8110c4cf4a42d5534f5dffe45bf426"
+swarm_target = "5861dffe341d6f42cd145fe154c215c1c29836ca"
+decision_receipt = "EffortlessMetrics/shiplog-swarm#351"
+decision_merge_sha = "5861dffe341d6f42cd145fe154c215c1c29836ca"
+reason = "Canonical source review automation may publish comments but cannot mint identity or write product contents."
 source_tree_entry = { mode = "100644", object_type = "blob", oid = "e80ab51682e696202d793fdf175cbe3fd2ab82a3" }
 swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "ec4b5257d46a456b1298e7649bcfb3b0921ddb3a" }
 
 [[source_authority]]
+path = ".github/workflows/release.yml"
+source_target = "175e8c8cee8110c4cf4a42d5534f5dffe45bf426"
+swarm_target = "5861dffe341d6f42cd145fe154c215c1c29836ca"
+decision_receipt = "EffortlessMetrics/shiplog-swarm#351"
+decision_merge_sha = "5861dffe341d6f42cd145fe154c215c1c29836ca"
+reason = "Canonical source retains explicitly authorized release-writer jobs and the source-side explicit-shell fix; swarm remains verification-only."
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "77c5ff31f0da4c15c4e9b1c3590b66ff34d95e35" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "1c8f97214cf86f0578d4d1678ff92b3f31673d94" }
+
+[[source_authority]]
 path = ".github/workflows/security.yml"
-consumed_by = "EffortlessMetrics/shiplog#682"
-source_target = "6471f50912d645447ebda94c3b2f1babcc24dfef"
-swarm_target = "b75893463c466990122d51b3290287b107b0388e"
-decision_receipt = "EffortlessMetrics/shiplog-swarm#334"
-decision_merge_sha = "b75893463c466990122d51b3290287b107b0388e"
-reason = "The canonical source repository retains authority for the release and security automation surface during this bounded promotion."
+source_target = "175e8c8cee8110c4cf4a42d5534f5dffe45bf426"
+swarm_target = "5861dffe341d6f42cd145fe154c215c1c29836ca"
+decision_receipt = "EffortlessMetrics/shiplog-swarm#351"
+decision_merge_sha = "5861dffe341d6f42cd145fe154c215c1c29836ca"
+reason = "Canonical source scheduled security verification declares read-only permissions and the swarm remediation handoff."
 source_tree_entry = { mode = "100644", object_type = "blob", oid = "22ca71161234b96b50b835bfc00fa9da64d00b6f" }
 swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "8ab39d95d4f579f3d08c2c288053e3a0fc9d4f1f" }
 
 [[source_authority]]
+path = ".github/workflows/source-automation-guard.yml"
+source_target = "175e8c8cee8110c4cf4a42d5534f5dffe45bf426"
+swarm_target = "5861dffe341d6f42cd145fe154c215c1c29836ca"
+decision_receipt = "EffortlessMetrics/shiplog-swarm#351"
+decision_merge_sha = "5861dffe341d6f42cd145fe154c215c1c29836ca"
+reason = "Canonical source owns the merge-control guard and its synthetic proof dispatch after source PR #686."
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "2689c94267bcf8ce5b162b84003dd6d8f7b4c293" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "981788072211f3d01d24731c4b6e978309fbe581" }
+
+[[source_authority]]
 path = "policy/automation-authority.toml"
-consumed_by = "EffortlessMetrics/shiplog#682"
-source_target = "6471f50912d645447ebda94c3b2f1babcc24dfef"
-swarm_target = "b75893463c466990122d51b3290287b107b0388e"
-decision_receipt = "EffortlessMetrics/shiplog-swarm#334"
-decision_merge_sha = "b75893463c466990122d51b3290287b107b0388e"
-reason = "Canonical source now carries its explicit source-role policy from #679; this bounded decision retains that release-governance file while swarm keeps its distinct swarm-role policy."
+source_target = "175e8c8cee8110c4cf4a42d5534f5dffe45bf426"
+swarm_target = "5861dffe341d6f42cd145fe154c215c1c29836ca"
+decision_receipt = "EffortlessMetrics/shiplog-swarm#351"
+decision_merge_sha = "5861dffe341d6f42cd145fe154c215c1c29836ca"
+reason = "Canonical source owns the source-role policy from #679 while swarm retains its distinct swarm-role policy."
 source_tree_entry = { mode = "100644", object_type = "blob", oid = "43ed9b86371066d32096bfaca551d7ce1c155cc2" }
 swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "aa3b2ba0ca50acf4a5540a7b2e8f3eca4c7e26cc" }

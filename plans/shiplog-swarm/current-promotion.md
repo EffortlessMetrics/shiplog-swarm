@@ -81,41 +81,47 @@
 ## Source-authority decisions
 
 - path: `.github/workflows/droid-review.yml`
-  - reason: The canonical source repository retains authority for the release and security automation surface during this bounded promotion.
-  - source target: `6471f50912d645447ebda94c3b2f1babcc24dfef`
-  - swarm target: `b75893463c466990122d51b3290287b107b0388e`
-  - decision receipt: `EffortlessMetrics/shiplog-swarm#334` at `b75893463c466990122d51b3290287b107b0388e`
-  - consumed by: `EffortlessMetrics/shiplog#682`
+  - reason: Canonical source review automation may publish reviews but cannot write product contents.
+  - source target: `175e8c8cee8110c4cf4a42d5534f5dffe45bf426`
+  - swarm target: `5861dffe341d6f42cd145fe154c215c1c29836ca`
+  - decision receipt: `EffortlessMetrics/shiplog-swarm#351` at `5861dffe341d6f42cd145fe154c215c1c29836ca`
+  - consumed by: `(active)`
 - path: `.github/workflows/droid-security-scan.yml`
-  - reason: The canonical source repository retains authority for the release and security automation surface during this bounded promotion.
-  - source target: `6471f50912d645447ebda94c3b2f1babcc24dfef`
-  - swarm target: `b75893463c466990122d51b3290287b107b0388e`
-  - decision receipt: `EffortlessMetrics/shiplog-swarm#334` at `b75893463c466990122d51b3290287b107b0388e`
-  - consumed by: `EffortlessMetrics/shiplog#682`
-- path: `.github/workflows/release.yml`
-  - reason: The canonical source repository retains authority for the release and security automation surface during this bounded promotion.
-  - source target: `6471f50912d645447ebda94c3b2f1babcc24dfef`
-  - swarm target: `b75893463c466990122d51b3290287b107b0388e`
-  - decision receipt: `EffortlessMetrics/shiplog-swarm#334` at `b75893463c466990122d51b3290287b107b0388e`
-  - consumed by: `EffortlessMetrics/shiplog#682`
+  - reason: Canonical source scheduled security verification remains read-only while swarm may originate remediation.
+  - source target: `175e8c8cee8110c4cf4a42d5534f5dffe45bf426`
+  - swarm target: `5861dffe341d6f42cd145fe154c215c1c29836ca`
+  - decision receipt: `EffortlessMetrics/shiplog-swarm#351` at `5861dffe341d6f42cd145fe154c215c1c29836ca`
+  - consumed by: `(active)`
 - path: `.github/workflows/droid.yml`
-  - reason: The canonical source review automation may publish comments but cannot mint identity or write product contents.
-  - source target: `6471f50912d645447ebda94c3b2f1babcc24dfef`
-  - swarm target: `b75893463c466990122d51b3290287b107b0388e`
-  - decision receipt: `EffortlessMetrics/shiplog-swarm#334` at `b75893463c466990122d51b3290287b107b0388e`
-  - consumed by: `EffortlessMetrics/shiplog#682`
+  - reason: Canonical source review automation may publish comments but cannot mint identity or write product contents.
+  - source target: `175e8c8cee8110c4cf4a42d5534f5dffe45bf426`
+  - swarm target: `5861dffe341d6f42cd145fe154c215c1c29836ca`
+  - decision receipt: `EffortlessMetrics/shiplog-swarm#351` at `5861dffe341d6f42cd145fe154c215c1c29836ca`
+  - consumed by: `(active)`
+- path: `.github/workflows/release.yml`
+  - reason: Canonical source retains explicitly authorized release-writer jobs and the source-side explicit-shell fix; swarm remains verification-only.
+  - source target: `175e8c8cee8110c4cf4a42d5534f5dffe45bf426`
+  - swarm target: `5861dffe341d6f42cd145fe154c215c1c29836ca`
+  - decision receipt: `EffortlessMetrics/shiplog-swarm#351` at `5861dffe341d6f42cd145fe154c215c1c29836ca`
+  - consumed by: `(active)`
 - path: `.github/workflows/security.yml`
-  - reason: The canonical source repository retains authority for the release and security automation surface during this bounded promotion.
-  - source target: `6471f50912d645447ebda94c3b2f1babcc24dfef`
-  - swarm target: `b75893463c466990122d51b3290287b107b0388e`
-  - decision receipt: `EffortlessMetrics/shiplog-swarm#334` at `b75893463c466990122d51b3290287b107b0388e`
-  - consumed by: `EffortlessMetrics/shiplog#682`
+  - reason: Canonical source scheduled security verification declares read-only permissions and the swarm remediation handoff.
+  - source target: `175e8c8cee8110c4cf4a42d5534f5dffe45bf426`
+  - swarm target: `5861dffe341d6f42cd145fe154c215c1c29836ca`
+  - decision receipt: `EffortlessMetrics/shiplog-swarm#351` at `5861dffe341d6f42cd145fe154c215c1c29836ca`
+  - consumed by: `(active)`
+- path: `.github/workflows/source-automation-guard.yml`
+  - reason: Canonical source owns the merge-control guard and its synthetic proof dispatch after source PR #686.
+  - source target: `175e8c8cee8110c4cf4a42d5534f5dffe45bf426`
+  - swarm target: `5861dffe341d6f42cd145fe154c215c1c29836ca`
+  - decision receipt: `EffortlessMetrics/shiplog-swarm#351` at `5861dffe341d6f42cd145fe154c215c1c29836ca`
+  - consumed by: `(active)`
 - path: `policy/automation-authority.toml`
-  - reason: Canonical source now carries its explicit source-role policy from #679; this bounded decision retains that release-governance file while swarm keeps its distinct swarm-role policy.
-  - source target: `6471f50912d645447ebda94c3b2f1babcc24dfef`
-  - swarm target: `b75893463c466990122d51b3290287b107b0388e`
-  - decision receipt: `EffortlessMetrics/shiplog-swarm#334` at `b75893463c466990122d51b3290287b107b0388e`
-  - consumed by: `EffortlessMetrics/shiplog#682`
+  - reason: Canonical source owns the source-role policy from #679 while swarm retains its distinct swarm-role policy.
+  - source target: `175e8c8cee8110c4cf4a42d5534f5dffe45bf426`
+  - swarm target: `5861dffe341d6f42cd145fe154c215c1c29836ca`
+  - decision receipt: `EffortlessMetrics/shiplog-swarm#351` at `5861dffe341d6f42cd145fe154c215c1c29836ca`
+  - consumed by: `(active)`
 
 ## Truth hierarchy
 
