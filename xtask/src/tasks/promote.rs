@@ -343,32 +343,18 @@ fn run_with_port_to(
     let (receipt, job) = green_swarm_receipt(port, &swarm_sha)?;
 
     let branch = format!("promote/swarm-current-{}", &swarm_sha[..12]);
-    let merge_base = port
-        .git_output(
-            &inputs.workspace_root,
-            &["merge-base", &source_head, &swarm_sha],
-        )
-        .with_context(|| {
-            format!(
-                "promote: determine merge base between source head {source_head} and swarm head {swarm_sha}"
-            )
-        })?;
-    if merge_base.is_empty() {
-        bail!("promote: merge-base returned no commit for the promotion plan");
-    }
     // Resolved before the overlay is built, so a promotion that cannot be
     // resolved never materializes a commit, and so overlay construction and
     // acceptance are driven by the same decision.
-    let overlay_plan = plan_path_resolutions(
+    let (overlay_plan, merge_base) = compute_resolution_plan(
         port,
         &inputs.workspace_root,
         &source_head,
         &swarm_sha,
-        &merge_base,
         &source_only_paths,
         &transition_authority,
+        output,
     )?;
-    ensure_no_blocked_paths(&overlay_plan, output)?;
     let take_source = overlay_plan.take_source();
     let plan_id = resolution_plan_id(&overlay_plan)?;
     let PreparedOverlay {
@@ -655,32 +641,15 @@ fn run_verify_only(
                 &source_only_paths,
                 state,
             )?;
-            let merge_base = port
-                .git_output(
-                    &inputs.workspace_root,
-                    &["merge-base", &landed_merge.source_parent, swarm_sha],
-                )
-                .with_context(|| {
-                    format!(
-                        "promote: determine merge base for verified overlay source parent {} and swarm head {swarm_sha}",
-                        landed_merge.source_parent
-                    )
-                })?;
-            ensure!(
-                !merge_base.is_empty(),
-                "promote: verified overlay has no merge base between source parent {} and swarm head {swarm_sha}",
-                landed_merge.source_parent
-            );
-            let plan = plan_path_resolutions(
+            let (plan, _) = compute_resolution_plan(
                 port,
                 &inputs.workspace_root,
                 &landed_merge.source_parent,
                 swarm_sha,
-                &merge_base,
                 &source_only_paths,
                 &transition_authority,
+                output,
             )?;
-            ensure_no_blocked_paths(&plan, &mut Vec::new())?;
             let derived_plan_id = resolution_plan_id(&plan)?;
             ensure!(
                 recorded_plan_id == derived_plan_id,
@@ -1163,6 +1132,42 @@ fn derive_promotion_transition_authority(
         &state.source_authority,
     )?;
     Ok(authority)
+}
+
+/// Build and validate the exact per-path plan used by both promotion planning
+/// and modern post-merge verification. The output sink is shared so a blocked
+/// verification reports the same machine-readable repair plan as a blocked
+/// promotion run.
+fn compute_resolution_plan(
+    port: &impl PromotePort,
+    workspace_root: &Path,
+    source_head: &str,
+    swarm_sha: &str,
+    source_only_paths: &[String],
+    transition_authority: &super::transition::TransitionAuthority,
+    output: &mut dyn Write,
+) -> Result<(OverlayPlan, String)> {
+    let merge_base = port
+        .git_output(workspace_root, &["merge-base", source_head, swarm_sha])
+        .with_context(|| {
+            format!(
+                "promote: determine merge base between source head {source_head} and swarm head {swarm_sha}"
+            )
+        })?;
+    if merge_base.is_empty() {
+        bail!("promote: merge-base returned no commit for the promotion plan");
+    }
+    let plan = plan_path_resolutions(
+        port,
+        workspace_root,
+        source_head,
+        swarm_sha,
+        &merge_base,
+        source_only_paths,
+        transition_authority,
+    )?;
+    ensure_no_blocked_paths(&plan, output)?;
+    Ok((plan, merge_base))
 }
 
 fn normalized_source_only_path(path: &str) -> Result<String> {
@@ -2469,6 +2474,13 @@ mod tests {
             receipt["included_swarm_prs"]
                 == serde_json::json!(["EffortlessMetrics/shiplog-swarm#255"])
         );
+        ensure!(receipt["checks"].as_array().is_some_and(|checks| {
+            checks.iter().any(|check| {
+                check.as_str().is_some_and(|text| {
+                    text == "raw swarm-head checkpoint predates overlay resolution-plan evidence"
+                })
+            })
+        }));
         // Read-only: no ref push, no PR create/edit, no on-disk artifacts.
         ensure!(port.git_mutations.borrow().is_empty());
         ensure!(!port.gh_calls.borrow().iter().any(|call| {
@@ -3477,7 +3489,7 @@ merge-old source-parent another-swarm-head
         git_fixture(root, &["commit", "--no-gpg-sign", "-m", &message])?;
         let overlay = git_fixture(root, &["rev-parse", "HEAD"])?;
 
-        git_fixture(root, &["switch", "--detach", &fixture.governance])?;
+        git_fixture(root, &["switch", "source"])?;
         git_fixture(
             root,
             &["merge", "--no-ff", "-m", "merge: legacy overlay", &overlay],
@@ -3491,6 +3503,19 @@ merge-old source-parent another-swarm-head
             found.resolution_plan_id.is_none(),
             "legacy overlay must not invent a resolution plan id"
         );
+        let port = stub_port(&fixture, true, true);
+        let mut output = Vec::new();
+        run_with_port_to(&port, verify_only_inputs(&fixture), &mut output)?;
+        let receipt: serde_json::Value = serde_json::from_slice(&output)?;
+        ensure!(receipt["checkpoint_shape"] == "overlay");
+        ensure!(receipt["resolution_plan_id"].is_null());
+        ensure!(receipt["checks"].as_array().is_some_and(|checks| {
+            checks.iter().any(|check| {
+                check.as_str().is_some_and(|text| {
+                    text == "legacy overlay has no resolution-plan evidence; modern per-path decision proof was not claimed"
+                })
+            })
+        }));
         Ok(())
     }
 
