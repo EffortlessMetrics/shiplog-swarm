@@ -80,7 +80,9 @@ swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "620299ce104f1
 source_pr = "EffortlessMetrics/shiplog#666"
 source_merge_sha = "d88d59a8afd7eee445c3214c5f89ca7ccd50e4de"
 source_target = "b31d5f6d9700698b463d8f2b71b9d48a191f433c"
-swarm_target = "e0c132d363c77b15ff2b16d04b6b1e60f0c192a0"
+# PR #327 intentionally changed the runbook contract. Bind this path to the
+# resulting merged swarm head so the changed tree entry is explicit evidence.
+swarm_target = "245bcae3a716d2156980804058ed52f8ff0bff8f"
 
 [transition.swarm_merge_sha]
 "EffortlessMetrics/shiplog-swarm#274" = "1ca35e97ba506062376e6f78b6633003e25db963"
@@ -164,7 +166,7 @@ decision_receipt = "EffortlessMetrics/shiplog-swarm#317"
 decision_merge_sha = "7884dec5eefeba3a81aa6139923c817632ce7116"
 reason = "Reviewed swarm direct-command contract supersedes the source-side transition copy for this bounded promotion."
 source_tree_entry = { mode = "100644", object_type = "blob", oid = "b56d190691c1c674918da9989d79d112b7d45e92" }
-swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "a7c57ea5e7f46b08866f860b5e3cba2dc3a25104" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "126d86717c1e6c74602b979fc628b81bcf011054" }
 
 [[transition.path]]
 path = "xtask/src/tasks/check_goals.rs"
