@@ -435,3 +435,103 @@ decision_merge_sha = "5861dffe341d6f42cd145fe154c215c1c29836ca"
 reason = "Canonical source owns the source-role policy from #679 while swarm retains its distinct swarm-role policy."
 source_tree_entry = { mode = "100644", object_type = "blob", oid = "43ed9b86371066d32096bfaca551d7ce1c155cc2" }
 swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "aa3b2ba0ca50acf4a5540a7b2e8f3eca4c7e26cc" }
+
+# Current two-sided control-plane reconciliation from source promotion #682.
+# The source merge is historical evidence; #353 is the bounded decision
+# receipt that explicitly discards each source-side transition copy.
+
+[[transition]]
+source_pr = "EffortlessMetrics/shiplog#682"
+source_merge_sha = "2f69daf921d74fb9472584c2a0df31857cfa2384"
+source_target = "175e8c8cee8110c4cf4a42d5534f5dffe45bf426"
+swarm_target = "fc19c648c9eba8a76a67d55af55cd2a5bc77291c"
+
+[[transition.path]]
+path = "docs/governance/automation-authority.md"
+disposition = "missing_in_swarm"
+resolution = "discard_source"
+decision_receipt = "EffortlessMetrics/shiplog-swarm#353"
+decision_merge_sha = "fc19c648c9eba8a76a67d55af55cd2a5bc77291c"
+reason = "The swarm copy carries the current synthetic actor-proof and fail-closed automation contract."
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "323cc19cbbc5f875a9e6384380db17acdab4726c" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "0492fc378c453095c109f17d12b253793b6b233a" }
+
+[[transition.path]]
+path = "docs/status/SUPPORT_TIERS.md"
+disposition = "missing_in_swarm"
+resolution = "discard_source"
+decision_receipt = "EffortlessMetrics/shiplog-swarm#353"
+decision_merge_sha = "fc19c648c9eba8a76a67d55af55cd2a5bc77291c"
+reason = "The swarm copy carries the current observational branch-protection support claim and proof boundary."
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "301913b6034d03b6fce6b1adb4ad48b22a89bac7" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "00d79b3d9d6f40f5ed2532eddc9119e2fb06a98a" }
+
+[[transition.path]]
+path = "plans/shiplog-swarm/current-promotion.md"
+disposition = "missing_in_swarm"
+resolution = "discard_source"
+decision_receipt = "EffortlessMetrics/shiplog-swarm#353"
+decision_merge_sha = "fc19c648c9eba8a76a67d55af55cd2a5bc77291c"
+reason = "The generated promotion view must follow the current swarm manifest and decision ledger."
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "2cf46f2668123bb939bd5c92beb02f8e375a5664" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "3425fd5cb0eb3d2e13c3d53d19e44eb180bce09d" }
+
+[[transition.path]]
+path = "plans/shiplog-swarm/promotion-state.toml"
+disposition = "missing_in_swarm"
+resolution = "discard_source"
+decision_receipt = "EffortlessMetrics/shiplog-swarm#353"
+decision_merge_sha = "fc19c648c9eba8a76a67d55af55cd2a5bc77291c"
+reason = "The swarm manifest contains the current active source-authority receipts and pending promotion range."
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "bf3cbaa556a3b3249f952742bb2c6b28847f3876" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "3eae48353c759d5936dd1fcbc3cce21b5a1debef" }
+
+[[transition.path]]
+path = "plans/shiplog-swarm/transition-decisions.md"
+disposition = "missing_in_swarm"
+resolution = "discard_source"
+decision_receipt = "EffortlessMetrics/shiplog-swarm#353"
+decision_merge_sha = "fc19c648c9eba8a76a67d55af55cd2a5bc77291c"
+reason = "The swarm ledger is the maintained record of current transition evidence and bounded decisions."
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "bbe7516331ab7e132aea0026049d61cb1040accd" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "faa0a3451de4a06abd4872b7fe34282afbb6ab1e" }
+
+[[transition.path]]
+path = "policy/source-only-paths.toml"
+disposition = "missing_in_swarm"
+resolution = "discard_source"
+decision_receipt = "EffortlessMetrics/shiplog-swarm#353"
+decision_merge_sha = "fc19c648c9eba8a76a67d55af55cd2a5bc77291c"
+reason = "The swarm policy carries the reviewed source-guard allowlist required by the current governance receipt."
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "979f4d444bfab4d4a40c541551253d490f1ac3b6" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "31defb7dea7b915ae5cf3c84d6f330e66e379de3" }
+
+[[transition.path]]
+path = "xtask/src/tasks/automation_authority.rs"
+disposition = "missing_in_swarm"
+resolution = "discard_source"
+decision_receipt = "EffortlessMetrics/shiplog-swarm#353"
+decision_merge_sha = "fc19c648c9eba8a76a67d55af55cd2a5bc77291c"
+reason = "The swarm validator is the current fail-closed static checker for synthetic actor proof and guard shape."
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "60184651df83b939abc0a1202f54410da4d6d71e" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "7916833ea3f286c3eb4f64d7ceee492b15541871" }
+
+[[transition.path]]
+path = "xtask/src/tasks/file_policy.rs"
+disposition = "missing_in_swarm"
+resolution = "discard_source"
+decision_receipt = "EffortlessMetrics/shiplog-swarm#353"
+decision_merge_sha = "fc19c648c9eba8a76a67d55af55cd2a5bc77291c"
+reason = "The swarm file policy carries the regression guard rejecting unsupported matrix context in workflow shells."
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "a6cb804a9c2fa5bb7d2e9d6f9a7aaad8367a5e59" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "9c337a7ecac7f7acb049b15ecdd9f3b2987ef2f7" }
+
+[[transition.path]]
+path = "xtask/src/tasks/repo_contract_report.rs"
+disposition = "missing_in_swarm"
+resolution = "discard_source"
+decision_receipt = "EffortlessMetrics/shiplog-swarm#353"
+decision_merge_sha = "fc19c648c9eba8a76a67d55af55cd2a5bc77291c"
+reason = "The swarm report carries the current exact promotion, branch-protection, and source-of-truth behavior."
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "fab37f26423e06a97326b521706c7067432a571f" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "583b32574ca60f3b60517bf1724c76c9d1041644" }
