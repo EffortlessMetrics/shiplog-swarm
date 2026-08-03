@@ -17,6 +17,7 @@ const SWARM_REPO: &str = "EffortlessMetrics/shiplog-swarm";
 const SOURCE_REPO: &str = "EffortlessMetrics/shiplog";
 const ROUTED_WORKFLOW: &str = "EM CI Routed Shiplog Rust";
 const REQUIRED_RESULT: &str = "Shiplog Rust Small Result";
+const SOURCE_AUTOMATION_GUARD_CHECK: &str = "reject-routine-bot-pr";
 const SOURCE_ONLY_PATH_POLICY: &str = "policy/source-only-paths.toml";
 /// Trailers giving the overlay commit machine-readable identity. The promotion
 /// checkpoint's second parent is the overlay, not the swarm head, so closeout
@@ -127,10 +128,34 @@ struct PendingPromotion {
     deferred_receipt_carry: Vec<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct SourceBranchProtection {
+    required_status_checks: Option<RequiredStatusChecks>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RequiredStatusChecks {
+    #[serde(default)]
+    contexts: Vec<String>,
+    #[serde(default)]
+    checks: Vec<RequiredCheck>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RequiredCheck {
+    context: String,
+}
+
 trait PromotePort {
     fn git_output(&self, workspace_root: &Path, args: &[&str]) -> Result<String>;
     fn git_status(&self, workspace_root: &Path, args: &[&str]) -> Result<()>;
     fn gh_output(&self, args: &[&str]) -> Result<Vec<u8>>;
+    fn source_branch_protection(&self) -> Result<Vec<u8>> {
+        self.gh_output(&[
+            "api",
+            "repos/EffortlessMetrics/shiplog/branches/main/protection",
+        ])
+    }
     /// `git patch-id --stable` over a patch supplied on stdin.
     fn git_patch_id(&self, patch: &str) -> Result<String> {
         super::transition::system_patch_id(patch)
@@ -363,6 +388,9 @@ fn run_with_port_to(
     )?;
     let take_source = overlay_plan.take_source();
     let plan_id = resolution_plan_id(&overlay_plan)?;
+    if !inputs.dry_run {
+        ensure_source_merge_control(port)?;
+    }
     let PreparedOverlay {
         sha: prepared_overlay_sha,
         cleanup_warnings: overlay_cleanup_warnings,
@@ -562,6 +590,30 @@ fn run_with_port_to(
         output,
         "promote: after merge run cargo xtask repo-contract-report"
     )?;
+    Ok(())
+}
+
+fn ensure_source_merge_control(port: &impl PromotePort) -> Result<()> {
+    let output = port
+        .source_branch_protection()
+        .context("promote: inspect source main branch protection before execution")?;
+    let protection: SourceBranchProtection =
+        serde_json::from_slice(&output).context("promote: parse source main branch protection")?;
+    let required_status_checks = protection.required_status_checks.context(
+        "promote: source main has no required status checks; configure branch protection before executing promotion",
+    )?;
+    let guard_required = required_status_checks
+        .contexts
+        .iter()
+        .any(|context| context == SOURCE_AUTOMATION_GUARD_CHECK)
+        || required_status_checks
+            .checks
+            .iter()
+            .any(|check| check.context == SOURCE_AUTOMATION_GUARD_CHECK);
+    ensure!(
+        guard_required,
+        "promote: source main branch protection does not require `{SOURCE_AUTOMATION_GUARD_CHECK}`; configure the source merge-control boundary before executing promotion"
+    );
     Ok(())
 }
 
@@ -2297,6 +2349,7 @@ mod tests {
 
     struct StubPort {
         gh: RefCell<VecDeque<std::result::Result<Vec<u8>, String>>>,
+        source_protection: RefCell<Option<std::result::Result<Vec<u8>, String>>>,
         gh_calls: RefCell<Vec<Vec<String>>>,
         git_mutations: RefCell<Vec<Vec<String>>>,
         remote_target: Option<String>,
@@ -2355,6 +2408,18 @@ mod tests {
                 Some(Ok(output)) => Ok(output),
                 Some(Err(message)) => bail!("stub gh: {message}"),
                 None => bail!("stub gh response queue exhausted"),
+            }
+        }
+
+        fn source_branch_protection(&self) -> Result<Vec<u8>> {
+            self.gh_calls.borrow_mut().push(vec![
+                "api".to_string(),
+                "repos/EffortlessMetrics/shiplog/branches/main/protection".to_string(),
+            ]);
+            match self.source_protection.borrow_mut().take() {
+                Some(Ok(output)) => Ok(output),
+                Some(Err(message)) => bail!("stub source protection: {message}"),
+                None => bail!("stub source protection response exhausted"),
             }
         }
     }
@@ -3672,6 +3737,10 @@ merge-old source-parent another-swarm-head
                 Ok(b"[]".to_vec()),
             ])),
             gh_calls: RefCell::new(Vec::new()),
+            source_protection: RefCell::new(Some(Ok(
+                br#"{"required_status_checks":{"contexts":["reject-routine-bot-pr"],"checks":[]}}"#
+                    .to_vec(),
+            ))),
             git_mutations: RefCell::new(Vec::new()),
             remote_target: None,
             fail_merge_base: false,
@@ -4136,6 +4205,51 @@ merge-old source-parent another-swarm-head
     }
 
     #[test]
+    fn execution_rejects_missing_source_merge_control_before_mutation() -> Result<()> {
+        let fixture = fixture_git()?;
+        let port = stub_port(&fixture, true, true);
+        *port.source_protection.borrow_mut() =
+            Some(Err("HTTP 404 Branch not protected".to_string()));
+        let mut inputs = fixture_inputs(&fixture);
+        inputs.dry_run = false;
+
+        let error = run_with_port(&port, inputs)
+            .err()
+            .context("expected unprotected source main rejection")?;
+        ensure!(error.to_string().contains("source main branch protection"));
+        ensure!(port.git_mutations.borrow().is_empty());
+        ensure!(overlay_children(fixture.dir.path())?.is_empty());
+        ensure!(
+            !fixture
+                .dir
+                .path()
+                .join("target/source-of-truth/promote-receipt.json")
+                .exists()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn execution_rejects_source_protection_without_guard_before_mutation() -> Result<()> {
+        let fixture = fixture_git()?;
+        let port = stub_port(&fixture, true, true);
+        *port.source_protection.borrow_mut() = Some(Ok(
+            br#"{"required_status_checks":{"contexts":["Shiplog Rust Small Result"],"checks":[]}}"#
+                .to_vec(),
+        ));
+        let mut inputs = fixture_inputs(&fixture);
+        inputs.dry_run = false;
+
+        let error = run_with_port(&port, inputs)
+            .err()
+            .context("expected missing source guard rejection")?;
+        ensure!(error.to_string().contains("reject-routine-bot-pr"));
+        ensure!(port.git_mutations.borrow().is_empty());
+        ensure!(overlay_children(fixture.dir.path())?.is_empty());
+        Ok(())
+    }
+
+    #[test]
     fn execution_updates_one_compatible_stale_pr() -> Result<()> {
         let fixture = fixture_git()?;
         let overlay = fixture_overlay_sha(&fixture)?;
@@ -4370,6 +4484,10 @@ merge-old source-parent another-swarm-head
         let fixture = fixture_git()?;
         let port = StubPort {
             gh: RefCell::new(VecDeque::from([Ok(b"not-json".to_vec())])),
+            source_protection: RefCell::new(Some(Ok(
+                br#"{"required_status_checks":{"contexts":["reject-routine-bot-pr"],"checks":[]}}"#
+                    .to_vec(),
+            ))),
             gh_calls: RefCell::new(Vec::new()),
             git_mutations: RefCell::new(Vec::new()),
             remote_target: None,

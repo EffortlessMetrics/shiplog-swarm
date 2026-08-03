@@ -273,9 +273,15 @@ cargo xtask promote --swarm-sha <exact-swarm-sha> --verify-only
 The command checks shared ancestry and a completed successful
 Shiplog Rust Small Result run for the exact SHA, then creates or fast-forwards
 promote/swarm-current-<sha> on the source remote and writes the existing
-promotion-body contract. It never merges, squashes, tags, publishes, or
-deploys. Open the generated PR with a regular merge commit and verify it with
-cargo xtask repo-contract-report after merge.
+promotion-body contract. Before a non-dry-run execution, it also verifies that
+source `main` has branch protection requiring the exact
+`reject-routine-bot-pr` Source Automation Guard check. Missing protection,
+malformed protection data, or a missing required guard stops the command before
+it creates an overlay, writes a receipt, pushes a branch, or opens/edits a PR.
+`--dry-run` remains read-only and can be used to prepare the deterministic plan
+while that external merge-control setting is pending. The command never merges,
+squashes, tags, publishes, or deploys. Open the generated PR with a regular
+merge commit and verify it with `cargo xtask repo-contract-report` after merge.
 
 `--verify-only` is a read-only post-merge check: instead of preparing a branch
 it confirms the exact swarm head already landed on `--source-ref` as a
