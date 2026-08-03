@@ -173,6 +173,41 @@ Decision receipts are bounded by the transition entry's `consumed_by`
 promotion and must never be inferred from matching trees, commit subjects, or
 source-only policy.
 
+### Keeping source for a source-only path
+
+The source-only policy remains blocking when swarm changes one of its paths.
+When review confirms that the source copy must win for one bounded promotion,
+record a separate top-level `[[source_authority]]` decision in
+`promotion-state.toml`. The planner records this as a `kept-source` resolution
+basis; it is not a change to `source-only-paths.toml` and does not grant
+permanent source authority.
+
+Example shape:
+
+```toml
+[[source_authority]]
+path = ".github/workflows/release.yml"
+source_target = "<exact-source-target-sha>"
+swarm_target = "<exact-swarm-target-sha>"
+decision_receipt = "EffortlessMetrics/shiplog-swarm#319"
+decision_merge_sha = "<decision-receipt-merge-sha>"
+reason = "The canonical source repository retains release-writer authority."
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "<source-target-oid>" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "<swarm-target-oid>" }
+```
+
+An active decision must name the exact `source_target` and `swarm_target`, the
+merged decision receipt and full `decision_merge_sha`, a human-readable
+`reason`, and complete `source_tree_entry` / `swarm_tree_entry` values. The
+promotion verifies that the path is still policy-listed, the entries still
+differ at those exact targets, and the decision merge is reachable from the
+exact swarm target. After the promotion consumes it, set `consumed_by`; the
+historical record remains visible but grants no further authority.
+
+The same decision must appear in the structured path plan and determine the
+overlay effect. Missing, stale, unmerged, unreachable, or target-mismatched
+decisions fail closed. A later swarm change requires a new reviewed decision.
+
 Verify the role boundary explicitly rather than inferring it from remote names:
 
 ```powershell

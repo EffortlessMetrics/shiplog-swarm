@@ -40,6 +40,12 @@ pub struct PromotionState {
     /// next promotion replacing the block.
     #[serde(default)]
     pub transition: Vec<Transition>,
+    /// Bounded decisions that retain source content for explicitly
+    /// source-authoritative paths that swarm changed. These are separate from
+    /// source-side transition evidence because no source PR is being claimed
+    /// as the historical cause of the swarm-only change.
+    #[serde(default)]
+    pub source_authority: Vec<SourceAuthorityDecision>,
 }
 
 /// One source PR that landed directly on source during the cutover.
@@ -78,6 +84,42 @@ impl Transition {
     /// Recorded merge commit for a swarm PR named in a chain.
     pub fn swarm_merge_sha(&self, receipt: &str) -> Option<&str> {
         self.swarm_merge_sha.get(receipt).map(String::as_str)
+    }
+}
+
+/// A reviewed, consumptive decision to keep source content for one exact
+/// source-authoritative path during one promotion.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SourceAuthorityDecision {
+    pub path: String,
+    /// Exact source and swarm commits whose tree entries this decision binds.
+    #[serde(default)]
+    pub source_target: String,
+    #[serde(default)]
+    pub swarm_target: String,
+    /// The merged swarm PR that records the human-reviewed decision.
+    pub decision_receipt: String,
+    /// Merge SHA of `decision_receipt`, reachable from `swarm_target`.
+    pub decision_merge_sha: String,
+    /// Human-readable reason for retaining source content.
+    pub reason: String,
+    /// The promotion that consumed this decision. Consumed decisions are
+    /// retained as history and grant no authority.
+    #[serde(default)]
+    pub consumed_by: String,
+    /// Complete source-side tree entry at `source_target`; absence is valid.
+    #[serde(default)]
+    pub source_tree_entry: Option<TreeEntry>,
+    /// Complete swarm-side tree entry at `swarm_target`; absence is valid.
+    #[serde(default)]
+    pub swarm_tree_entry: Option<TreeEntry>,
+}
+
+impl SourceAuthorityDecision {
+    /// The promotion that consumed this decision, or `None` while active.
+    pub fn consumed_by(&self) -> Option<&str> {
+        (!self.consumed_by.is_empty()).then_some(self.consumed_by.as_str())
     }
 }
 
@@ -303,6 +345,49 @@ fn validate(state: &PromotionState) -> Result<()> {
         validate_receipt("pending.deferred_receipt_carry", receipt)?;
     }
     validate_transitions(&state.transition)?;
+    validate_source_authority(&state.source_authority)?;
+    Ok(())
+}
+
+fn validate_source_authority(decisions: &[SourceAuthorityDecision]) -> Result<()> {
+    let mut seen_paths = BTreeSet::new();
+    for decision in decisions {
+        if decision.path.trim().is_empty() {
+            bail!("source_authority has an empty path");
+        }
+        if !seen_paths.insert(decision.path.as_str()) {
+            bail!(
+                "source_authority path {} appears more than once; use one bounded decision",
+                decision.path
+            );
+        }
+        validate_receipt(
+            "source_authority.decision_receipt",
+            &decision.decision_receipt,
+        )?;
+        validate_full_sha(
+            "source_authority.decision_merge_sha",
+            &decision.decision_merge_sha,
+        )?;
+        if decision.reason.trim().is_empty() {
+            bail!(
+                "source_authority path {} requires a human-readable reason",
+                decision.path
+            );
+        }
+        if !decision.consumed_by.is_empty() {
+            validate_receipt("source_authority.consumed_by", &decision.consumed_by)?;
+        } else {
+            if decision.source_target.is_empty() || decision.swarm_target.is_empty() {
+                bail!(
+                    "active source_authority path {} must record exact source_target and swarm_target",
+                    decision.path
+                );
+            }
+            validate_full_sha("source_authority.source_target", &decision.source_target)?;
+            validate_full_sha("source_authority.swarm_target", &decision.swarm_target)?;
+        }
+    }
     Ok(())
 }
 
@@ -583,6 +668,33 @@ fn render_markdown(state: &PromotionState) -> String {
         out.push_str("\n### Deferred receipt carry-forward\n\n");
         for receipt in &state.pending.deferred_receipt_carry {
             out.push_str(&format!("- `{receipt}`\n"));
+        }
+    }
+
+    out.push_str("\n## Source-authority decisions\n\n");
+    if state.source_authority.is_empty() {
+        out.push_str("- (none recorded)\n");
+    } else {
+        for decision in &state.source_authority {
+            out.push_str(&format!("- path: `{}`\n", decision.path));
+            out.push_str(&format!("  - reason: {}\n", decision.reason));
+            out.push_str(&format!(
+                "  - source target: `{}`\n",
+                decision.source_target
+            ));
+            out.push_str(&format!("  - swarm target: `{}`\n", decision.swarm_target));
+            out.push_str(&format!(
+                "  - decision receipt: `{}` at `{}`\n",
+                decision.decision_receipt, decision.decision_merge_sha
+            ));
+            out.push_str(&format!(
+                "  - consumed by: `{}`\n",
+                if decision.consumed_by.is_empty() {
+                    "(active)"
+                } else {
+                    decision.consumed_by.as_str()
+                }
+            ));
         }
     }
 
@@ -1023,6 +1135,83 @@ promoted_swarm_head = "c4fdba22"
     }
 
     #[test]
+    fn accepts_a_bounded_source_authority_decision() -> Result<()> {
+        let text = r#"
+schema_version = 1
+[latest_promotion]
+status = "completed"
+source_promotion_pr = "EffortlessMetrics/shiplog#655"
+promoted_swarm_head = "c4fdba223d1c5c5b99a95b159ab8123d83d4b842"
+
+[[source_authority]]
+path = ".github/workflows/release.yml"
+source_target = "1111111111111111111111111111111111111111"
+swarm_target = "2222222222222222222222222222222222222222"
+decision_receipt = "EffortlessMetrics/shiplog-swarm#319"
+decision_merge_sha = "7d0a1b2c3d4e5f60718293a4b5c6d7e8f9a0b1c2"
+reason = "The canonical source repository retains release-writer authority."
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" }
+"#;
+        let state: PromotionState = toml::from_str(text)?;
+        validate(&state)?;
+        assert_eq!(state.source_authority.len(), 1);
+        assert_eq!(
+            state.source_authority[0].path,
+            ".github/workflows/release.yml"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_unbounded_or_duplicate_source_authority_decisions() {
+        let missing_targets = r#"
+schema_version = 1
+[latest_promotion]
+status = "completed"
+source_promotion_pr = "EffortlessMetrics/shiplog#655"
+promoted_swarm_head = "c4fdba223d1c5c5b99a95b159ab8123d83d4b842"
+[[source_authority]]
+path = "release.yml"
+decision_receipt = "EffortlessMetrics/shiplog-swarm#319"
+decision_merge_sha = "7d0a1b2c3d4e5f60718293a4b5c6d7e8f9a0b1c2"
+reason = "reviewed"
+"#;
+        let state: PromotionState = toml::from_str(missing_targets).expect("parse");
+        let error = validate(&state).expect_err("active decisions need exact targets");
+        assert!(
+            error
+                .to_string()
+                .contains("exact source_target and swarm_target")
+        );
+
+        let duplicate = r#"
+schema_version = 1
+[latest_promotion]
+status = "completed"
+source_promotion_pr = "EffortlessMetrics/shiplog#655"
+promoted_swarm_head = "c4fdba223d1c5c5b99a95b159ab8123d83d4b842"
+[[source_authority]]
+path = "release.yml"
+source_target = "1111111111111111111111111111111111111111"
+swarm_target = "2222222222222222222222222222222222222222"
+decision_receipt = "EffortlessMetrics/shiplog-swarm#319"
+decision_merge_sha = "7d0a1b2c3d4e5f60718293a4b5c6d7e8f9a0b1c2"
+reason = "reviewed"
+[[source_authority]]
+path = "release.yml"
+source_target = "1111111111111111111111111111111111111111"
+swarm_target = "2222222222222222222222222222222222222222"
+decision_receipt = "EffortlessMetrics/shiplog-swarm#319"
+decision_merge_sha = "7d0a1b2c3d4e5f60718293a4b5c6d7e8f9a0b1c2"
+reason = "reviewed"
+"#;
+        let state: PromotionState = toml::from_str(duplicate).expect("parse");
+        let error = validate(&state).expect_err("one path may have only one decision");
+        assert!(error.to_string().contains("appears more than once"));
+    }
+
+    #[test]
     fn recorded_receipts_cover_source_governance_and_included_prs() {
         let state = completed_manifest();
         let receipts = state.recorded_receipts();
@@ -1079,5 +1268,29 @@ deferred_receipt_carry = ["EffortlessMetrics/shiplog-swarm#240"]
         assert!(first.contains("c4fdba223d1c5c5b99a95b159ab8123d83d4b842"));
         assert!(first.contains("EffortlessMetrics/shiplog-swarm#248"));
         assert!(first.contains("## Truth hierarchy"));
+    }
+
+    #[test]
+    fn generated_markdown_includes_source_authority_metadata() {
+        let mut state = completed_manifest();
+        state.source_authority.push(SourceAuthorityDecision {
+            path: ".github/workflows/release.yml".to_string(),
+            source_target: "1111111111111111111111111111111111111111".to_string(),
+            swarm_target: "2222222222222222222222222222222222222222".to_string(),
+            decision_receipt: "EffortlessMetrics/shiplog-swarm#319".to_string(),
+            decision_merge_sha: "7d0a1b2c3d4e5f60718293a4b5c6d7e8f9a0b1c2".to_string(),
+            reason: "Source retains release-writer authority.".to_string(),
+            consumed_by: String::new(),
+            source_tree_entry: None,
+            swarm_tree_entry: None,
+        });
+
+        let rendered = render_markdown(&state);
+        assert!(rendered.contains("## Source-authority decisions"));
+        assert!(rendered.contains(".github/workflows/release.yml"));
+        assert!(rendered.contains("Source retains release-writer authority."));
+        assert!(rendered.contains("source target: `1111111111111111111111111111111111111111`"));
+        assert!(rendered.contains("swarm target: `2222222222222222222222222222222222222222`"));
+        assert!(rendered.contains("consumed by: `(active)`"));
     }
 }
