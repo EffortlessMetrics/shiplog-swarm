@@ -129,3 +129,53 @@ manifest entries, or repository settings are changed by this record.
 The intended claim is narrow: these seven current source-authoritative paths
 have a named, reviewable source-retention decision for one future promotion;
 the planner must remain fail-closed until that decision is bound and consumed.
+
+## Current two-sided control-plane reconciliation
+
+This is the refreshed decision record for the nine control-plane paths that
+both repositories changed after the last completed source promotion:
+
+- historical source target: `175e8c8cee8110c4cf4a42d5534f5dffe45bf426`
+- promotion decision target: `541ef085f68711e3382c2ed3ddef7febf004a783`
+- historical source receipt: `EffortlessMetrics/shiplog#682` at
+  `2f69daf921d74fb9472584c2a0df31857cfa2384`
+
+The source promotion receipt is historical evidence of the source-side copy;
+it is not the decision to abandon that copy. For each path below, the reviewed
+promotion decision is:
+
+> Take the exact swarm tree entry for this bounded promotion and discard the
+> source-side transition copy. Bind the decision as `resolution =
+> "discard_source"` under the source #682 transition, using this record's
+> merged PR and merge SHA as the decision receipt, then consume it at the
+> promotion checkpoint.
+
+This is a bounded take-swarm decision, not permanent swarm authority. The
+current swarm copies carry the reviewed control-plane behavior: synthetic
+source-guard proof, exact workflow-shell policy, current branch-protection
+observation, and the current promotion ledger. Future divergence requires a
+new exact decision.
+
+| Path | Source target entry | Swarm target entry | Decision reason |
+|---|---|---|---|
+| `docs/governance/automation-authority.md` | `100644/blob/323cc19cbbc5f875a9e6384380db17acdab4726c` | `100644/blob/0492fc378c453095c109f17d12b253793b6b233a` | Swarm carries the current synthetic actor-proof and fail-closed automation contract. |
+| `docs/status/SUPPORT_TIERS.md` | `100644/blob/301913b6034d03b6fce6b1adb4ad48b22a89bac7` | `100644/blob/00d79b3d9d6f40f5ed2532eddc9119e2fb06a98a` | Swarm carries the current observational branch-protection support claim and proof boundary. |
+| `plans/shiplog-swarm/current-promotion.md` | `100644/blob/2cf46f2668123bb939bd5c92beb02f8e375a5664` | `100644/blob/3425fd5cb0eb3d2e13c3d53d19e44eb180bce09d` | The generated promotion view must follow the current swarm manifest and decision ledger. |
+| `plans/shiplog-swarm/promotion-state.toml` | `100644/blob/bf3cbaa556a3b3249f952742bb2c6b28847f3876` | `100644/blob/3eae48353c759d5936dd1fcbc3cce21b5a1debef` | The swarm manifest contains the exact active source-authority receipts and current pending range. |
+| `plans/shiplog-swarm/transition-decisions.md` | `100644/blob/bbe7516331ab7e132aea0026049d61cb1040accd` | `100644/blob/a2fa27582813c5bc8c560a29000113a7ab4325c5` | The swarm ledger is the maintained record of current transition evidence and bounded decisions. |
+| `policy/source-only-paths.toml` | `100644/blob/979f4d444bfab4d4a40c541551253d490f1ac3b6` | `100644/blob/31defb7dea7b915ae5cf3c84d6f330e66e379de3` | Swarm carries the reviewed source-guard allowlist required by the current governance receipt. |
+| `xtask/src/tasks/automation_authority.rs` | `100644/blob/60184651df83b939abc0a1202f54410da4d6d71e` | `100644/blob/7916833ea3f286c3eb4f64d7ceee492b15541871` | Swarm carries the fail-closed static validator for synthetic actor proof and guard shape. |
+| `xtask/src/tasks/file_policy.rs` | `100644/blob/a6cb804a9c2fa5bb7d2e9d6f9a7aaad8367a5e59` | `100644/blob/9c337a7ecac7f7acb049b15ecdd9f3b2987ef2f7` | Swarm carries the regression policy rejecting unsupported matrix context in workflow shells. |
+| `xtask/src/tasks/repo_contract_report.rs` | `100644/blob/fab37f26423e06a97326b521706c7067432a571f` | `100644/blob/583b32574ca60f3b60517bf1724c76c9d1041644` | Swarm carries the current exact promotion, branch-protection, and source-of-truth report behavior. |
+
+## Binding and deliberate exclusions
+
+This record does not change the promotion manifest. A later substantive
+manifest-binding PR must add one source #682 transition entry with these nine
+paths, exact source/swarm tree entries, `resolution = "discard_source"`, this
+record's merged PR and actual merge SHA, and an explicit `consumed_by`
+checkpoint. The planner must remain fail-closed until that binding exists.
+
+The decision does not resolve source branch-protection settings in #294, the
+source `Cargo.lock` dependency gap, or any path outside these nine. No source
+refs, source files, repository settings, or real promotion are changed.
