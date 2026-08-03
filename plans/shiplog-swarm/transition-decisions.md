@@ -179,3 +179,46 @@ checkpoint. The planner must remain fail-closed until that binding exists.
 The decision does not resolve source branch-protection settings in #294, the
 source `Cargo.lock` dependency gap, or any path outside these nine. No source
 refs, source files, repository settings, or real promotion are changed.
+
+## Post-#357 source-merge-control documentation
+
+This is a new decision record for the exact targets that follow PR #357:
+
+- source target: `175e8c8cee8110c4cf4a42d5534f5dffe45bf426`
+- swarm target: `9e7baf514a5705fe3d2cd9edc207af973ffaea44`
+- historical source promotion: `EffortlessMetrics/shiplog#682` at
+  `2f69daf921d74fb9472584c2a0df31857cfa2384`
+
+The earlier decision for these paths was bound to older swarm entries. PR #357
+updated both documents to describe the source branch-protection precondition,
+so that earlier binding cannot be reused. For each path below, the reviewed
+promotion decision is:
+
+> Take the exact swarm tree entry for this bounded promotion and discard the
+> source-side transition copy. The documentation records the command-side
+> fail-closed boundary and remains the maintained swarm development procedure.
+
+This is a bounded, consumptive resolution. It does not make swarm permanently
+authoritative, change `policy/source-only-paths.toml`, or configure source
+branch protection. A later substantive manifest-binding PR must use this
+record's merged PR and actual merge SHA as `decision_receipt` and
+`decision_merge_sha`, bind these exact entries, and consume the decision at a
+source promotion checkpoint.
+
+| Path | Source target entry | Swarm target entry | Decision reason |
+|---|---|---|---|
+| `docs/xtask.md` | `100644/blob/6fcb4394cfaa1323a355cb627c100fd429bed27c` | `100644/blob/31df1696da97dc42315ad89ddbff8a800b1e4d89` | The swarm command reference records the merged fail-closed source merge-control precondition. |
+| `plans/shiplog-swarm/promotion-runbook.md` | `100644/blob/126d86717c1e6c74602b979fc628b81bcf011054` | `100644/blob/242960879e57e71b643bc0f2b545133822ec6888` | The swarm runbook records the same external merge-control precondition in the operator sequence. |
+
+## Binding and deliberate exclusions
+
+This record does not change the promotion manifest or generated current view.
+The planner must remain fail-closed until a later binding PR adds the two
+paths under the relevant source transition with `resolution = "discard_source"`,
+this record's merged decision receipt, exact current tree entries, and a
+bounded `consumed_by` checkpoint.
+
+This decision does not resolve source branch-protection settings in #294,
+other source or swarm changes after the recorded targets, or any path outside
+the two listed above. No source refs, source files, repository settings, or
+real promotion are changed by this record.
