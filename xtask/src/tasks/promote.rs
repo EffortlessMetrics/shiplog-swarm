@@ -12,6 +12,7 @@ use std::process::id as process_id;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::promotion_body;
+use super::promotion_state::TreeEntry;
 
 const SWARM_REPO: &str = "EffortlessMetrics/shiplog-swarm";
 const SOURCE_REPO: &str = "EffortlessMetrics/shiplog";
@@ -1538,23 +1539,86 @@ fn tree_blobs(
     let output = port
         .git_output(workspace_root, &["ls-tree", "-rz", "--full-tree", revision])
         .with_context(|| format!("promote: read tree of {revision}"))?;
-    Ok(parse_tree_blobs(&output))
+    Ok(parse_tree_entries(&output)?
+        .into_iter()
+        .map(|(path, entry)| (path, entry.oid))
+        .collect())
 }
 
-/// Parse `git ls-tree -rz --full-tree` output into `path -> blob oid`.
-fn parse_tree_blobs(listing: &str) -> BTreeMap<String, String> {
-    listing
-        .split('\0')
-        .filter(|entry| !entry.is_empty())
-        .filter_map(|entry| {
-            // "<mode> <type> <oid>\t<path>"
-            let (meta, path) = entry.split_once('\t')?;
-            Some((
-                path.to_string(),
-                meta.split_whitespace().nth(2)?.to_string(),
-            ))
-        })
-        .collect()
+/// Parse `git ls-tree -rz --full-tree` output into complete Git tree entries.
+fn parse_tree_entries(listing: &str) -> Result<BTreeMap<String, TreeEntry>> {
+    let mut entries = BTreeMap::new();
+    for record in listing.split('\0').filter(|entry| !entry.is_empty()) {
+        // "<mode> <type> <oid>\t<path>"
+        let (metadata, path) = record
+            .split_once('\t')
+            .context("parse tree entry: missing path separator")?;
+        let mut fields = metadata.split_whitespace();
+        let mode = fields
+            .next()
+            .context("parse tree entry: missing mode")?
+            .to_string();
+        let object_type = fields
+            .next()
+            .context("parse tree entry: missing object type")?
+            .to_string();
+        let oid = fields
+            .next()
+            .context("parse tree entry: missing object id")?
+            .to_string();
+        ensure!(
+            fields.next().is_none(),
+            "parse tree entry for {path}: unexpected metadata"
+        );
+        ensure!(
+            entries
+                .insert(
+                    path.to_string(),
+                    TreeEntry {
+                        mode,
+                        object_type,
+                        oid,
+                    },
+                )
+                .is_none(),
+            "parse tree entry for {path}: duplicate path"
+        );
+    }
+    Ok(entries)
+}
+
+fn verify_overlay_tree(
+    overlay_entries: &BTreeMap<String, TreeEntry>,
+    source_entries: &BTreeMap<String, TreeEntry>,
+    swarm_entries: &BTreeMap<String, TreeEntry>,
+    take_source: &[String],
+    overlay_sha: &str,
+) -> Result<()> {
+    let resolved_to_source = take_source.iter().cloned().collect::<BTreeSet<_>>();
+    let mut paths = BTreeSet::new();
+    paths.extend(overlay_entries.keys().cloned());
+    paths.extend(source_entries.keys().cloned());
+    paths.extend(swarm_entries.keys().cloned());
+
+    for path in paths {
+        let expected = if resolved_to_source.contains(&path) {
+            source_entries.get(&path)
+        } else {
+            swarm_entries.get(&path)
+        };
+        let actual = overlay_entries.get(&path);
+        if actual != expected {
+            let side = if resolved_to_source.contains(&path) {
+                "source"
+            } else {
+                "swarm"
+            };
+            bail!(
+                "promote: overlay {overlay_sha} holds {actual:?} at {path}, but the resolution plan requires the {side} tree entry {expected:?}"
+            );
+        }
+    }
+    Ok(())
 }
 
 fn git_diff_names(
@@ -1690,43 +1754,25 @@ fn prepare_source_overlay(
         )?;
         let overlay_sha = git(&["rev-parse", "HEAD"])?;
         // The invariant that closes the silent-discard class. Every path in any of
-        // the three trees is checked by blob, not by name: a resolved path must
-        // hold the exact source blob (or be absent exactly as source has it), and
-        // every other path must hold the exact swarm blob. Comparing which names
-        // differ would accept a resolved path holding wrong content, since its
-        // name is permitted to differ. This fully specifies the overlay tree, so
-        // anything dropped, reverted, or reintroduced surfaces here no matter
-        // which step got it wrong.
-        let read_blobs = |revision: &str| -> Result<BTreeMap<String, String>> {
+        // the three trees is checked by complete tree entry, not by name or blob
+        // alone: mode and object type are part of the content the promotion must
+        // carry. This fully specifies the overlay tree, so anything dropped,
+        // reverted, reintroduced, or type-changed surfaces here no matter which
+        // step got it wrong.
+        let read_entries = |revision: &str| -> Result<BTreeMap<String, TreeEntry>> {
             let listing = git(&["ls-tree", "-rz", "--full-tree", revision])?;
-            Ok(parse_tree_blobs(&listing))
+            parse_tree_entries(&listing)
         };
-        let overlay_blobs = read_blobs(&overlay_sha)?;
-        let source_blobs = read_blobs(source_head)?;
-        let swarm_blobs = read_blobs(swarm_sha)?;
-        let resolved_to_source = take_source.iter().cloned().collect::<BTreeSet<_>>();
-        let mut paths = BTreeSet::new();
-        paths.extend(overlay_blobs.keys().cloned());
-        paths.extend(source_blobs.keys().cloned());
-        paths.extend(swarm_blobs.keys().cloned());
-        for path in paths {
-            let expected = if resolved_to_source.contains(&path) {
-                source_blobs.get(&path)
-            } else {
-                swarm_blobs.get(&path)
-            };
-            let actual = overlay_blobs.get(&path);
-            if actual != expected {
-                let side = if resolved_to_source.contains(&path) {
-                    "source"
-                } else {
-                    "swarm"
-                };
-                bail!(
-                    "promote: overlay {overlay_sha} holds {actual:?} at {path}, but the resolution plan requires the {side} blob {expected:?}"
-                );
-            }
-        }
+        let overlay_entries = read_entries(&overlay_sha)?;
+        let source_entries = read_entries(source_head)?;
+        let swarm_entries = read_entries(swarm_sha)?;
+        verify_overlay_tree(
+            &overlay_entries,
+            &source_entries,
+            &swarm_entries,
+            take_source,
+            &overlay_sha,
+        )?;
         Ok(overlay_sha)
     })();
     let cleanup_warnings = workspace.release();
@@ -2345,7 +2391,87 @@ mod tests {
     use super::*;
     use anyhow::ensure;
     use std::cell::RefCell;
-    use std::collections::VecDeque;
+    use std::collections::{BTreeMap, VecDeque};
+
+    fn test_tree_entry(mode: &str, object_type: &str, oid: &str) -> TreeEntry {
+        TreeEntry {
+            mode: mode.to_string(),
+            object_type: object_type.to_string(),
+            oid: oid.to_string(),
+        }
+    }
+
+    #[test]
+    fn parse_tree_entries_preserves_mode_type_and_oid() -> Result<()> {
+        let entries = parse_tree_entries(concat!(
+            "100755 blob same-oid\tbin\0",
+            "120000 blob link-oid\tlink\0",
+            "160000 commit commit-oid\tmodule\0",
+        ))?;
+
+        ensure!(entries.get("bin") == Some(&test_tree_entry("100755", "blob", "same-oid")));
+        ensure!(entries.get("link") == Some(&test_tree_entry("120000", "blob", "link-oid")));
+        ensure!(entries.get("module") == Some(&test_tree_entry("160000", "commit", "commit-oid")));
+        Ok(())
+    }
+
+    #[test]
+    fn overlay_tree_rejects_matching_oid_with_different_mode_or_type() -> Result<()> {
+        for (mode, object_type) in [("100755", "blob"), ("100644", "commit")] {
+            let mut source = BTreeMap::new();
+            source.insert(
+                "path".to_string(),
+                test_tree_entry("100644", "blob", "shared-oid"),
+            );
+            let mut swarm = BTreeMap::new();
+            swarm.insert(
+                "path".to_string(),
+                test_tree_entry(mode, object_type, "shared-oid"),
+            );
+            let mut overlay = BTreeMap::new();
+            overlay.insert(
+                "path".to_string(),
+                test_tree_entry("100644", "blob", "shared-oid"),
+            );
+
+            let error = verify_overlay_tree(&overlay, &source, &swarm, &[], "overlay-sha")
+                .expect_err("matching OIDs with different tree metadata must be rejected");
+            ensure!(error.to_string().contains("tree entry"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn overlay_tree_accepts_exact_entries_and_source_deletions() -> Result<()> {
+        let mut source = BTreeMap::new();
+        source.insert(
+            "source-only".to_string(),
+            test_tree_entry("100755", "blob", "source-oid"),
+        );
+        let mut swarm = BTreeMap::new();
+        swarm.insert(
+            "source-only".to_string(),
+            test_tree_entry("100644", "blob", "swarm-oid"),
+        );
+        swarm.insert(
+            "removed-by-source".to_string(),
+            test_tree_entry("100644", "blob", "removed-oid"),
+        );
+        let mut overlay = BTreeMap::new();
+        overlay.insert(
+            "source-only".to_string(),
+            test_tree_entry("100755", "blob", "source-oid"),
+        );
+
+        verify_overlay_tree(
+            &overlay,
+            &source,
+            &swarm,
+            &["source-only".to_string(), "removed-by-source".to_string()],
+            "overlay-sha",
+        )?;
+        Ok(())
+    }
 
     struct StubPort {
         gh: RefCell<VecDeque<std::result::Result<Vec<u8>, String>>>,
