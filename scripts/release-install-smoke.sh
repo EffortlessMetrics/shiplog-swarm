@@ -83,6 +83,10 @@ sha256_file() {
   fi
 }
 
+lower_hex() {
+  printf '%s' "$1" | tr '[:upper:]' '[:lower:]'
+}
+
 find_unique_candidate_file() {
   local root="$1"
   local name="$2"
@@ -134,7 +138,7 @@ validate_candidate_manifest() {
     exit 1
   fi
   actual_sums_sha="$(sha256_file "$sums")"
-  if [[ "${actual_sums_sha,,}" != "${expected_sums_sha,,}" ]]; then
+  if [[ "$(lower_hex "$actual_sums_sha")" != "$(lower_hex "$expected_sums_sha")" ]]; then
     echo "candidate SHA256SUMS.txt digest mismatch" >&2
     echo "expected: $expected_sums_sha" >&2
     echo "actual:   $actual_sums_sha" >&2
@@ -177,7 +181,7 @@ expected_sha="$(
     "$download_dir/SHA256SUMS.txt"
 )"
 actual_sha="$(sha256_file "$binary_path")"
-if [[ "${actual_sha,,}" != "${expected_sha,,}" ]]; then
+if [[ "$(lower_hex "$actual_sha")" != "$(lower_hex "$expected_sha")" ]]; then
   echo "checksum mismatch for $asset" >&2
   echo "expected: $expected_sha" >&2
   echo "actual:   $actual_sha" >&2
