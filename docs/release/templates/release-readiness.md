@@ -46,6 +46,7 @@ Summarize the user-visible release contents. Link to the release decision and
 | macOS Intel build | pending | `<job/artifact>` |
 | macOS Apple Silicon build | pending | `<job/artifact>` |
 | Windows x86-64 build | pending | `<job/artifact>` |
+| Staged candidate manifest and artifact digests | pending | `<artifact/manifest>` |
 | Checksums and draft assets | pending | `<job>` |
 | Release Validation | pending | `<job>` |
 | Linux first-use acceptance | pending | `<job>` |
@@ -53,11 +54,13 @@ Summarize the user-visible release contents. Link to the release decision and
 | macOS Apple Silicon first-use acceptance | pending | `<job>` |
 | Windows first-use acceptance | pending | `<job>` |
 | Release-mode integration tests | pending | `<job>` |
+| Terminal `Release Candidate Ready` aggregate | pending | `<job>` |
 
 ## Publication gates
 
 - [ ] Exact immutable tag SHA is confirmed.
-- [ ] All applicable exact-tag jobs are green.
+- [ ] All applicable exact-tag jobs consume one staged candidate set and are green.
+- [ ] Terminal `Release Candidate Ready` is green for that exact tag and manifest.
 - [ ] GitHub release remains draft before publication approval.
 - [ ] crates.io package version and metadata are final.
 - [ ] Public asset names and checksums are final.
