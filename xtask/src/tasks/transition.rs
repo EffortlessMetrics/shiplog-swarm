@@ -955,6 +955,15 @@ pub fn git_hash_object(content: &str) -> Result<String> {
         .context("transition: git hash-object produced no id")
 }
 
+pub(super) fn decode_git_stdout(args: &[&str], stdout: &[u8]) -> Result<String> {
+    String::from_utf8(stdout.to_vec()).with_context(|| {
+        format!(
+            "git {} produced non-UTF-8 stdout; refusing to interpret path identity",
+            args.join(" ")
+        )
+    })
+}
+
 fn run_git_with_stdin(args: &[&str], stdin: &str) -> Result<String> {
     use std::io::Write as _;
     use std::process::{Command, Stdio};
@@ -982,7 +991,7 @@ fn run_git_with_stdin(args: &[&str], stdin: &str) -> Result<String> {
             String::from_utf8_lossy(&output.stderr).trim()
         );
     }
-    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    decode_git_stdout(args, &output.stdout)
 }
 
 fn pull_request_patch(port: &impl TransitionPort, repo: &str, receipt: &str) -> Result<String> {
@@ -990,7 +999,7 @@ fn pull_request_patch(port: &impl TransitionPort, repo: &str, receipt: &str) -> 
     let raw = port
         .gh_output(&["pr", "diff", &number, "--repo", repo, "--patch"])
         .with_context(|| format!("fetch patch for {receipt}"))?;
-    Ok(String::from_utf8_lossy(&raw).into_owned())
+    String::from_utf8(raw).with_context(|| format!("decode patch for {receipt} as UTF-8"))
 }
 
 /// PR number from `owner/repo#number`, rejecting a receipt that names a
@@ -1036,6 +1045,15 @@ mod tests {
     const CARGO_LOCK: &str = "Cargo.lock";
     const SOURCE: &str = "EffortlessMetrics/shiplog";
     const SWARM: &str = "EffortlessMetrics/shiplog-swarm";
+
+    #[test]
+    fn git_stdout_rejects_non_utf8_path_identity() -> Result<()> {
+        let error = decode_git_stdout(&["ls-tree", "-rz"], &[b'1', 0xff])
+            .expect_err("invalid Git bytes must not be lossily decoded");
+        ensure!(error.to_string().contains("non-UTF-8 stdout"));
+        ensure!(error.to_string().contains("path identity"));
+        Ok(())
+    }
 
     struct StubPort {
         /// `repo#n` to the PR view JSON the forge would return.
