@@ -40,14 +40,18 @@ Use
 [`plans/shiplog-swarm/promotion-runbook.md`](plans/shiplog-swarm/promotion-runbook.md)
 for the complete promotion and closeout sequence.
 
-Release preparation starts only after the exact candidate promotion and
-post-merge closeout are green. Use
+Shared release-candidate preparation also belongs in swarm. Finish the release
+scope, version and lockfile, changelog freeze, README/guides, release decision,
+readiness ledger, and handoff skeleton on `shiplog-swarm/main`, then promote the
+exact proven candidate. Source work begins only after that checkpoint and is
+limited to release execution, tagging, publication, and explicitly authorized
+source-owned writer configuration. Use
 [`docs/release/release-preparation.md`](docs/release/release-preparation.md) for
-the current changelog, documentation, version, preflight, tag, artifact,
-publication, rollback, and closeout procedure. Versioned readiness/decision
-files and root `RELEASE_HANDOFF_*` files are historical receipts, not standing
-command references. A product or shared-documentation defect found during
-source release prep returns to swarm first and is promoted again.
+the current preparation, preflight, tag, staged-artifact, publication,
+rollback, and closeout procedure. Versioned readiness/decision files and root
+`RELEASE_HANDOFF_*` files are historical receipts, not standing command
+references. A product or shared-documentation defect found on source returns to
+swarm and is promoted again.
 
 ## Code Review Standards
 
