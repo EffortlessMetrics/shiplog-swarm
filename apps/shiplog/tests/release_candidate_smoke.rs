@@ -31,6 +31,40 @@ fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
+fn repository_role() -> Result<String> {
+    let path = repo_root().join("policy/automation-authority.toml");
+    let policy = fs::read_to_string(&path)
+        .with_context(|| format!("read automation authority policy {}", path.display()))?;
+    let document: toml::Value = toml::from_str(&policy)
+        .with_context(|| format!("parse automation authority policy {}", path.display()))?;
+    document
+        .get("repository_role")
+        .and_then(toml::Value::as_str)
+        .map(ToOwned::to_owned)
+        .context("automation authority policy must declare repository_role")
+}
+
+fn workflow_job(workflow: &str, name: &str) -> Result<String> {
+    let marker = format!("  {name}:");
+    let mut lines = Vec::new();
+    let mut found = false;
+    for line in workflow.lines() {
+        if line == marker {
+            found = true;
+            lines.push(line);
+            continue;
+        }
+        if found && line.starts_with("  ") && !line.starts_with("    ") && !line.trim().is_empty() {
+            break;
+        }
+        if found {
+            lines.push(line);
+        }
+    }
+    ensure!(found, "release workflow must declare job {name}");
+    Ok(lines.join("\n"))
+}
+
 fn current_release_asset() -> Result<&'static str> {
     match (std::env::consts::OS, std::env::consts::ARCH) {
         ("linux", "x86_64") => Ok(RELEASE_ASSETS[0]),
@@ -446,6 +480,8 @@ fn release_workflow_binds_tag_push_identity_and_staged_contract() -> Result<()> 
     let path = repo_root().join(".github/workflows/release.yml");
     let workflow = fs::read_to_string(&path)
         .with_context(|| format!("read release workflow {}", path.display()))?;
+    let role = repository_role()?;
+    let release_writer = workflow_job(&workflow, "create-release")?;
     ensure!(
         workflow.contains("WEBHOOK_SHA: ${{ github.sha }}"),
         "preflight must receive the push webhook SHA through the step environment"
@@ -453,14 +489,6 @@ fn release_workflow_binds_tag_push_identity_and_staged_contract() -> Result<()> 
     ensure!(
         workflow.contains("EVENT_NAME\" == \"push\" && \"$release_sha\" != \"$WEBHOOK_SHA\""),
         "tag-push preflight must reject a tag that moved after the webhook"
-    );
-    ensure!(
-        workflow.contains(
-            "Swarm verifies release inputs but cannot create a GitHub release."
-        ) && workflow.contains(
-            "Promote this exact proven tree to EffortlessMetrics/shiplog for authorized release execution."
-        ),
-        "the source handoff must preserve both durable summary statements"
     );
     ensure!(
         workflow.contains("Confirm exact negative-control checkout")
@@ -476,5 +504,87 @@ fn release_workflow_binds_tag_push_identity_and_staged_contract() -> Result<()> 
             && workflow.contains("asset_count=\"${#expected[@]}\""),
         "candidate manifest asset_count must derive from its canonical expected set"
     );
+    ensure!(
+        workflow.contains("SHIPLOG_RELEASE_CANDIDATE_DIR")
+            && workflow.contains("SHIPLOG_RELEASE_SOURCE_SHA")
+            && workflow.contains("source_sha=$RELEASE_SHA")
+            && workflow.contains("RELEASE_CANDIDATE.txt")
+            && workflow.contains("SHA256SUMS.txt"),
+        "acceptance must consume one workflow-staged candidate set with bound metadata"
+    );
+    for target in [
+        "x86_64-unknown-linux-gnu",
+        "x86_64-apple-darwin",
+        "aarch64-apple-darwin",
+        "x86_64-pc-windows-msvc",
+    ] {
+        ensure!(
+            workflow.contains(target),
+            "workflow must cover the staged candidate target {target}"
+        );
+    }
+    ensure!(
+        workflow.contains("actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c")
+            && !workflow.contains("actions/download-artifact@v8"),
+        "candidate downloads must use immutable action pins"
+    );
+    ensure!(
+        !workflow.contains("releases/download/"),
+        "workflow acceptance must not independently download release URLs"
+    );
+
+    match role.as_str() {
+        "swarm" => {
+            ensure!(
+                release_writer.contains(
+                    "Swarm verifies release inputs but cannot create a GitHub release."
+                ) && release_writer.contains(
+                    "Promote this exact proven tree to EffortlessMetrics/shiplog for authorized release execution."
+                ),
+                "the swarm handoff job must preserve both durable summary statements"
+            );
+            ensure!(
+                !release_writer.contains("contents: write")
+                    && !release_writer.contains("softprops/action-gh-release@"),
+                "swarm must not retain release-writer authority"
+            );
+        }
+        "source" => {
+            ensure!(
+                release_writer.contains("if: needs.release-candidate-ready.result == 'success'")
+                    && release_writer.contains(
+                        "needs: [release-candidate-ready, release-preflight, stage_release_candidate]"
+                    ),
+                "source release writer must depend on the terminal candidate gate"
+            );
+            ensure!(
+                release_writer.contains("contents: write")
+                    && release_writer.contains("softprops/action-gh-release@")
+                    && release_writer.contains("actions/download-artifact@")
+                    && release_writer
+                        .contains("Create or update draft release with exact candidate bytes"),
+                "source must retain only the narrow draft-release writer"
+            );
+            for asset in [
+                "candidate/shiplog-x86_64-unknown-linux-gnu/shiplog-x86_64-unknown-linux-gnu",
+                "candidate/shiplog-x86_64-apple-darwin/shiplog-x86_64-apple-darwin",
+                "candidate/shiplog-aarch64-apple-darwin/shiplog-aarch64-apple-darwin",
+                "candidate/shiplog-x86_64-pc-windows-msvc/shiplog-x86_64-pc-windows-msvc.exe",
+                "candidate/SHA256SUMS.txt",
+                "candidate/RELEASE_CANDIDATE.txt",
+            ] {
+                ensure!(
+                    release_writer.contains(asset),
+                    "source release writer must upload exact staged path {asset}"
+                );
+            }
+            ensure!(
+                workflow.contains("Public release, crates.io publication")
+                    && workflow.contains("explicit human authority"),
+                "source summary must preserve the explicit publication authority boundary"
+            );
+        }
+        other => bail!("unsupported repository_role in automation authority policy: {other}"),
+    }
     Ok(())
 }
