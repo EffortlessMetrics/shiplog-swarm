@@ -1,8 +1,9 @@
 # Shiplog Release Preparation and Execution
 
 **Status:** active living procedure  
-**Authority:** `shiplog-swarm` prepares and proves; `shiplog` promotes, tags,
-publishes, and records public release state.
+**Authority:** `shiplog-swarm` prepares and proves the complete shared
+candidate; `shiplog` owns source execution, tags, publication, and public
+release state.
 
 This is the canonical procedure for a new Shiplog release. Versioned readiness,
 decision, and handoff files are evidence for one completed release; they are not
@@ -10,68 +11,92 @@ standing instructions.
 
 ## Operating invariants
 
-1. Normal product, documentation, test, CI, policy, and cleanup work lands in
+1. Normal product, shared documentation, tests, CI, policy, package metadata,
+   version changes, changelog changes, and release-candidate preparation land in
    `EffortlessMetrics/shiplog-swarm`.
 2. `EffortlessMetrics/shiplog` remains the public source and release authority.
-3. Source receives a proven exact swarm tree through a regular merge-commit
+   It owns release tags, crates.io publication, GitHub Releases, signing,
+   package-channel publication, and security-sensitive release credentials.
+3. Source receives the complete proven candidate through a regular merge-commit
    promotion PR. Never squash a source promotion.
-4. Release-specific source work starts only after the candidate swarm head has
-   been promoted and closed out.
-5. A defect found during source release prep returns to swarm, is proved there,
-   and is promoted again. Do not turn release prep into a second product lane.
-6. The release tag is immutable. Never force-move or reuse a failed release
-   tag; fix the defect and cut the next patch version.
-7. crates.io publication and a public GitHub Release are irreversible public
-   boundaries. Keep the candidate non-current until exact-tag proof passes.
+4. Source release work begins only after the exact shared candidate has been
+   promoted. It is limited to validation, tagging, publication, and narrowly
+   authorized source-owned writer configuration.
+5. A product, version, package, changelog, README, guide, test, or shared CI
+   defect found on source returns to swarm, is proved there, and is promoted
+   again. Source is not a second release-preparation lane.
+6. The release tag is immutable. Never force-move or reuse a failed tag; fix the
+   defect through swarm and cut the next patch version.
+7. One release attempt has one exact staged candidate set. Every platform test,
+   checksum, readiness receipt, and publication decision must identify the same
+   tag, source commit, artifact manifest, and artifact digests.
 8. A skipped or unavailable optional check is not claimed as executed proof.
 9. Release claims come from merged behavior and observed artifacts, not commit
-   subjects, PR-body assertions, or historical command blocks.
+   subjects, PR-body assertions, historical command blocks, or a local rebuild.
 
-## Phase 0 — Define the candidate
+## Phase 0 — Define the candidate on swarm
 
 Choose the release version and theme from the user-visible change set, not from
 control-plane activity alone.
 
-Before implementation freeze:
+Before candidate freeze:
 
-- identify the exact user-facing reason for the release;
+- identify the user-facing reason for the release;
 - decide the intended semantic-version increment;
-- list the included and explicitly deferred user-visible changes;
-- identify any installer, package-channel, signing, or platform-trust impact;
-- create the version-specific release decision from
+- list included and explicitly deferred user-visible changes;
+- identify installer, package-channel, signing, or platform-trust impact;
+- create `docs/release/X.Y.Z-release-decision.md` from
   [`templates/release-decision.md`](templates/release-decision.md);
-- create the version-specific readiness ledger from
+- create `docs/release/X.Y.Z-readiness.md` from
   [`templates/release-readiness.md`](templates/release-readiness.md); and
-- start the execution handoff from
+- create root `RELEASE_HANDOFF_X.Y.Z.md` from
   [`templates/release-handoff.md`](templates/release-handoff.md).
 
-Do not bump versions merely to make a candidate feel real. Finish the product,
-README, guides, changelog curation, and release-scope decision first; make the
-version bump late in the source release-prep PR.
+Keep these files in `shiplog-swarm`. Their pre-publication form records intended
+scope, required proof, and placeholders for observed source/tag/public state.
 
-## Phase 1 — Finish the candidate on swarm
+Do not bump versions merely to make a candidate feel real. Finish product scope,
+README/guides, changelog curation, and the release decision first. Make the
+version/changelog freeze late in the final shared release-preparation PR.
 
-Release preparation begins on current `shiplog-swarm/main`.
+## Phase 1 — Finish and freeze the shared candidate on swarm
+
+Release preparation starts on current `shiplog-swarm/main`.
 
 ### Content and documentation review
 
-- Curate `CHANGELOG.md` under `[Unreleased]`. Include user-visible behavior,
+- Curate `CHANGELOG.md` from merged behavior. Include user-visible capability,
   meaningful compatibility changes, and important fixes; omit internal churn.
 - Update README installation, first-use, recurring-use, and command examples
   affected by the release.
-- Update guides, configuration reference, support tiers, and claim boundaries
-  before freezing release notes.
-- Verify each changelog or release-note statement against merged behavior. If a
-  command path has an exception, incomplete platform surface, or unproved
-  security property, state the narrower truth.
+- Update guides, configuration reference, support tiers, claim boundaries, and
+  package-channel instructions before freezing release notes.
+- Verify every changelog and release-note statement against the actual command
+  path. Narrow any unproved security, platform, signing, or availability claim.
 - Remove stale future-tense wording from current docs without rewriting
   historical release receipts.
-- Confirm the release still has a coherent user-facing theme after deferrals.
+- Confirm the release still has one coherent user-facing theme after deferrals.
+
+### Final shared release-preparation PR
+
+After scope and documentation are stable, use one focused swarm PR to:
+
+- set the workspace/package version to `X.Y.Z`;
+- align workspace package entries in `Cargo.lock`;
+- freeze the curated changelog section as `X.Y.Z` with the intended release
+  date and create a fresh empty `[Unreleased]` section;
+- update the documentation-only `publish.release` marker when appropriate,
+  without misrepresenting it as an executable gate;
+- finalize the release decision and pre-publication readiness state;
+- prepare the handoff skeleton with exact fields still marked pending; and
+- make any last shared README, installer, guide, test, or verification changes.
+
+Do not make these shared changes directly in `EffortlessMetrics/shiplog`.
 
 ### Queue and repository state
 
-Both repositories may contain deliberately deferred work, but the release
-candidate must not be ambiguous.
+Both repositories may contain deliberately deferred work, but the candidate
+must not be ambiguous.
 
 ```bash
 git fetch origin --prune
@@ -90,13 +115,14 @@ For every open item, record one of:
 - superseded/duplicate and closed; or
 - release blocker.
 
-Do not start promotion while a required-check failure, source mutation incident,
-or release-blocking PR has an unexplained disposition.
+Do not promote while a required-check failure, source mutation incident,
+release-blocking PR, or source/shared candidate mismatch has an unexplained
+disposition.
 
 ### Swarm proof
 
-Run the normal contributor and repository-contract proof from a clean tracked
-checkout. Known protected agent workspace artifacts may remain when the contract
+Run the contributor and repository-contract proof from a clean tracked checkout.
+Known protected agent workspace artifacts may remain only when the contract
 report classifies them explicitly; tracked edits and unknown untracked paths
 remain blocking.
 
@@ -111,14 +137,33 @@ cargo xtask check-file-policy --mode blocking-allowlist
 cargo xtask check-automation-authority --repository-role swarm
 cargo xtask promotion-state --check
 cargo xtask repo-contract-report
+
+bash scripts/package-version-audit.sh
+bash scripts/package-boundary-audit.sh
+bash scripts/package-proof.sh
+bash scripts/publish-dry-run.sh
+
 git diff --check
 ```
 
-The exact candidate swarm head must also have a successful routed
-`Shiplog Rust Small Result` aggregate. The required aggregate is the authority;
-optional smoke lanes are supplementary evidence.
+On Windows, run the Bash package scripts through WSL or Git Bash. Hosted Linux
+CI remains the authority for their normal execution.
 
-## Phase 2 — Promote the exact swarm candidate
+Confirm independently:
+
+- every publishable workspace package reports `X.Y.Z`;
+- `policy/publish-allowlist.toml` contains only intended public packages;
+- `cargo package --list` contains no private, generated, or unintended files;
+- `cargo publish --dry-run --locked` succeeds for the allowlisted order;
+- the exact candidate head has a successful routed
+  `Shiplog Rust Small Result`; and
+- version, changelog, README/guides, decision, readiness, and handoff all belong
+  to that same exact swarm commit.
+
+The required aggregate is the authority; optional smoke lanes are supplementary
+evidence.
+
+## Phase 2 — Promote the exact release candidate
 
 Follow
 [`plans/shiplog-swarm/promotion-runbook.md`](../../plans/shiplog-swarm/promotion-runbook.md).
@@ -166,21 +211,20 @@ Review the structured plan, not only the exit code. Confirm:
 
 - `source_head`, `swarm_head`, and merge base are the expected exact commits;
 - the routed workflow and terminal aggregate belong to that exact swarm SHA;
-- the included swarm PR receipt list is complete;
+- the included merged swarm PR receipt list is complete;
 - every differing path has an exact source/swarm tree entry, effect, and basis;
-- every source-retained path is backed by a current bounded source-authority
-  decision;
-- every exceptional take-swarm path is backed by a current bounded transition
-  decision;
+- every source-retained path has current bounded source authority;
+- every exceptional take-swarm path has current bounded transition authority;
 - the deterministic overlay SHA and source branch/PR action are explicit; and
-- no mutation occurred during either dry-run.
+- neither dry-run created a branch, PR, worktree residue, durable object, or
+  source mutation.
 
 A non-zero dry-run is a repair queue. Do not bypass it with an old
 `--source-ref`, a raw branch push, a guessed receipt, or `--allow-historical`.
 Historical mode is for explicit historical diagnosis; it is not permission to
 prepare a PR against a different current source head.
 
-### Prepare the source promotion
+### Prepare, prove, and merge the source checkpoint
 
 After the exact dry-run is deterministic and fully reviewed:
 
@@ -188,70 +232,66 @@ After the exact dry-run is deterministic and fully reviewed:
 cargo xtask promote --swarm-sha "$swarm_head"
 ```
 
-A real execution must:
+A real execution must re-resolve live state, require source merge control,
+create/update/reuse one deterministic source-local promotion branch and PR,
+preserve current source-owned release/governance paths through the exact
+overlay, emit the machine receipt, and stop before merge/tag/publication.
 
-- re-resolve current source and swarm state;
-- require source merge control, including the exact
-  `reject-routine-bot-pr` Source Automation Guard check;
-- create or update one deterministic source-local promotion branch and PR;
-- refuse an incompatible existing branch or PR;
-- preserve source-owned release/governance paths through the exact overlay;
-- emit the machine-readable receipt; and
-- stop before merge, tag, publication, signing, or release execution.
+Run the command again against unchanged state. It must reuse the same branch,
+PR, overlay, title, body, and receipt identity rather than create duplicates.
 
-The source promotion PR must pass source CI at its exact head. Review its actual
-file diff and proof sections. The PR body must not claim that release authority,
-publication, or tagging has moved to swarm.
+Review the actual source PR diff and exact-head source CI. Its body must record
+the exact swarm head, included swarm PRs, swarm proof, source proof, regular
+merge instruction, rollback, and the release-authority claim boundary.
 
-### Merge and close out the checkpoint
-
-Merge the source promotion with a regular merge commit. Never squash it.
+Merge with a regular merge commit, never squash:
 
 ```bash
+gh pr merge <number> --repo EffortlessMetrics/shiplog --merge --delete-branch
+```
+
+Then verify the landed transaction:
+
+```bash
+git fetch origin --prune
+git fetch swarm --prune
 cargo xtask promote --swarm-sha "$swarm_head" --verify-only
 cargo xtask repo-contract-report
 ```
 
-Verify:
+Require the exact two-parent checkpoint, matching overlay identities, exact
+source post-merge routed CI, no unexplained source product commits, only current
+approved source governance, and a closed-out bounded promotion state.
 
-- the exact overlay landed as a two-parent source checkpoint;
-- `Shiplog-Swarm-Head`, `Shiplog-Source-Head`, and the resolution-plan identity
-  match the reviewed transaction;
-- source post-merge routed CI passed at the exact source merge result;
-- source carries no unexplained product commits;
-- only current approved source governance differs; and
-- the bounded manifest and generated current-promotion view are closed out.
+The required closeout records one landed transaction. It is distinct from
+opening repeated receipt-only PRs merely to chase a moving pending range.
 
-A required post-promotion closeout is evidence for the landed transaction. It is
-not the prohibited pattern of repeatedly opening receipt-only PRs merely to keep
-a moving pending list cosmetically current.
+## Phase 3 — Validate source release execution
 
-## Phase 3 — Prepare the release on source
+After promotion, current `shiplog/main` should already contain the version,
+changelog freeze, shared docs, decision, readiness ledger, handoff skeleton,
+package state, and candidate behavior.
 
-Start a focused release-prep branch from current `EffortlessMetrics/shiplog/main`
-after promotion and closeout are green.
+Do **not** create a source release-prep PR merely to repeat those changes.
 
-Allowed release-specific changes include:
+A focused source PR is allowed only when the release requires a narrowly
+source-owned change, such as:
 
-- workspace/package version and lockfile package-version alignment;
-- freezing `[Unreleased]` into the new version/date and opening a fresh empty
-  `[Unreleased]` section;
-- final version-specific release links and publication text after substantive
-  shared README/install/usage changes have already landed through swarm;
-- the versioned release decision and readiness ledger;
-- the versioned execution handoff with pre-publication placeholders;
-- release-note and package-channel metadata; and
-- narrowly authorized source-owned release workflow/configuration changes.
+- release-writer permissions or source-only workflow projection;
+- source-specific signing/notarization configuration;
+- source-only package-publication credentials or protected environment wiring;
+- source-only release notes that cannot exist on the verification-only swarm
+  workflow; or
+- an explicitly authorized release-governance correction.
 
-If release prep discovers a product, shared documentation, test, or ordinary CI
-defect, stop. Fix it in swarm, merge it, promote the new exact head, and restart
-source release prep from the new source main.
+It must not change the shared product, version, lockfile, changelog, README,
+guides, tests, or ordinary CI. If one of those needs correction, stop, fix it on
+swarm, promote a new exact candidate, and restart source validation.
 
 ### Source preflight
 
-Run from the source release-prep branch. On Windows, run the Bash scripts through
-WSL or Git Bash; the source Release workflow on GitHub remains the authoritative
-Linux execution of those scripts.
+Run from current source main, or from the narrow source-owned release-execution
+PR when one is required:
 
 ```bash
 cargo xtask ci-small
@@ -274,24 +314,24 @@ bash scripts/check-release-hold.sh vX.Y.Z
 git diff --check
 ```
 
-Confirm independently:
+Confirm:
 
-- every publishable workspace package reports the intended version;
-- `policy/publish-allowlist.toml` contains only intended public packages;
-- the `publish.release` marker, when updated, is treated as documentation and
-  not misrepresented as a gate;
-- `cargo package --list` contains no private, generated, or unintended files;
-- `cargo publish --dry-run --locked` succeeds for the allowlisted order;
+- source product/package/version/changelog state matches the exact promoted
+  candidate;
 - source automation authority is `source`, not `swarm`;
-- source release workflow write permission remains narrowly job-scoped; and
-- exact source PR and post-merge required checks are green.
+- release workflow write permission is narrowly job-scoped;
+- package proof and allowlisted publish dry-run succeed;
+- the release-hold guard accepts the exact intended tag; and
+- exact source PR and post-merge checks are green when a source-owned PR was
+  required.
 
-Do not tag from an unmerged PR head. Merge the release-prep PR, then verify the
-exact resulting `shiplog/main` commit and its post-merge CI.
+Do not tag from an unmerged PR head. The release source commit is the exact
+promoted source main or the exact merged result of the narrow source-owned
+execution PR.
 
 ## Phase 4 — Stage the exact tagged candidates
 
-Tag only the exact merged source commit approved for release:
+Tag only the exact proven source commit:
 
 ```bash
 git switch main
@@ -302,16 +342,16 @@ git tag -a vX.Y.Z -m "shiplog vX.Y.Z"
 git push origin vX.Y.Z
 ```
 
-The tag push invokes the source `Release` workflow. A manual workflow dispatch
-is only for an existing explicit semver tag and requires the owner-approval
-input. It does not replace the tag or authorize an untagged build.
+The tag push invokes the source `Release` workflow. A manual dispatch is only
+for an existing explicit semver tag and requires the owner-approval input. It
+does not replace the tag or authorize an untagged build.
 
 The workflow must keep the candidate non-current while it proves one immutable
 staged set. A draft GitHub release, retained workflow-artifact bundle, or other
-source-authorized equivalent may be used, but all later lanes must consume the
+source-authorized equivalent may be used, but every later lane must consume the
 same candidate manifest and artifact digests.
 
-Require successful completion of the applicable jobs:
+Require successful completion of:
 
 - `Release Preflight`;
 - package proof and allowlisted publish dry-run;
@@ -324,13 +364,14 @@ Require successful completion of the applicable jobs:
   mechanism;
 - release validation;
 - first-use acceptance on all four supported targets;
-- release-mode integration tests; and
+- release-mode integration tests;
+- deliberate checksum and executable/first-use negative controls; and
 - one terminal `Release Candidate Ready` aggregate depending on every required
-  candidate job above.
+  candidate job.
 
-Check that every job, artifact, manifest, and draft release points at the same
-immutable tag SHA. Do not substitute a local rebuild for a failed staged-artifact
-or first-use test.
+Every job, artifact, manifest, and draft release must point at the same immutable
+tag SHA. No acceptance lane may use a workspace binary, `cargo run`, or a local
+rebuild as the binary under test.
 
 If any exact-tag gate fails:
 
@@ -342,21 +383,20 @@ If any exact-tag gate fails:
 
 ## Phase 5 — Publish
 
-Only after the exact tag workflow, all staged-artifact lanes, and the terminal
-`Release Candidate Ready` aggregate are green, publish the crate from a detached
-checkout of that same immutable tag:
+Only after all staged-artifact lanes and `Release Candidate Ready` are green,
+publish the crate from a detached checkout of that same immutable tag:
 
 ```bash
 git fetch origin --prune --tags
-git checkout --detach vX.Y.Z
+git switch --detach vX.Y.Z
 test "$(git rev-parse HEAD)" = "$(git rev-list -n 1 vX.Y.Z)"
 
 cargo publish -p shiplog --locked
 gh release edit vX.Y.Z --draft=false --latest
 ```
 
-Do not publish from a moving `main`, an unmerged release-prep branch, or a local
-rebuild that is not the exact tag exercised by the source Release workflow.
+Do not publish from a moving `main`, an unmerged branch, or a local rebuild that
+is not the exact tag exercised by the source Release workflow.
 
 Verify public state:
 
@@ -365,22 +405,22 @@ Verify public state:
 - the GitHub release is public, non-prerelease unless explicitly intended, and
   marked latest when appropriate;
 - all four binaries and `SHA256SUMS.txt` are present;
-- downloaded binaries report the expected `shiplog X.Y.Z` version;
+- downloaded binaries report `shiplog X.Y.Z`;
 - versionless installer paths resolve the public assets; and
 - Homebrew and Scoop updates use the final public asset hashes and pass native
   package validation.
 
-Signing, notarization, SmartScreen reputation, or other platform-trust proof is
-claimed only when the corresponding release lane actually exists and passed.
-Checksums alone are not a signing claim.
+Claim signing, notarization, SmartScreen reputation, or other platform-trust
+proof only when the corresponding lane exists and passed. Checksums alone are
+not a signing claim.
 
-## Phase 6 — Close out the release
+## Phase 6 — Record observed release evidence on swarm
 
-Finalize the versioned readiness ledger and execution handoff with observed
-identities:
+After public verification, complete the versioned readiness ledger and handoff
+on a focused swarm release-closeout PR. Replace placeholders with observed:
 
-- exact tag and source commit;
-- source Release workflow run;
+- exact promoted swarm and source commits;
+- exact tag and source Release workflow run;
 - staged candidate manifest and artifact digests;
 - successful platform jobs and terminal candidate-ready aggregate;
 - public crates.io version;
@@ -390,20 +430,24 @@ identities:
 - known limitations and deferred work; and
 - rollback/yank decision, if any.
 
-Set the release decision and readiness status to shipped only after public-state
-verification. Keep a new `[Unreleased]` section open for subsequent work.
+Set the release decision/readiness status to shipped only after public-state
+verification. The new `[Unreleased]` section was already opened during candidate
+freeze and remains ready for subsequent work.
 
-Any release-execution documentation or workflow adjustment committed directly
-to source must be ported back to swarm before normal promotion resumes. A
-source-only release-governance exception does not authorize permanent source
-product or shared-documentation drift.
+Merge and prove this closeout on swarm. Promote it to source as a coherent
+release-evidence checkpoint, either immediately when public documentation must
+be current or with the next substantive promotion batch. Do not edit the shared
+handoff only on source and leave swarm unaware of the public result.
+
+Any source-only release-workflow or execution change must also be reconciled
+back into the swarm verification projection before normal promotion resumes.
 
 ## Abort and rollback rules
 
 ### Before the tag
 
-Fix the candidate in swarm, rerun proof, and promote again. Source release prep
-may be abandoned or rebuilt from the new source main.
+Fix the candidate in swarm, rerun proof, and promote again. Abandon or rebuild
+any narrow source-owned execution PR from the new source main.
 
 ### After the tag but before crates.io publication
 
@@ -419,20 +463,23 @@ record the reason in the release handoff.
 ### Incorrect source promotion
 
 Revert the regular merge commit in source and pause release work until the
-source/swarm divergence is understood. Never rewrite `shiplog/main` history.
+divergence is understood. Never rewrite `shiplog/main` history.
 
 ## Copyable release checklist
 
-### Candidate on swarm
+### Shared candidate on swarm
 
 - [ ] Release version and user-facing theme are decided.
 - [ ] Included and deferred scope is explicit.
-- [ ] `[Unreleased]` is curated from merged behavior.
 - [ ] README, guides, config docs, support tiers, and examples are current.
+- [ ] Workspace/package version and `Cargo.lock` are aligned.
+- [ ] Changelog `X.Y.Z` section is frozen and a new `[Unreleased]` exists.
+- [ ] Release decision, readiness ledger, and handoff skeleton are prepared.
 - [ ] Open PRs/issues are included, deferred, closed, or blocking explicitly.
 - [ ] `cargo xtask ci-small` passes.
 - [ ] Policy, docs, goals, support-tier, workflow, file-policy, and authority
       checks pass.
+- [ ] Package version/boundary audits, package proof, and publish dry-run pass.
 - [ ] `promotion-state --check` and `repo-contract-report` pass.
 - [ ] Exact swarm `Shiplog Rust Small Result` is green.
 
@@ -440,7 +487,7 @@ source/swarm divergence is understood. Never rewrite `shiplog/main` history.
 
 - [ ] Two current-head dry-runs are byte-identical.
 - [ ] Exact source/swarm/merge-base and required CI evidence are correct.
-- [ ] Included PR receipts are complete.
+- [ ] Included swarm PR receipts are complete.
 - [ ] Every path decision has exact entries and a current basis.
 - [ ] Real `cargo xtask promote` creates or reuses one compatible source PR.
 - [ ] Source promotion PR exact-head CI is green.
@@ -448,40 +495,39 @@ source/swarm divergence is understood. Never rewrite `shiplog/main` history.
 - [ ] `--verify-only` and source post-merge `repo-contract-report` pass.
 - [ ] Promotion manifest/current view and consumptive decisions are closed out.
 
-### Source release-prep PR
+### Source execution preflight
 
-- [ ] Version and lockfile package versions are aligned.
-- [ ] Changelog version/date is frozen and a new `[Unreleased]` exists.
-- [ ] Release decision, readiness ledger, and handoff are prepared.
-- [ ] Version-specific README/install/release-note text matches the candidate;
-      substantive shared docs already landed through swarm.
+- [ ] Source shared candidate state exactly matches the promoted swarm candidate.
+- [ ] No shared product/version/changelog/docs correction is being made on source.
+- [ ] Any source PR is limited to source-owned release execution/governance.
 - [ ] Source-role automation and release authority remain correct.
-- [ ] Package version/boundary audits pass.
-- [ ] Package proof and allowlisted publish dry-run pass.
+- [ ] Package version/boundary audits, package proof, and publish dry-run pass.
 - [ ] Release-hold guard passes for the exact tag.
-- [ ] Source PR and post-merge required checks are green.
+- [ ] Source PR and post-merge required checks are green when applicable.
 
 ### Tag and staged candidates
 
-- [ ] Annotated semver tag points at exact merged source main.
+- [ ] Annotated semver tag points at the exact proven source commit.
 - [ ] Tag has not been moved or reused.
 - [ ] Source Release workflow targets the exact tag SHA.
 - [ ] Four platform builds pass.
-- [ ] One staged candidate manifest binds the exact tag, assets, and digests.
+- [ ] One staged candidate manifest binds the tag, source commit, assets, and
+      digests.
 - [ ] Checksums and any draft release assets are complete.
-- [ ] Release validation passes against the staged set.
+- [ ] Release validation consumes the staged set and passes.
 - [ ] Four-platform first-use acceptance consumes the same staged set and passes.
+- [ ] Deliberate checksum and executable/first-use failures remain red.
 - [ ] Release-mode integration tests pass.
 - [ ] Terminal `Release Candidate Ready` is green.
 
 ### Publication and closeout
 
-- [ ] crates.io publication ran from a detached checkout of the exact release
-      tag and public metadata is verified.
-- [ ] GitHub release is made public only after exact-tag candidate proof.
+- [ ] crates.io publication ran from a detached checkout of the exact tag.
+- [ ] GitHub release became public only after exact-tag candidate proof.
 - [ ] Public assets, checksums, installers, and `--version` are verified.
-- [ ] Homebrew and Scoop updates use final public hashes and pass validation.
-- [ ] Versioned readiness and handoff record observed run IDs and public state.
+- [ ] Homebrew and Scoop use final public hashes and pass native validation.
+- [ ] Swarm readiness/handoff records observed run IDs and public state.
 - [ ] Deferred work and limitations are explicit.
-- [ ] Source-only release docs/workflow changes are ported back to swarm.
+- [ ] Source-only execution/workflow changes are reconciled back to swarm.
+- [ ] Observed release evidence is promoted to source on a coherent checkpoint.
 - [ ] New `[Unreleased]` work can proceed without unresolved release drift.
