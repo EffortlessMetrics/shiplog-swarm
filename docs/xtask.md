@@ -145,7 +145,9 @@ alignment, recognizes only exact, current entries in `source-only-paths.toml`
 as approved governance, and keeps unknown or product paths fail-closed as
 drift. This lets a later approved source governance commit coexist with the
 latest `promote/swarm-*` merge without hiding product changes. The local
-checkout section reports clean/dirty status and any local
+checkout section reports clean/dirty status, preserves visible entries for the
+known protected workspace roots `.claude/` and `target-audit/`, and only treats
+tracked changes or unknown untracked paths as blocking. It also reports any local
 branches already merged into source or swarm so agents can clean up their own
 merged branches deliberately. Its review commands check both GitHub repos for
 matching PR heads before showing recent branch commits. The branch hygiene
