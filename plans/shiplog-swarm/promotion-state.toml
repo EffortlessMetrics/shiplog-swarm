@@ -929,13 +929,14 @@ reason = "The unchanged report sibling remains authorized by the reviewed #371 e
 source_tree_entry = { mode = "100644", object_type = "blob", oid = "fab37f26423e06a97326b521706c7067432a571f" }
 swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "27f8fdad6c7c65ca84435fc05c870bfdd58cc2ba" }
 
-# PR #381 changed seven paths already covered by exact source-682 evidence.
+# PR #381 changed six paths already covered by exact source-682 evidence.
 # Bind the new current entries to the reviewed merged PR and consume only the
 # stale active siblings named above. This is a bounded decision, not a new
 # permanent source or swarm authority grant.
 [[transition]]
 source_pr = "EffortlessMetrics/shiplog#682"
 source_merge_sha = "2f69daf921d74fb9472584c2a0df31857cfa2384"
+consumed_by = "EffortlessMetrics/shiplog-swarm#384"
 source_target = "175e8c8cee8110c4cf4a42d5534f5dffe45bf426"
 swarm_target = "1aee99e52e47f851269336c19eee400e3de44d1a"
 
@@ -996,6 +997,74 @@ resolution = "discard_source"
 decision_receipt = "EffortlessMetrics/shiplog-swarm#381"
 decision_merge_sha = "1aee99e52e47f851269336c19eee400e3de44d1a"
 reason = "The reviewed #381 body renderer preserves complete current included-PR receipts and warns on subject-only inference; this decision is consumptive and does not grant permanent swarm authority."
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "ca9b020eb9ecc5f7b423de02120b6a99fbbbe21e" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "52a70a45f050acf06523ad89bf3077dae997b356" }
+
+# PR #384 keeps the five unchanged #381 siblings at their original exact
+# target and rebinds only the generated view to the post-#383 target.
+[[transition]]
+source_pr = "EffortlessMetrics/shiplog#682"
+source_merge_sha = "2f69daf921d74fb9472584c2a0df31857cfa2384"
+source_target = "175e8c8cee8110c4cf4a42d5534f5dffe45bf426"
+swarm_target = "5c12405e3fd239aea4cdd71e03bcf52662fc7a4a"
+
+[[transition.path]]
+path = "docs/status/SUPPORT_TIERS.md"
+disposition = "missing_in_swarm"
+resolution = "discard_source"
+decision_receipt = "EffortlessMetrics/shiplog-swarm#381"
+decision_merge_sha = "1aee99e52e47f851269336c19eee400e3de44d1a"
+reason = "The reviewed #381 receipt remains the bounded promotion choice; #384 only rebinds the generated-view sibling to the later exact target."
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "301913b6034d03b6fce6b1adb4ad48b22a89bac7" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "c7e1b268939dd10a1cc768418441f5f40532ea9c" }
+
+[[transition.path]]
+path = "docs/xtask.md"
+disposition = "missing_in_swarm"
+resolution = "discard_source"
+decision_receipt = "EffortlessMetrics/shiplog-swarm#381"
+decision_merge_sha = "1aee99e52e47f851269336c19eee400e3de44d1a"
+reason = "The reviewed #381 receipt remains the bounded promotion choice; #384 only rebinds the generated-view sibling to the later exact target."
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "6fcb4394cfaa1323a355cb627c100fd429bed27c" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "1bed54266bc9605da03ba1737b3dbc69d434ab18" }
+
+[[transition.path]]
+path = "plans/shiplog-swarm/current-promotion.md"
+disposition = "missing_in_swarm"
+resolution = "discard_source"
+decision_receipt = "EffortlessMetrics/shiplog-swarm#381"
+decision_merge_sha = "1aee99e52e47f851269336c19eee400e3de44d1a"
+reason = "The #383 merge refreshed the generated current promotion view; #384 binds that exact post-merge entry without granting permanent swarm authority."
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "2cf46f2668123bb939bd5c92beb02f8e375a5664" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "481ce9db1942c7a363e5cf2988c7e72d934e2512" }
+
+[[transition.path]]
+path = "xtask/src/tasks/promote.rs"
+disposition = "missing_in_swarm"
+resolution = "discard_source"
+decision_receipt = "EffortlessMetrics/shiplog-swarm#381"
+decision_merge_sha = "1aee99e52e47f851269336c19eee400e3de44d1a"
+reason = "The reviewed #381 receipt remains the bounded promotion choice; #384 only rebinds the generated-view sibling to the later exact target."
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "3d58577fa9e518b76d22c266b8c861f6dca36335" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "c2ab66ddf521d6f2d83aa1ad3290442dca73d8b8" }
+
+[[transition.path]]
+path = "xtask/src/cli.rs"
+disposition = "missing_in_swarm"
+resolution = "discard_source"
+decision_receipt = "EffortlessMetrics/shiplog-swarm#381"
+decision_merge_sha = "1aee99e52e47f851269336c19eee400e3de44d1a"
+reason = "The reviewed #381 receipt remains the bounded promotion choice; #384 only rebinds the generated-view sibling to the later exact target."
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "9eef06e823d210c51c5190fd8fe52475983d0d45" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "0e10f34fa8ea89a8a3f3f758dea82473774e2c14" }
+
+[[transition.path]]
+path = "xtask/src/tasks/promotion_body.rs"
+disposition = "missing_in_swarm"
+resolution = "discard_source"
+decision_receipt = "EffortlessMetrics/shiplog-swarm#381"
+decision_merge_sha = "1aee99e52e47f851269336c19eee400e3de44d1a"
+reason = "The reviewed #381 receipt remains the bounded promotion choice; #384 only rebinds the generated-view sibling to the later exact target."
 source_tree_entry = { mode = "100644", object_type = "blob", oid = "ca9b020eb9ecc5f7b423de02120b6a99fbbbe21e" }
 swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "52a70a45f050acf06523ad89bf3077dae997b356" }
 
