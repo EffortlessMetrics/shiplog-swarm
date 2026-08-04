@@ -6,6 +6,12 @@ use std::process::{Command, Output};
 use tempfile::TempDir;
 
 const SOURCE_SHA: &str = "1111111111111111111111111111111111111111";
+const RELEASE_ASSETS: [&str; 4] = [
+    "shiplog-x86_64-unknown-linux-gnu/shiplog-x86_64-unknown-linux-gnu",
+    "shiplog-x86_64-apple-darwin/shiplog-x86_64-apple-darwin",
+    "shiplog-aarch64-apple-darwin/shiplog-aarch64-apple-darwin",
+    "shiplog-x86_64-pc-windows-msvc/shiplog-x86_64-pc-windows-msvc.exe",
+];
 
 struct CandidateFixture {
     _root: TempDir,
@@ -19,24 +25,12 @@ fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
-fn release_asset() -> Result<(&'static str, &'static str)> {
+fn current_release_asset() -> Result<&'static str> {
     match (std::env::consts::OS, std::env::consts::ARCH) {
-        ("linux", "x86_64") => Ok((
-            "shiplog-x86_64-unknown-linux-gnu",
-            "shiplog-x86_64-unknown-linux-gnu/shiplog-x86_64-unknown-linux-gnu",
-        )),
-        ("macos", "x86_64") => Ok((
-            "shiplog-x86_64-apple-darwin",
-            "shiplog-x86_64-apple-darwin/shiplog-x86_64-apple-darwin",
-        )),
-        ("macos", "aarch64") => Ok((
-            "shiplog-aarch64-apple-darwin",
-            "shiplog-aarch64-apple-darwin/shiplog-aarch64-apple-darwin",
-        )),
-        ("windows", "x86_64") => Ok((
-            "shiplog-x86_64-pc-windows-msvc.exe",
-            "shiplog-x86_64-pc-windows-msvc/shiplog-x86_64-pc-windows-msvc.exe",
-        )),
+        ("linux", "x86_64") => Ok(RELEASE_ASSETS[0]),
+        ("macos", "x86_64") => Ok(RELEASE_ASSETS[1]),
+        ("macos", "aarch64") => Ok(RELEASE_ASSETS[2]),
+        ("windows", "x86_64") => Ok(RELEASE_ASSETS[3]),
         (os, arch) => bail!("unsupported release candidate test platform: {os}/{arch}"),
     }
 }
@@ -48,15 +42,13 @@ fn sha256(path: &Path) -> Result<String> {
 
 fn write_candidate_metadata(fixture: &CandidateFixture) -> Result<()> {
     let sums_path = fixture.candidate_dir.join("SHA256SUMS.txt");
-    fs::write(
-        &sums_path,
-        format!(
-            "{}  {}\n",
-            sha256(&fixture.asset_path)?,
-            fixture.asset_relative
-        ),
-    )
-    .with_context(|| format!("write {}", sums_path.display()))?;
+    let mut sums = String::new();
+    for relative in RELEASE_ASSETS {
+        let path = fixture.candidate_dir.join(relative);
+        sums.push_str(&format!("{}  {relative}\n", sha256(&path)?));
+    }
+    fs::write(&sums_path, sums)
+        .with_context(|| format!("write {}", sums_path.display()))?;
 
     let manifest_path = fixture.candidate_dir.join("RELEASE_CANDIDATE.txt");
     fs::write(
@@ -85,19 +77,28 @@ fn candidate_fixture() -> Result<CandidateFixture> {
     let root = TempDir::new().context("create release candidate fixture")?;
     let candidate_dir = root.path().join("candidate");
     let smoke_dir = root.path().join("smoke");
-    let (_asset_name, asset_relative) = release_asset()?;
+    let asset_relative = current_release_asset()?;
     let asset_path = candidate_dir.join(asset_relative);
-    let parent = asset_path
-        .parent()
-        .context("candidate asset should have a parent")?;
-    fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
-    fs::copy(env!("CARGO_BIN_EXE_shiplog"), &asset_path).with_context(|| {
-        format!(
-            "copy test binary {} to {}",
-            env!("CARGO_BIN_EXE_shiplog"),
-            asset_path.display()
-        )
-    })?;
+
+    for relative in RELEASE_ASSETS {
+        let path = candidate_dir.join(relative);
+        let parent = path
+            .parent()
+            .context("candidate asset should have a parent")?;
+        fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+        if relative == asset_relative {
+            fs::copy(env!("CARGO_BIN_EXE_shiplog"), &path).with_context(|| {
+                format!(
+                    "copy test binary {} to {}",
+                    env!("CARGO_BIN_EXE_shiplog"),
+                    path.display()
+                )
+            })?;
+        } else {
+            fs::write(&path, format!("fixture placeholder for {relative}\n"))
+                .with_context(|| format!("write {}", path.display()))?;
+        }
+    }
 
     #[cfg(unix)]
     {
