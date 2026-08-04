@@ -5,11 +5,15 @@ usage() {
   cat >&2 <<'USAGE'
 usage: scripts/release-install-smoke.sh <version>
 
-Downloads the current-platform GitHub release binary, verifies SHA256SUMS.txt,
-proves the no-token first-use path and runs the no-network review rescue smoke
-path. This script is intended to work without Rust or Cargo installed.
+Verifies the current-platform Shiplog release candidate, proves the no-token
+first-use path, and runs the no-network review rescue smoke path. By default the
+script downloads public GitHub Release assets. During staged release proof,
+point it at the exact workflow candidate bundle instead.
 
-Set SHIPLOG_RELEASE_REPO=owner/repo to verify a fork.
+Set SHIPLOG_RELEASE_CANDIDATE_DIR=path to use a local staged candidate bundle.
+Set SHIPLOG_RELEASE_SOURCE_SHA=<full-sha> with candidate mode to bind the bundle
+to the exact tagged source commit.
+Set SHIPLOG_RELEASE_REPO=owner/repo to verify a public release or fork.
 Set SHIPLOG_RELEASE_SMOKE_DIR=path to override the scratch directory.
 USAGE
 }
@@ -26,6 +30,8 @@ fi
 version="${1#v}"
 tag="v$version"
 repo="${SHIPLOG_RELEASE_REPO:-EffortlessMetrics/shiplog}"
+candidate_dir="${SHIPLOG_RELEASE_CANDIDATE_DIR:-}"
+expected_source_sha="${SHIPLOG_RELEASE_SOURCE_SHA:-}"
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd -- "$script_dir/.." && pwd)"
@@ -77,18 +83,93 @@ sha256_file() {
   fi
 }
 
+find_unique_candidate_file() {
+  local root="$1"
+  local name="$2"
+  local matches count
+
+  matches="$(find "$root" -type f -name "$name" -print)"
+  count="$(printf '%s\n' "$matches" | sed '/^$/d' | wc -l | tr -d '[:space:]')"
+  if [[ "$count" != "1" ]]; then
+    echo "candidate bundle must contain exactly one $name; found $count under $root" >&2
+    exit 1
+  fi
+  printf '%s\n' "$matches"
+}
+
+validate_candidate_manifest() {
+  local manifest="$1"
+  local sums="$2"
+  local expected_sums_sha actual_sums_sha
+
+  if [[ "$expected_source_sha" == "" ]]; then
+    echo "SHIPLOG_RELEASE_SOURCE_SHA is required with SHIPLOG_RELEASE_CANDIDATE_DIR" >&2
+    exit 2
+  fi
+  if [[ ! "$expected_source_sha" =~ ^[0-9a-fA-F]{40}$ ]]; then
+    echo "SHIPLOG_RELEASE_SOURCE_SHA must be a full 40-character commit SHA" >&2
+    exit 2
+  fi
+
+  grep -Fxq "schema_version=1" "$manifest" || {
+    echo "candidate manifest has unsupported schema" >&2
+    exit 1
+  }
+  grep -Fxq "release_tag=$tag" "$manifest" || {
+    echo "candidate manifest is not bound to $tag" >&2
+    exit 1
+  }
+  grep -Fxq "source_sha=$expected_source_sha" "$manifest" || {
+    echo "candidate manifest is not bound to source commit $expected_source_sha" >&2
+    exit 1
+  }
+  grep -Fxq "asset_count=4" "$manifest" || {
+    echo "candidate manifest does not record the four supported binaries" >&2
+    exit 1
+  }
+
+  expected_sums_sha="$(sed -n 's/^checksum_manifest_sha256=//p' "$manifest")"
+  if [[ ! "$expected_sums_sha" =~ ^[0-9a-fA-F]{64}$ ]]; then
+    echo "candidate manifest has no valid checksum manifest digest" >&2
+    exit 1
+  fi
+  actual_sums_sha="$(sha256_file "$sums")"
+  if [[ "${actual_sums_sha,,}" != "${expected_sums_sha,,}" ]]; then
+    echo "candidate SHA256SUMS.txt digest mismatch" >&2
+    echo "expected: $expected_sums_sha" >&2
+    echo "actual:   $actual_sums_sha" >&2
+    exit 1
+  fi
+}
+
 asset="$(host_asset)"
-base_url="https://github.com/$repo/releases/download/$tag"
 binary_path="$download_dir/shiplog"
 if [[ "$asset" == *.exe ]]; then
   binary_path="$download_dir/shiplog.exe"
 fi
 
-echo "==> downloading $repo@$tag release asset for this platform"
 rm -rf "$work_dir"
 mkdir -p "$download_dir"
-download "$base_url/$asset" "$binary_path"
-download "$base_url/SHA256SUMS.txt" "$download_dir/SHA256SUMS.txt"
+
+if [[ "$candidate_dir" != "" ]]; then
+  candidate_dir="$(cd -- "$candidate_dir" && pwd)"
+  candidate_asset="$(find_unique_candidate_file "$candidate_dir" "$asset")"
+  candidate_sums="$(find_unique_candidate_file "$candidate_dir" SHA256SUMS.txt)"
+  candidate_manifest="$(find_unique_candidate_file "$candidate_dir" RELEASE_CANDIDATE.txt)"
+
+  echo "==> loading staged candidate $tag for this platform"
+  cp "$candidate_asset" "$binary_path"
+  cp "$candidate_sums" "$download_dir/SHA256SUMS.txt"
+  cp "$candidate_manifest" "$download_dir/RELEASE_CANDIDATE.txt"
+  validate_candidate_manifest \
+    "$download_dir/RELEASE_CANDIDATE.txt" \
+    "$download_dir/SHA256SUMS.txt"
+else
+  base_url="https://github.com/$repo/releases/download/$tag"
+  echo "==> downloading $repo@$tag release asset for this platform"
+  download "$base_url/$asset" "$binary_path"
+  download "$base_url/SHA256SUMS.txt" "$download_dir/SHA256SUMS.txt"
+fi
 
 echo "==> verifying SHA256SUMS.txt entry for $asset"
 expected_sha="$(
@@ -96,7 +177,7 @@ expected_sha="$(
     "$download_dir/SHA256SUMS.txt"
 )"
 actual_sha="$(sha256_file "$binary_path")"
-if [[ "$actual_sha" != "$expected_sha" ]]; then
+if [[ "${actual_sha,,}" != "${expected_sha,,}" ]]; then
   echo "checksum mismatch for $asset" >&2
   echo "expected: $expected_sha" >&2
   echo "actual:   $actual_sha" >&2
@@ -105,8 +186,15 @@ fi
 
 chmod +x "$binary_path" 2>/dev/null || true
 
-echo "==> smoking downloaded binary"
-"$binary_path" --version | grep -Fxq "shiplog $version"
+echo "==> smoking candidate binary"
+if ! version_output="$("$binary_path" --version)"; then
+  echo "candidate binary failed --version" >&2
+  exit 1
+fi
+if [[ "$version_output" != "shiplog $version" ]]; then
+  echo "unexpected version output: $version_output" >&2
+  exit 1
+fi
 "$binary_path" --help >/dev/null
 
 echo "==> proving the no-token first-use path"
@@ -149,9 +237,9 @@ for artifact in \
   fi
 done
 
-# Structurally validate the receipts, not merely their existence: the
-# published binary must parse its own intake.report.json/packet.md/ledger/
-# coverage/bundle receipts back into their canonical shapes.
+# Structurally validate the receipts, not merely their existence: the candidate
+# binary must parse its own intake.report.json/packet.md/ledger/coverage/bundle
+# receipts back into their canonical shapes.
 echo "==> structurally validating cold-start receipts"
 "$binary_path" report validate --path "$latest_run/intake.report.json" --receipts
 
@@ -171,4 +259,8 @@ if ! find "$demo_out" -name packet.md -type f -print -quit | grep -q .; then
   exit 1
 fi
 
-echo "release install smoke passed for $repo@$tag"
+if [[ "$candidate_dir" != "" ]]; then
+  echo "staged release candidate smoke passed for $tag at $expected_source_sha"
+else
+  echo "release install smoke passed for $repo@$tag"
+fi
