@@ -1211,16 +1211,6 @@ source_tree_entry = { mode = "100644", object_type = "blob", oid = "fab37f26423e
 swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "5fe36aed687f9cf65babb3c8559de17a0ab54ec1" }
 
 [[transition.path]]
-path = "plans/shiplog-swarm/current-promotion.md"
-disposition = "missing_in_swarm"
-resolution = "discard_source"
-decision_receipt = "EffortlessMetrics/shiplog-swarm#381"
-decision_merge_sha = "1aee99e52e47f851269336c19eee400e3de44d1a"
-reason = "The generated current-promotion view remains the reviewed #381 bounded swarm result for this path."
-source_tree_entry = { mode = "100644", object_type = "blob", oid = "2cf46f2668123bb939bd5c92beb02f8e375a5664" }
-swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "481ce9db1942c7a363e5cf2988c7e72d934e2512" }
-
-[[transition.path]]
 path = "xtask/src/tasks/promote.rs"
 disposition = "missing_in_swarm"
 resolution = "discard_source"
@@ -1270,3 +1260,22 @@ decision_merge_sha = "f99dcbd1ec331c9665b16748b2493bc0a4f0c25f"
 reason = "The reviewed #393 manifest is the exact bounded promotion ledger; this self-referential binding records its source entry and the pre-#393 swarm result while allowing later manifest materialization."
 source_tree_entry = { mode = "100644", object_type = "blob", oid = "bf3cbaa556a3b3249f952742bb2c6b28847f3876" }
 swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "fcd885aacf2233fd38625ff9051c038b500a6f4f" }
+
+# PR #394 materialized the reconciled manifest and regenerated the current
+# promotion view. Bind that generated result to the exact post-#394 swarm
+# target before the next source promotion.
+[[transition]]
+source_pr = "EffortlessMetrics/shiplog#682"
+source_merge_sha = "2f69daf921d74fb9472584c2a0df31857cfa2384"
+source_target = "175e8c8cee8110c4cf4a42d5534f5dffe45bf426"
+swarm_target = "9d38e58a885d214301bb494315882657e5e506de"
+
+[[transition.path]]
+path = "plans/shiplog-swarm/current-promotion.md"
+disposition = "missing_in_swarm"
+resolution = "discard_source"
+decision_receipt = "EffortlessMetrics/shiplog-swarm#394"
+decision_merge_sha = "9d38e58a885d214301bb494315882657e5e506de"
+reason = "PR #394 materialized the reconciled promotion ledger and regenerated this current view; this exact binding consumes the post-#394 result without granting permanent swarm authority."
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "2cf46f2668123bb939bd5c92beb02f8e375a5664" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "afc811f082821bc353e0494e49d7c75e41c48ef0" }
