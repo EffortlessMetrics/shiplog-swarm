@@ -565,6 +565,7 @@ swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "583b32574ca60
 [[transition]]
 source_pr = "EffortlessMetrics/shiplog#682"
 source_merge_sha = "2f69daf921d74fb9472584c2a0df31857cfa2384"
+consumed_by = "EffortlessMetrics/shiplog-swarm#368"
 source_target = "175e8c8cee8110c4cf4a42d5534f5dffe45bf426"
 swarm_target = "2570bf7862a36ab0e005037215261308faac741a"
 
@@ -716,3 +717,22 @@ decision_merge_sha = "c1aae92a2ad7ee35738de5bf6a990fc0477e5191"
 reason = "The swarm source-of-truth report resolves repository ruleset detail and does not misclassify source main."
 source_tree_entry = { mode = "100644", object_type = "blob", oid = "fab37f26423e06a97326b521706c7067432a571f" }
 swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "d51899107d0a34957bd7ddcc9d35c877fe301f14" }
+
+# PR #368 updated the transition ledger after the older #359 binding. Keep the
+# older target historical and bind the changed ledger path to the merged #368
+# target before it can authorize the next promotion.
+[[transition]]
+source_pr = "EffortlessMetrics/shiplog#682"
+source_merge_sha = "2f69daf921d74fb9472584c2a0df31857cfa2384"
+source_target = "175e8c8cee8110c4cf4a42d5534f5dffe45bf426"
+swarm_target = "7fd206266bc89210032c30746adcb5d0a99d8c79"
+
+[[transition.path]]
+path = "plans/shiplog-swarm/transition-decisions.md"
+disposition = "missing_in_swarm"
+resolution = "discard_source"
+decision_receipt = "EffortlessMetrics/shiplog-swarm#368"
+decision_merge_sha = "7fd206266bc89210032c30746adcb5d0a99d8c79"
+reason = "The merged #368 ledger records the current exact-target ruleset repair and must supersede the older transition copy for this bounded promotion."
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "bbe7516331ab7e132aea0026049d61cb1040accd" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "eb000798936d38200a8cda1909920ce62099e3f4" }
