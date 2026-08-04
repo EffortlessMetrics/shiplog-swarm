@@ -64,8 +64,11 @@ function Find-UniqueCandidateFile {
     )
 
     $matches = @(
-        Get-ChildItem -LiteralPath $Root -Recurse -File |
-            Where-Object { $_.Name -eq $Name }
+        Get-ChildItem -LiteralPath $Root -Recurse -File -Force |
+            Where-Object {
+                $_.Name -eq $Name -and
+                -not ($_.Attributes -band [System.IO.FileAttributes]::ReparsePoint)
+            }
     )
     if ($matches.Count -ne 1) {
         throw "candidate bundle must contain exactly one $Name; found $($matches.Count) under $Root"
@@ -95,18 +98,44 @@ function Assert-CandidateManifest {
         throw "SHIPLOG_RELEASE_SOURCE_SHA must be a full 40-character commit SHA"
     }
 
+    $allowedKeys = @(
+        'schema_version',
+        'release_tag',
+        'source_sha',
+        'repository',
+        'workflow_run_id',
+        'workflow_run_attempt',
+        'asset_count',
+        'checksum_manifest_sha256'
+    )
     $entries = @{}
     foreach ($line in Get-Content -LiteralPath $ManifestPath) {
         if ([string]::IsNullOrWhiteSpace($line)) {
             continue
         }
-        $parts = $line -split '=', 2
-        if ($parts.Count -ne 2 -or $entries.ContainsKey($parts[0])) {
-            throw "malformed or duplicated candidate manifest field: $line"
+        if ($line -match '[\x00-\x1F\x7F]') {
+            throw "candidate manifest contains a control character"
         }
-        $entries[$parts[0]] = $parts[1]
+        $parts = $line -split '=', 2
+        if ($parts.Count -ne 2 -or
+            [string]::IsNullOrEmpty($parts[0]) -or
+            [string]::IsNullOrEmpty($parts[1])) {
+            throw "malformed candidate manifest field"
+        }
+        $key = $parts[0]
+        $value = $parts[1]
+        if ($key -notin $allowedKeys) {
+            throw "unknown candidate manifest field: $key"
+        }
+        if ($entries.ContainsKey($key)) {
+            throw "duplicate candidate manifest field: $key"
+        }
+        $entries[$key] = $value
     }
 
+    if ($entries.Count -ne $allowedKeys.Count) {
+        throw "candidate manifest is missing required fields"
+    }
     if ($entries['schema_version'] -ne '1') {
         throw "candidate manifest has unsupported schema"
     }
@@ -115,6 +144,13 @@ function Assert-CandidateManifest {
     }
     if ($entries['source_sha'] -ne $ExpectedSourceSha) {
         throw "candidate manifest is not bound to source commit $ExpectedSourceSha"
+    }
+    if ($entries['repository'] -notmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$') {
+        throw "candidate manifest has an invalid repository identity"
+    }
+    if ($entries['workflow_run_id'] -notmatch '^[0-9]+$' -or
+        $entries['workflow_run_attempt'] -notmatch '^[0-9]+$') {
+        throw "candidate manifest has an invalid workflow run identity"
     }
     if ($entries['asset_count'] -ne '4') {
         throw "candidate manifest does not record the four supported binaries"
@@ -186,7 +222,7 @@ if ($candidateDir) {
     if (-not $expectedSourceSha) {
         throw "SHIPLOG_RELEASE_SOURCE_SHA is required with SHIPLOG_RELEASE_CANDIDATE_DIR"
     }
-    $candidateRoot = (Resolve-Path -LiteralPath $candidateDir).Path
+    $candidateRoot = (Resolve-Path -LiteralPath $candidateDir).ProviderPath
     $candidateAsset = Find-UniqueCandidateFile -Root $candidateRoot -Name $asset
     $candidateSums = Find-UniqueCandidateFile -Root $candidateRoot -Name "SHA256SUMS.txt"
     $candidateManifest = Find-UniqueCandidateFile -Root $candidateRoot -Name "RELEASE_CANDIDATE.txt"
@@ -224,9 +260,13 @@ if ($actualSha -ne $expectedSha) {
 }
 
 Invoke-Step "smoking candidate binary"
-$versionOutput = & $binaryPath --version
-if ($LASTEXITCODE -ne 0 -or $versionOutput.Trim() -ne "shiplog $versionNumber") {
-    throw "unexpected version output: $versionOutput"
+$versionOutput = @(& $binaryPath --version)
+if ($LASTEXITCODE -ne 0) {
+    throw "candidate binary failed --version"
+}
+$versionText = ($versionOutput -join [Environment]::NewLine).Trim()
+if ($versionText -ne "shiplog $versionNumber") {
+    throw "unexpected version output: $versionText"
 }
 Invoke-Shiplog $binaryPath @("--help") | Out-Null
 
@@ -318,9 +358,7 @@ if (-not (Get-ChildItem -Path $demoOut -Recurse -Filter "packet.md" | Select-Obj
     throw "no packet.md produced under $demoOut"
 }
 
+Write-Host "release install smoke passed for $repo@$tag"
 if ($candidateDir) {
     Write-Host "staged release candidate smoke passed for $tag at $expectedSourceSha"
-}
-else {
-    Write-Host "release install smoke passed for $repo@$tag"
 }
