@@ -122,6 +122,7 @@ swarm_pr_range = [
   "EffortlessMetrics/shiplog-swarm#375",
   "EffortlessMetrics/shiplog-swarm#377",
   "EffortlessMetrics/shiplog-swarm#379",
+  "EffortlessMetrics/shiplog-swarm#381",
 ]
 # Receipts explicitly deferred to a later substantive carry-forward. A
 # receipt listed here is treated as pending-substantive-carry, not stale.
@@ -701,6 +702,7 @@ swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "8a6c5b9774575
 [[transition]]
 source_pr = "EffortlessMetrics/shiplog#682"
 source_merge_sha = "2f69daf921d74fb9472584c2a0df31857cfa2384"
+consumed_by = "EffortlessMetrics/shiplog-swarm#382"
 source_target = "175e8c8cee8110c4cf4a42d5534f5dffe45bf426"
 swarm_target = "c1aae92a2ad7ee35738de5bf6a990fc0477e5191"
 
@@ -788,6 +790,7 @@ swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "eb000798936d3
 [[transition]]
 source_pr = "EffortlessMetrics/shiplog#682"
 source_merge_sha = "2f69daf921d74fb9472584c2a0df31857cfa2384"
+consumed_by = "EffortlessMetrics/shiplog-swarm#382"
 source_target = "175e8c8cee8110c4cf4a42d5534f5dffe45bf426"
 swarm_target = "16fcbd5941bddf86afab4370b03f3bda05d01413"
 
@@ -816,6 +819,7 @@ swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "27f8fdad6c7c6
 [[transition]]
 source_pr = "EffortlessMetrics/shiplog#682"
 source_merge_sha = "2f69daf921d74fb9472584c2a0df31857cfa2384"
+consumed_by = "EffortlessMetrics/shiplog-swarm#382"
 source_target = "175e8c8cee8110c4cf4a42d5534f5dffe45bf426"
 swarm_target = "c435bdb4ada5cc2f08c26eec7e924e14caeee522"
 
@@ -888,3 +892,128 @@ decision_merge_sha = "355d4b66eed87eb20bd932da1b00028b75d63776"
 reason = "The reviewed hosted-runner repair in #375 is the bounded promotion choice for the broad property workflow; this decision is consumptive and does not grant permanent swarm authority."
 source_tree_entry = { mode = "100644", object_type = "blob", oid = "ed8f93fed515e74b3ba3e5fb7a91f3f8efeaeaae" }
 swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "b5a6bbf7634f0cdf0eb5c80353ae45d20dd333cf" }
+
+# PR #382 consumes only the changed paths from the older #366 binding. Keep
+# the unchanged runbook sibling active at its original exact target.
+[[transition]]
+source_pr = "EffortlessMetrics/shiplog#682"
+source_merge_sha = "2f69daf921d74fb9472584c2a0df31857cfa2384"
+source_target = "175e8c8cee8110c4cf4a42d5534f5dffe45bf426"
+swarm_target = "c1aae92a2ad7ee35738de5bf6a990fc0477e5191"
+
+[[transition.path]]
+path = "plans/shiplog-swarm/promotion-runbook.md"
+disposition = "missing_in_swarm"
+resolution = "discard_source"
+decision_receipt = "EffortlessMetrics/shiplog-swarm#366"
+decision_merge_sha = "c1aae92a2ad7ee35738de5bf6a990fc0477e5191"
+reason = "The unchanged runbook sibling remains authorized by the reviewed #366 exact target while the changed #381 paths use the newer consumptive decision."
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "126d86717c1e6c74602b979fc628b81bcf011054" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "c20a2c67ce8eb89c21f58971854713d5f2d3e115" }
+
+# PR #382 also splits the unchanged report sibling from the consumed #371
+# current-promotion binding.
+[[transition]]
+source_pr = "EffortlessMetrics/shiplog#682"
+source_merge_sha = "2f69daf921d74fb9472584c2a0df31857cfa2384"
+source_target = "175e8c8cee8110c4cf4a42d5534f5dffe45bf426"
+swarm_target = "16fcbd5941bddf86afab4370b03f3bda05d01413"
+
+[[transition.path]]
+path = "xtask/src/tasks/repo_contract_report.rs"
+disposition = "missing_in_swarm"
+resolution = "discard_source"
+decision_receipt = "EffortlessMetrics/shiplog-swarm#371"
+decision_merge_sha = "16fcbd5941bddf86afab4370b03f3bda05d01413"
+reason = "The unchanged report sibling remains authorized by the reviewed #371 exact target while the changed #381 paths use the newer consumptive decision."
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "fab37f26423e06a97326b521706c7067432a571f" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "27f8fdad6c7c65ca84435fc05c870bfdd58cc2ba" }
+
+# PR #381 changed seven paths already covered by exact source-682 evidence.
+# Bind the new current entries to the reviewed merged PR and consume only the
+# stale active siblings named above. This is a bounded decision, not a new
+# permanent source or swarm authority grant.
+[[transition]]
+source_pr = "EffortlessMetrics/shiplog#682"
+source_merge_sha = "2f69daf921d74fb9472584c2a0df31857cfa2384"
+source_target = "175e8c8cee8110c4cf4a42d5534f5dffe45bf426"
+swarm_target = "1aee99e52e47f851269336c19eee400e3de44d1a"
+
+[[transition.path]]
+path = "docs/status/SUPPORT_TIERS.md"
+disposition = "missing_in_swarm"
+resolution = "discard_source"
+decision_receipt = "EffortlessMetrics/shiplog-swarm#381"
+decision_merge_sha = "1aee99e52e47f851269336c19eee400e3de44d1a"
+reason = "The reviewed #381 receipt carries the complete current promotion-body support claim; this decision is consumptive and does not grant permanent swarm authority."
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "301913b6034d03b6fce6b1adb4ad48b22a89bac7" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "c7e1b268939dd10a1cc768418441f5f40532ea9c" }
+
+[[transition.path]]
+path = "docs/xtask.md"
+disposition = "missing_in_swarm"
+resolution = "discard_source"
+decision_receipt = "EffortlessMetrics/shiplog-swarm#381"
+decision_merge_sha = "1aee99e52e47f851269336c19eee400e3de44d1a"
+reason = "The reviewed #381 receipt documents the manifest-backed included-PR handoff and explicit inference warning; this decision is consumptive and does not grant permanent swarm authority."
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "6fcb4394cfaa1323a355cb627c100fd429bed27c" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "1bed54266bc9605da03ba1737b3dbc69d434ab18" }
+
+[[transition.path]]
+path = "plans/shiplog-swarm/current-promotion.md"
+disposition = "missing_in_swarm"
+resolution = "discard_source"
+decision_receipt = "EffortlessMetrics/shiplog-swarm#381"
+decision_merge_sha = "1aee99e52e47f851269336c19eee400e3de44d1a"
+reason = "The reviewed #381 receipt refreshes the generated current promotion view through the complete pending range; this decision is consumptive and does not grant permanent swarm authority."
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "2cf46f2668123bb939bd5c92beb02f8e375a5664" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "c76855c72a3069445ba7d4e31b8acc073178ae1c" }
+
+[[transition.path]]
+path = "xtask/src/tasks/promote.rs"
+disposition = "missing_in_swarm"
+resolution = "discard_source"
+decision_receipt = "EffortlessMetrics/shiplog-swarm#381"
+decision_merge_sha = "1aee99e52e47f851269336c19eee400e3de44d1a"
+reason = "The reviewed #381 planner receipt uses the bounded manifest receipt list for current-head promotion; this decision is consumptive and does not grant permanent swarm authority."
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "3d58577fa9e518b76d22c266b8c861f6dca36335" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "c2ab66ddf521d6f2d83aa1ad3290442dca73d8b8" }
+
+[[transition.path]]
+path = "xtask/src/cli.rs"
+disposition = "missing_in_swarm"
+resolution = "discard_source"
+decision_receipt = "EffortlessMetrics/shiplog-swarm#381"
+decision_merge_sha = "1aee99e52e47f851269336c19eee400e3de44d1a"
+reason = "The reviewed #381 CLI path loads current manifest receipts for the default promotion-body command; this decision is consumptive and does not grant permanent swarm authority."
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "9eef06e823d210c51c5190fd8fe52475983d0d45" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "0e10f34fa8ea89a8a3f3f758dea82473774e2c14" }
+
+[[transition.path]]
+path = "xtask/src/tasks/promotion_body.rs"
+disposition = "missing_in_swarm"
+resolution = "discard_source"
+decision_receipt = "EffortlessMetrics/shiplog-swarm#381"
+decision_merge_sha = "1aee99e52e47f851269336c19eee400e3de44d1a"
+reason = "The reviewed #381 body renderer preserves complete current included-PR receipts and warns on subject-only inference; this decision is consumptive and does not grant permanent swarm authority."
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "ca9b020eb9ecc5f7b423de02120b6a99fbbbe21e" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "52a70a45f050acf06523ad89bf3077dae997b356" }
+
+# The promotion manifest is self-referential: its evidence target is the
+# parent of #381, while the current entry is materialized by that receipt.
+[[transition]]
+source_pr = "EffortlessMetrics/shiplog#682"
+source_merge_sha = "2f69daf921d74fb9472584c2a0df31857cfa2384"
+source_target = "175e8c8cee8110c4cf4a42d5534f5dffe45bf426"
+swarm_target = "04b26bad6c9037987278774056bbc901795b2172"
+
+[[transition.path]]
+path = "plans/shiplog-swarm/promotion-state.toml"
+disposition = "missing_in_swarm"
+resolution = "discard_source"
+self_referential = true
+decision_receipt = "EffortlessMetrics/shiplog-swarm#381"
+decision_merge_sha = "1aee99e52e47f851269336c19eee400e3de44d1a"
+reason = "The reviewed #381 manifest is the current bounded receipt ledger and must be rebound at its exact pre-receipt target before the next promotion."
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "bf3cbaa556a3b3249f952742bb2c6b28847f3876" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "62bc03691891e5849bdbef77ba42c15e924b75c4" }
