@@ -22,7 +22,7 @@ standing instructions.
 6. The release tag is immutable. Never force-move or reuse a failed release
    tag; fix the defect and cut the next patch version.
 7. crates.io publication and a public GitHub Release are irreversible public
-   boundaries. Keep the GitHub release as a draft until exact-tag proof passes.
+   boundaries. Keep the candidate non-current until exact-tag proof passes.
 8. A skipped or unavailable optional check is not claimed as executed proof.
 9. Release claims come from merged behavior and observed artifacts, not commit
    subjects, PR-body assertions, or historical command blocks.
@@ -236,7 +236,8 @@ Allowed release-specific changes include:
 - workspace/package version and lockfile package-version alignment;
 - freezing `[Unreleased]` into the new version/date and opening a fresh empty
   `[Unreleased]` section;
-- final README/install/usage text for the release;
+- final version-specific release links and publication text after substantive
+  shared README/install/usage changes have already landed through swarm;
 - the versioned release decision and readiness ledger;
 - the versioned execution handoff with pre-publication placeholders;
 - release-note and package-channel metadata; and
@@ -288,7 +289,7 @@ Confirm independently:
 Do not tag from an unmerged PR head. Merge the release-prep PR, then verify the
 exact resulting `shiplog/main` commit and its post-merge CI.
 
-## Phase 4 — Stage the exact tagged artifacts
+## Phase 4 — Stage the exact tagged candidates
 
 Tag only the exact merged source commit approved for release:
 
@@ -305,8 +306,12 @@ The tag push invokes the source `Release` workflow. A manual workflow dispatch
 is only for an existing explicit semver tag and requires the owner-approval
 input. It does not replace the tag or authorize an untagged build.
 
-The source workflow must keep the GitHub release as a draft while it proves the
-exact tag. Require successful completion of the applicable jobs:
+The workflow must keep the candidate non-current while it proves one immutable
+staged set. A draft GitHub release, retained workflow-artifact bundle, or other
+source-authorized equivalent may be used, but all later lanes must consume the
+same candidate manifest and artifact digests.
+
+Require successful completion of the applicable jobs:
 
 - `Release Preflight`;
 - package proof and allowlisted publish dry-run;
@@ -314,19 +319,22 @@ exact tag. Require successful completion of the applicable jobs:
 - macOS Intel binary build;
 - macOS Apple Silicon binary build;
 - Windows x86-64 binary build;
-- draft GitHub Release creation;
-- asset upload and `SHA256SUMS.txt` generation;
+- staged candidate manifest, checksums, and artifact digests;
+- draft GitHub Release creation and asset upload when that is the staging
+  mechanism;
 - release validation;
-- first-use acceptance on all four supported targets; and
-- release-mode integration tests.
+- first-use acceptance on all four supported targets;
+- release-mode integration tests; and
+- one terminal `Release Candidate Ready` aggregate depending on every required
+  candidate job above.
 
-Check that every job, artifact, and draft release points at the same immutable
-tag SHA. Do not substitute a local rebuild for a failed downloaded-artifact or
-first-use test.
+Check that every job, artifact, manifest, and draft release points at the same
+immutable tag SHA. Do not substitute a local rebuild for a failed staged-artifact
+or first-use test.
 
 If any exact-tag gate fails:
 
-- keep the GitHub release draft;
+- keep the candidate non-current and any GitHub release draft;
 - do not publish crates.io;
 - do not make the GitHub release public;
 - do not move or reuse the tag; and
@@ -334,8 +342,9 @@ If any exact-tag gate fails:
 
 ## Phase 5 — Publish
 
-Only after the exact tag workflow is green and its artifacts are reviewed,
-publish the crate from a detached checkout of that same immutable tag:
+Only after the exact tag workflow, all staged-artifact lanes, and the terminal
+`Release Candidate Ready` aggregate are green, publish the crate from a detached
+checkout of that same immutable tag:
 
 ```bash
 git fetch origin --prune --tags
@@ -372,7 +381,8 @@ identities:
 
 - exact tag and source commit;
 - source Release workflow run;
-- successful platform jobs;
+- staged candidate manifest and artifact digests;
+- successful platform jobs and terminal candidate-ready aggregate;
 - public crates.io version;
 - public GitHub Release and asset list;
 - first-use acceptance results;
@@ -397,8 +407,8 @@ may be abandoned or rebuilt from the new source main.
 
 ### After the tag but before crates.io publication
 
-Keep the GitHub release draft. Do not force-move the tag. Fix through swarm and
-cut the next patch tag.
+Keep the candidate non-current and any GitHub release draft. Do not force-move
+the tag. Fix through swarm and cut the next patch tag.
 
 ### After crates.io publication
 
@@ -443,29 +453,32 @@ source/swarm divergence is understood. Never rewrite `shiplog/main` history.
 - [ ] Version and lockfile package versions are aligned.
 - [ ] Changelog version/date is frozen and a new `[Unreleased]` exists.
 - [ ] Release decision, readiness ledger, and handoff are prepared.
-- [ ] README/install/release-note text matches the candidate.
+- [ ] Version-specific README/install/release-note text matches the candidate;
+      substantive shared docs already landed through swarm.
 - [ ] Source-role automation and release authority remain correct.
 - [ ] Package version/boundary audits pass.
 - [ ] Package proof and allowlisted publish dry-run pass.
 - [ ] Release-hold guard passes for the exact tag.
 - [ ] Source PR and post-merge required checks are green.
 
-### Tag and draft artifacts
+### Tag and staged candidates
 
 - [ ] Annotated semver tag points at exact merged source main.
 - [ ] Tag has not been moved or reused.
 - [ ] Source Release workflow targets the exact tag SHA.
 - [ ] Four platform builds pass.
-- [ ] Checksums and draft release assets are complete.
-- [ ] Release validation passes.
-- [ ] Four-platform first-use acceptance passes.
+- [ ] One staged candidate manifest binds the exact tag, assets, and digests.
+- [ ] Checksums and any draft release assets are complete.
+- [ ] Release validation passes against the staged set.
+- [ ] Four-platform first-use acceptance consumes the same staged set and passes.
 - [ ] Release-mode integration tests pass.
+- [ ] Terminal `Release Candidate Ready` is green.
 
 ### Publication and closeout
 
 - [ ] crates.io publication ran from a detached checkout of the exact release
       tag and public metadata is verified.
-- [ ] GitHub release is made public only after exact-tag proof.
+- [ ] GitHub release is made public only after exact-tag candidate proof.
 - [ ] Public assets, checksums, installers, and `--version` are verified.
 - [ ] Homebrew and Scoop updates use final public hashes and pass validation.
 - [ ] Versioned readiness and handoff record observed run IDs and public state.
