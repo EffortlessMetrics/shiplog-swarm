@@ -124,27 +124,21 @@ fn run_candidate_smoke(fixture: &CandidateFixture) -> Result<Output> {
 
     #[cfg(windows)]
     let mut command = {
+        let script_path = root.join("scripts/release-install-smoke.ps1");
+        let script = script_path
+            .to_str()
+            .context("PowerShell smoke path is not UTF-8")?;
         let mut command = Command::new("pwsh");
-        command.args([
-            "-NoProfile",
-            "-File",
-            root.join("scripts/release-install-smoke.ps1")
-                .to_str()
-                .context("PowerShell smoke path is not UTF-8")?,
-            version,
-        ]);
+        command.args(["-NoProfile", "-File", script, version]);
         command
     };
 
     #[cfg(not(windows))]
     let mut command = {
+        let script_path = root.join("scripts/release-install-smoke.sh");
+        let script = script_path.to_str().context("Bash smoke path is not UTF-8")?;
         let mut command = Command::new("bash");
-        command.args([
-            root.join("scripts/release-install-smoke.sh")
-                .to_str()
-                .context("Bash smoke path is not UTF-8")?,
-            version,
-        ]);
+        command.args([script, version]);
         command
     };
 
