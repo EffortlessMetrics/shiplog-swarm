@@ -21,6 +21,8 @@ all placeholders with evidence; do not mark it closed from intended commands.
 | Release source commit | `<full sha>` |
 | Annotated tag | `vX.Y.Z` |
 | Source Release workflow | `<run URL or ID>` |
+| Staged candidate manifest | `<artifact/digest>` |
+| Terminal candidate-ready aggregate | `<job/result>` |
 
 ## Published contents
 
@@ -32,18 +34,19 @@ release story.
 
 | Artifact | Observed result |
 | --- | --- |
-| `shiplog-x86_64-unknown-linux-gnu` | `<asset/checksum>` |
-| `shiplog-x86_64-apple-darwin` | `<asset/checksum>` |
-| `shiplog-aarch64-apple-darwin` | `<asset/checksum>` |
-| `shiplog-x86_64-pc-windows-msvc.exe` | `<asset/checksum>` |
-| `SHA256SUMS.txt` | `<asset/checksum>` |
+| `shiplog-x86_64-unknown-linux-gnu` | `<asset/checksum/artifact digest>` |
+| `shiplog-x86_64-apple-darwin` | `<asset/checksum/artifact digest>` |
+| `shiplog-aarch64-apple-darwin` | `<asset/checksum/artifact digest>` |
+| `shiplog-x86_64-pc-windows-msvc.exe` | `<asset/checksum/artifact digest>` |
+| `SHA256SUMS.txt` | `<asset/checksum/artifact digest>` |
 
 ## Validation receipt
 
 - Release preflight: `<result>`
 - Release validation: `<result>`
-- Four-platform first-use acceptance: `<results>`
+- Four-platform first-use acceptance against one staged set: `<results>`
 - Release-mode integration tests: `<result>`
+- Terminal `Release Candidate Ready`: `<result>`
 - crates.io install and `--version`: `<result>`
 - GitHub release public-state verification: `<result>`
 - Versionless installers: `<result>`
@@ -59,7 +62,7 @@ Typical final boundary:
 ```text
 git tag -a vX.Y.Z -m "shiplog vX.Y.Z"
 git push origin vX.Y.Z
-# After exact-tag workflow proof:
+# After exact-tag staged-candidate proof:
 git checkout --detach vX.Y.Z
 cargo publish -p shiplog --locked
 gh release edit vX.Y.Z --draft=false --latest
