@@ -294,3 +294,30 @@ promotion checkpoint actually lands.
 The decision does not alter source workflows, source settings, or the
 fail-closed planner. It only binds the already-merged swarm repair so the next
 read-only promotion plan can account for all three two-sided paths explicitly.
+
+## PR #389: living release-preparation procedure
+
+PR #389 updated the maintained release-preparation and promotion procedure
+after the ruleset-aware runbook binding above. The exact targets for this
+bounded rebind are:
+
+- source target: `175e8c8cee8110c4cf4a42d5534f5dffe45bf426`
+- swarm target: `08f93314a62fa039493487bf008239d7f5648b4e`
+- source promotion evidence: `EffortlessMetrics/shiplog#682` at
+  `2f69daf921d74fb9472584c2a0df31857cfa2384`
+- decision receipt: `EffortlessMetrics/shiplog-swarm#389` at
+  `08f93314a62fa039493487bf008239d7f5648b4e`
+
+The older #366 runbook entry remains historical. For this bounded promotion,
+take the exact #389 swarm entry and discard the source-side transition copy.
+This is an explicit consumptive decision, not permanent swarm authority.
+
+| Path | Source target entry | Swarm target entry | Decision reason |
+|---|---|---|---|
+| `plans/shiplog-swarm/promotion-runbook.md` | `100644/blob/126d86717c1e6c74602b979fc628b81bcf011054` | `100644/blob/63c5990cb88c0f84cab199e24223e9b4c9bf1bf5` | The reviewed #389 living release procedure supersedes the older source-side transition copy. |
+
+The substantive manifest binding is recorded in
+`plans/shiplog-swarm/promotion-state.toml`. It remains active until consumed
+by the next regular-merge source promotion checkpoint. No source refs,
+source files, tags, releases, or publication state are changed by this
+decision.

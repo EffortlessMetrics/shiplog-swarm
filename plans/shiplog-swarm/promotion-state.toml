@@ -898,6 +898,7 @@ swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "b5a6bbf7634f0
 [[transition]]
 source_pr = "EffortlessMetrics/shiplog#682"
 source_merge_sha = "2f69daf921d74fb9472584c2a0df31857cfa2384"
+consumed_by = "EffortlessMetrics/shiplog-swarm#389"
 source_target = "175e8c8cee8110c4cf4a42d5534f5dffe45bf426"
 swarm_target = "c1aae92a2ad7ee35738de5bf6a990fc0477e5191"
 
@@ -1086,3 +1087,22 @@ decision_merge_sha = "1aee99e52e47f851269336c19eee400e3de44d1a"
 reason = "The reviewed #381 manifest is the current bounded receipt ledger and must be rebound at its exact pre-receipt target before the next promotion."
 source_tree_entry = { mode = "100644", object_type = "blob", oid = "bf3cbaa556a3b3249f952742bb2c6b28847f3876" }
 swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "62bc03691891e5849bdbef77ba42c15e924b75c4" }
+
+# PR #389 updated the living release-preparation procedure after the #366
+# ruleset-aware binding. Keep #366 as historical evidence and bind the exact
+# current runbook entry to the merged #389 decision for the next promotion.
+[[transition]]
+source_pr = "EffortlessMetrics/shiplog#682"
+source_merge_sha = "2f69daf921d74fb9472584c2a0df31857cfa2384"
+source_target = "175e8c8cee8110c4cf4a42d5534f5dffe45bf426"
+swarm_target = "08f93314a62fa039493487bf008239d7f5648b4e"
+
+[[transition.path]]
+path = "plans/shiplog-swarm/promotion-runbook.md"
+disposition = "missing_in_swarm"
+resolution = "discard_source"
+decision_receipt = "EffortlessMetrics/shiplog-swarm#389"
+decision_merge_sha = "08f93314a62fa039493487bf008239d7f5648b4e"
+reason = "The reviewed #389 living release procedure supersedes the older source-side transition copy for this bounded promotion; this decision does not grant permanent swarm authority."
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "126d86717c1e6c74602b979fc628b81bcf011054" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "63c5990cb88c0f84cab199e24223e9b4c9bf1bf5" }
