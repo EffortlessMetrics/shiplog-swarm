@@ -3068,17 +3068,23 @@ fn source_transition_evidence_commits(
 
     let mut commits = BTreeSet::new();
     let mut available = true;
-    for transition in state.transition {
-        match git_lines_checked(
-            workspace_root,
-            &["rev-list", &transition.source_merge_sha],
-            notes,
-        ) {
+    for source_merge_sha in active_transition_source_merge_shas(&state.transition) {
+        match git_lines_checked(workspace_root, &["rev-list", source_merge_sha], notes) {
             Some(history) => commits.extend(history),
             None => available = false,
         }
     }
     (commits, available)
+}
+
+fn active_transition_source_merge_shas(
+    transitions: &[crate::tasks::promotion_state::Transition],
+) -> Vec<&str> {
+    transitions
+        .iter()
+        .filter(|transition| transition.consumed_by.is_empty())
+        .map(|transition| transition.source_merge_sha.as_str())
+        .collect()
 }
 
 #[cfg(test)]
@@ -3204,17 +3210,29 @@ fn topology_next_actions(
             "Continue normal development in `EffortlessMetrics/shiplog-swarm` with a focused PR."
                 .to_string(),
         ),
-        ("tree-aligned", Some(true), "promotion-merge-only") if swarm_ahead.is_empty() => {
+        (
+            "tree-aligned",
+            Some(true),
+            "promotion-merge-only"
+                | "transition-evidence-only"
+                | "transition-evidence-and-promotion",
+        ) if swarm_ahead.is_empty() => {
             actions.push(
                 "Continue normal development in `EffortlessMetrics/shiplog-swarm`; no source promotion is pending."
                     .to_string(),
             );
         }
-        ("tree-aligned", Some(true), "promotion-and-approved-governance" | "approved-governance-only")
-            if swarm_ahead.is_empty() => actions.push(
-                "Continue normal development in `EffortlessMetrics/shiplog-swarm`; source-only differences are approved governance."
-                    .to_string(),
-            ),
+        (
+            "tree-aligned",
+            Some(true),
+            "promotion-and-approved-governance"
+                | "approved-governance-only"
+                | "transition-evidence-and-approved-governance"
+                | "promotion-transition-evidence-and-approved-governance",
+        ) if swarm_ahead.is_empty() => actions.push(
+            "Continue normal development in `EffortlessMetrics/shiplog-swarm`; source-only differences are approved governance."
+                .to_string(),
+        ),
         ("tree-aligned", Some(true), "none") if swarm_ahead.is_empty() => actions.push(
             "Continue normal development in `EffortlessMetrics/shiplog-swarm`; source and swarm trees are aligned."
                 .to_string(),
@@ -5585,6 +5603,43 @@ Merge this PR with a regular merge commit; do not squash.
     }
 
     #[test]
+    fn consumed_transition_receipts_do_not_suppress_source_drift() {
+        let transitions = vec![
+            crate::tasks::promotion_state::Transition {
+                source_pr: "EffortlessMetrics/shiplog#666".to_string(),
+                source_merge_sha: "consumed-source".to_string(),
+                source_target: String::new(),
+                swarm_target: String::new(),
+                consumed_by: "EffortlessMetrics/shiplog#682".to_string(),
+                swarm_merge_sha: std::collections::BTreeMap::new(),
+                path: Vec::new(),
+            },
+            crate::tasks::promotion_state::Transition {
+                source_pr: "EffortlessMetrics/shiplog#682".to_string(),
+                source_merge_sha: "active-source".to_string(),
+                source_target: String::new(),
+                swarm_target: String::new(),
+                consumed_by: String::new(),
+                swarm_merge_sha: std::collections::BTreeMap::new(),
+                path: Vec::new(),
+            },
+        ];
+        let evidence = active_transition_source_merge_shas(&transitions);
+        let consumed_commit = "consumed-source source history".to_string();
+        let unexplained = "abc1234 chore: unreviewed source change".to_string();
+        let commits = vec![consumed_commit.clone(), unexplained.clone()];
+
+        let summary = classify_source_ahead_by(
+            &commits,
+            |_| false,
+            |commit| evidence.iter().any(|sha| commit.starts_with(sha)),
+        );
+
+        assert!(summary.transition_evidence_commits.is_empty());
+        assert_eq!(summary.other_commits, commits);
+    }
+
+    #[test]
     fn approved_exact_path_does_not_create_product_drift() {
         let policy = vec![source_only_entry(".github/dependabot.yml", "2027-01-01")];
         let source_paths = BTreeSet::from([".github/dependabot.yml".to_string()]);
@@ -5767,6 +5822,25 @@ Merge this PR with a regular merge commit; do not squash.
                 "Continue normal development in `EffortlessMetrics/shiplog-swarm`; no source promotion is pending."
             ]
         );
+    }
+
+    #[test]
+    fn next_actions_continue_when_tree_aligned_with_transition_evidence() {
+        for (classification, expected) in [
+            (
+                "transition-evidence-only",
+                "Continue normal development in `EffortlessMetrics/shiplog-swarm`; no source promotion is pending.",
+            ),
+            (
+                "transition-evidence-and-approved-governance",
+                "Continue normal development in `EffortlessMetrics/shiplog-swarm`; source-only differences are approved governance.",
+            ),
+        ] {
+            let actions =
+                topology_next_actions("tree-aligned", Some(true), classification, &[], &[]);
+
+            assert_eq!(actions, vec![expected]);
+        }
     }
 
     #[test]
