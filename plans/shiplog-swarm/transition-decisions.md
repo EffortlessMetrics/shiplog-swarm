@@ -222,3 +222,44 @@ This decision does not resolve source branch-protection settings in #294,
 other source or swarm changes after the recorded targets, or any path outside
 the two listed above. No source refs, source files, repository settings, or
 real promotion are changed by this record.
+
+## Post-#366 ruleset-aware merge-control repair
+
+PR #366 updated the source merge-control implementation and its operator
+documentation after the older #682 transition bindings. The exact targets for
+this rebind are:
+
+- source target: `175e8c8cee8110c4cf4a42d5534f5dffe45bf426`
+- swarm target: `c1aae92a2ad7ee35738de5bf6a990fc0477e5191`
+- source promotion evidence: `EffortlessMetrics/shiplog#682` at
+  `2f69daf921d74fb9472584c2a0df31857cfa2384`
+- decision receipt: `EffortlessMetrics/shiplog-swarm#366` at
+  `c1aae92a2ad7ee35738de5bf6a990fc0477e5191`
+
+The two CI documentation paths use their actual source-touching promotion
+receipts in the manifest: `EffortlessMetrics/shiplog#535` at
+`50effd4c94848e91a64d5c24795438855888ff18` for
+`docs/ci/branch-protection.md`, and
+`EffortlessMetrics/shiplog#524` at
+`a8c173b2fe848a193d3903ba47a577da2bf58c55` for
+`docs/ci/required-check-migration.md`. The remaining five paths were touched
+by source promotion #682.
+
+The earlier entries remain bound to their historical swarm targets. For each
+path below, the reviewed decision is to take the exact current swarm entry and
+discard the source-side transition copy for this bounded promotion. This is a
+new consumptive decision, not permanent swarm authority.
+
+| Path | Source target entry | Swarm target entry | Decision reason |
+|---|---|---|---|
+| `docs/ci/branch-protection.md` | `100644/blob/15caaf1c28e64b1c96d3439efe06c0658b83beaf` | `100644/blob/7acac6e886537347b473acfee1782983983a0500` | The active source repository ruleset and required merge-control check are documented on swarm. |
+| `docs/ci/required-check-migration.md` | `100644/blob/862eaa98a272556b3a6a22127b87c8b0e531e796` | `100644/blob/8a6c5b9774575b23a1e5e67859fbfc93e5976f4c` | The migration guide distinguishes the ruleset guard from the future correctness-check set. |
+| `docs/status/SUPPORT_TIERS.md` | `100644/blob/301913b6034d03b6fce6b1adb4ad48b22a89bac7` | `100644/blob/df7bac30ba6211677ddb564cb6befd25c16e0fd9` | The support map records ruleset-aware observation and synthetic-proof boundaries. |
+| `docs/xtask.md` | `100644/blob/6fcb4394cfaa1323a355cb627c100fd429bed27c` | `100644/blob/84590ed00c439da16645e204acd25e0e26b83105` | The command reference documents legacy and repository-ruleset preflight. |
+| `plans/shiplog-swarm/promotion-runbook.md` | `100644/blob/126d86717c1e6c74602b979fc628b81bcf011054` | `100644/blob/c20a2c67ce8eb89c21f58971854713d5f2d3e115` | The runbook names the active source ruleset as the merge-control boundary. |
+| `xtask/src/tasks/promote.rs` | `100644/blob/3d58577fa9e518b76d22c266b8c861f6dca36335` | `100644/blob/b4f5389955e87500823507ed00872bc57050729a` | Promotion preflight recognizes repository rulesets and remains fail-closed. |
+| `xtask/src/tasks/repo_contract_report.rs` | `100644/blob/fab37f26423e06a97326b521706c7067432a571f` | `100644/blob/d51899107d0a34957bd7ddcc9d35c877fe301f14` | Source-of-truth reporting resolves ruleset detail instead of misclassifying source main. |
+
+The substantive manifest binding is recorded in
+`plans/shiplog-swarm/promotion-state.toml`. These decisions remain active
+until consumed by the next regular-merge source promotion checkpoint.
