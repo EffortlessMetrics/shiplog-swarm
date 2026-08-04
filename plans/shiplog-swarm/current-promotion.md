@@ -70,14 +70,8 @@
 
 ## Pending swarm work
 
-- `EffortlessMetrics/shiplog-swarm#336`
 - `EffortlessMetrics/shiplog-swarm#338`
 - `EffortlessMetrics/shiplog-swarm#339`
-- `EffortlessMetrics/shiplog-swarm#340`
-- `EffortlessMetrics/shiplog-swarm#341`
-- `EffortlessMetrics/shiplog-swarm#342`
-- `EffortlessMetrics/shiplog-swarm#344`
-- `EffortlessMetrics/shiplog-swarm#346`
 - `EffortlessMetrics/shiplog-swarm#348`
 - `EffortlessMetrics/shiplog-swarm#351`
 - `EffortlessMetrics/shiplog-swarm#352`
@@ -87,6 +81,12 @@
 - `EffortlessMetrics/shiplog-swarm#356`
 - `EffortlessMetrics/shiplog-swarm#357`
 - `EffortlessMetrics/shiplog-swarm#359`
+- `EffortlessMetrics/shiplog-swarm#361`
+- `EffortlessMetrics/shiplog-swarm#363`
+- `EffortlessMetrics/shiplog-swarm#365`
+- `EffortlessMetrics/shiplog-swarm#366`
+- `EffortlessMetrics/shiplog-swarm#368`
+- `EffortlessMetrics/shiplog-swarm#370`
 
 ## Source-authority decisions
 

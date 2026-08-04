@@ -204,6 +204,7 @@ struct GitTopologyReport {
     source_ahead_classification: String,
     source_ahead_promotion_merges: Vec<String>,
     source_ahead_approved_governance_commits: Vec<String>,
+    source_ahead_transition_evidence_commits: Vec<String>,
     source_ahead_other_commits: Vec<String>,
     swarm_ahead: Vec<String>,
     status: String,
@@ -820,10 +821,13 @@ fn inspect_git_topology(
     );
     let source_ahead = source_ahead_result.clone().unwrap_or_default();
     let swarm_ahead = swarm_ahead_result.clone().unwrap_or_default();
+    let (transition_evidence_commits, transition_evidence_available) =
+        source_transition_evidence_commits(workspace_root, &mut notes);
     let (mut source_ahead_summary, commit_paths_available) = classify_source_ahead_with_git(
         workspace_root,
         &source_ahead,
         source_only_paths,
+        &transition_evidence_commits,
         &mut notes,
     );
     let trees_aligned = git_trees_aligned(workspace_root, SOURCE_REF, SWARM_REF, &mut notes);
@@ -862,7 +866,11 @@ fn inspect_git_topology(
         .as_ref()
         .map(|classification| classification.product_drift_paths.is_empty());
     let path_classification = path_classification.unwrap_or_default();
-    if source_ahead_result.is_none() || swarm_ahead_result.is_none() || !commit_paths_available {
+    if source_ahead_result.is_none()
+        || swarm_ahead_result.is_none()
+        || !commit_paths_available
+        || !transition_evidence_available
+    {
         source_ahead_summary.classification = "unavailable".to_string();
     }
     let status = match (
@@ -918,6 +926,7 @@ fn inspect_git_topology(
         source_ahead_classification: source_ahead_summary.classification,
         source_ahead_promotion_merges: source_ahead_summary.promotion_merges,
         source_ahead_approved_governance_commits: source_ahead_summary.approved_governance_commits,
+        source_ahead_transition_evidence_commits: source_ahead_summary.transition_evidence_commits,
         source_ahead_other_commits: source_ahead_summary.other_commits,
         swarm_ahead,
         status,
@@ -2945,6 +2954,7 @@ struct SourceAheadSummary {
     classification: String,
     promotion_merges: Vec<String>,
     approved_governance_commits: Vec<String>,
+    transition_evidence_commits: Vec<String>,
     other_commits: Vec<String>,
 }
 
@@ -2990,6 +3000,7 @@ fn classify_source_ahead_with_git(
     workspace_root: &Path,
     commits: &[String],
     policy: &[SourceOnlyPathEntry],
+    transition_evidence_commits: &BTreeSet<String>,
     notes: &mut Vec<String>,
 ) -> (SourceAheadSummary, bool) {
     let approved = policy
@@ -2997,32 +3008,98 @@ fn classify_source_ahead_with_git(
         .map(|entry| entry.path.as_str())
         .collect::<BTreeSet<_>>();
     let mut paths_available = true;
-    let summary = classify_source_ahead_by(commits, |commit| {
-        let paths = commit_paths(workspace_root, commit, notes);
-        match paths {
-            Some(paths) => {
-                !paths.is_empty() && paths.iter().all(|path| approved.contains(path.as_str()))
+    let mut transition_evidence_available = true;
+    let transition_evidence_display = commits
+        .iter()
+        .filter_map(|commit| {
+            let id = commit.split_whitespace().next()?;
+            let resolved = git_line(
+                workspace_root,
+                &["rev-parse", &format!("{id}^{{commit}}")],
+                notes,
+            );
+            match resolved {
+                Some(resolved) if transition_evidence_commits.contains(&resolved) => {
+                    Some(commit.clone())
+                }
+                Some(_) => None,
+                None => {
+                    transition_evidence_available = false;
+                    None
+                }
             }
-            None => {
-                paths_available = false;
-                false
+        })
+        .collect::<BTreeSet<_>>();
+    let summary = classify_source_ahead_by(
+        commits,
+        |commit| {
+            let paths = commit_paths(workspace_root, commit, notes);
+            match paths {
+                Some(paths) => {
+                    !paths.is_empty() && paths.iter().all(|path| approved.contains(path.as_str()))
+                }
+                None => {
+                    paths_available = false;
+                    false
+                }
             }
+        },
+        |commit| transition_evidence_display.contains(commit),
+    );
+    (summary, paths_available && transition_evidence_available)
+}
+
+fn source_transition_evidence_commits(
+    workspace_root: &Path,
+    notes: &mut Vec<String>,
+) -> (BTreeSet<String>, bool) {
+    let Some(state) = (match crate::tasks::promotion_state::load_optional(workspace_root) {
+        Ok(state) => state,
+        Err(error) => {
+            notes.push(format!(
+                "load {} failed: {error:#}",
+                crate::tasks::promotion_state::MANIFEST_REL
+            ));
+            return (BTreeSet::new(), false);
         }
-    });
-    (summary, paths_available)
+    }) else {
+        return (BTreeSet::new(), true);
+    };
+
+    let mut commits = BTreeSet::new();
+    let mut available = true;
+    for source_merge_sha in active_transition_source_merge_shas(&state.transition) {
+        match git_lines_checked(workspace_root, &["rev-list", source_merge_sha], notes) {
+            Some(history) => commits.extend(history),
+            None => available = false,
+        }
+    }
+    (commits, available)
+}
+
+fn active_transition_source_merge_shas(
+    transitions: &[crate::tasks::promotion_state::Transition],
+) -> Vec<&str> {
+    transitions
+        .iter()
+        .filter(|transition| transition.consumed_by.is_empty())
+        .map(|transition| transition.source_merge_sha.as_str())
+        .collect()
 }
 
 #[cfg(test)]
 fn classify_source_ahead(commits: &[String]) -> SourceAheadSummary {
-    classify_source_ahead_by(commits, |_| false)
+    classify_source_ahead_by(commits, |_| false, |_| false)
 }
 
 fn classify_source_ahead_by(
     commits: &[String],
     mut is_approved_governance: impl FnMut(&str) -> bool,
+    mut is_transition_evidence: impl FnMut(&str) -> bool,
 ) -> SourceAheadSummary {
     let mut promotion_merges = Vec::new();
     let mut approved_governance_commits = Vec::new();
+    let mut transition_evidence_commits = Vec::new();
     let mut other_commits = Vec::new();
 
     for commit in commits {
@@ -3030,6 +3107,8 @@ fn classify_source_ahead_by(
             promotion_merges.push(commit.clone());
         } else if is_approved_governance(commit) {
             approved_governance_commits.push(commit.clone());
+        } else if is_transition_evidence(commit) {
+            transition_evidence_commits.push(commit.clone());
         } else {
             other_commits.push(commit.clone());
         }
@@ -3044,11 +3123,27 @@ fn classify_source_ahead_by(
             "mixed"
         }
     } else if promotion_merges.is_empty() {
-        "approved-governance-only"
-    } else if approved_governance_commits.is_empty() {
-        "promotion-merge-only"
+        if transition_evidence_commits.is_empty() {
+            if approved_governance_commits.is_empty() {
+                "non-promotion"
+            } else {
+                "approved-governance-only"
+            }
+        } else if approved_governance_commits.is_empty() {
+            "transition-evidence-only"
+        } else {
+            "transition-evidence-and-approved-governance"
+        }
     } else {
-        "promotion-and-approved-governance"
+        match (
+            transition_evidence_commits.is_empty(),
+            approved_governance_commits.is_empty(),
+        ) {
+            (true, true) => "promotion-merge-only",
+            (false, true) => "transition-evidence-and-promotion",
+            (true, false) => "promotion-and-approved-governance",
+            (false, false) => "promotion-transition-evidence-and-approved-governance",
+        }
     }
     .to_string();
 
@@ -3056,6 +3151,7 @@ fn classify_source_ahead_by(
         classification,
         promotion_merges,
         approved_governance_commits,
+        transition_evidence_commits,
         other_commits,
     }
 }
@@ -3114,17 +3210,29 @@ fn topology_next_actions(
             "Continue normal development in `EffortlessMetrics/shiplog-swarm` with a focused PR."
                 .to_string(),
         ),
-        ("tree-aligned", Some(true), "promotion-merge-only") if swarm_ahead.is_empty() => {
+        (
+            "tree-aligned",
+            Some(true),
+            "promotion-merge-only"
+                | "transition-evidence-only"
+                | "transition-evidence-and-promotion",
+        ) if swarm_ahead.is_empty() => {
             actions.push(
                 "Continue normal development in `EffortlessMetrics/shiplog-swarm`; no source promotion is pending."
                     .to_string(),
             );
         }
-        ("tree-aligned", Some(true), "promotion-and-approved-governance" | "approved-governance-only")
-            if swarm_ahead.is_empty() => actions.push(
-                "Continue normal development in `EffortlessMetrics/shiplog-swarm`; source-only differences are approved governance."
-                    .to_string(),
-            ),
+        (
+            "tree-aligned",
+            Some(true),
+            "promotion-and-approved-governance"
+                | "approved-governance-only"
+                | "transition-evidence-and-approved-governance"
+                | "promotion-transition-evidence-and-approved-governance",
+        ) if swarm_ahead.is_empty() => actions.push(
+            "Continue normal development in `EffortlessMetrics/shiplog-swarm`; source-only differences are approved governance."
+                .to_string(),
+        ),
         ("tree-aligned", Some(true), "none") if swarm_ahead.is_empty() => actions.push(
             "Continue normal development in `EffortlessMetrics/shiplog-swarm`; source and swarm trees are aligned."
                 .to_string(),
@@ -3470,6 +3578,17 @@ fn render_markdown(report: &RepoContractReport) -> String {
     );
     push_row(
         &mut out,
+        "Transition-evidence commits",
+        &format!(
+            "{} commit(s)",
+            report
+                .git_topology
+                .source_ahead_transition_evidence_commits
+                .len()
+        ),
+    );
+    push_row(
+        &mut out,
         "Swarm ahead",
         &format!("{} commit(s)", report.git_topology.swarm_ahead.len()),
     );
@@ -3487,6 +3606,11 @@ fn render_markdown(report: &RepoContractReport) -> String {
         &mut out,
         "Source ahead non-promotion commits",
         &report.git_topology.source_ahead_other_commits,
+    );
+    push_markdown_list(
+        &mut out,
+        "Source transition-evidence commits",
+        &report.git_topology.source_ahead_transition_evidence_commits,
     );
     push_markdown_list(
         &mut out,
@@ -5441,12 +5565,78 @@ Merge this PR with a regular merge commit; do not squash.
                 .to_string();
         let commits = vec![governance.clone(), promotion.clone()];
 
-        let summary = classify_source_ahead_by(&commits, |commit| commit == governance);
+        let summary = classify_source_ahead_by(&commits, |commit| commit == governance, |_| false);
 
         assert_eq!(summary.classification, "promotion-and-approved-governance");
         assert_eq!(summary.promotion_merges, vec![promotion]);
         assert_eq!(summary.approved_governance_commits, vec![governance]);
         assert!(summary.other_commits.is_empty());
+    }
+
+    #[test]
+    fn classifies_transition_evidence_without_treating_it_as_unexplained_drift() {
+        let promotion =
+            "84485cc Merge pull request #682 from EffortlessMetrics/promote/swarm-current-deadbee"
+                .to_string();
+        let transition = "d88d59a sync: remove RTK from Shiplog proof contracts (#666)".to_string();
+        let commits = vec![promotion.clone(), transition.clone()];
+
+        let summary = classify_source_ahead_by(&commits, |_| false, |commit| commit == transition);
+
+        assert_eq!(summary.classification, "transition-evidence-and-promotion");
+        assert_eq!(summary.promotion_merges, vec![promotion]);
+        assert_eq!(summary.transition_evidence_commits, vec![transition]);
+        assert!(summary.other_commits.is_empty());
+    }
+
+    #[test]
+    fn leaves_uncovered_source_history_as_actionable_other_commits() {
+        let transition = "d88d59a sync: remove RTK from Shiplog proof contracts (#666)".to_string();
+        let unexplained = "abc1234 chore: unreviewed source change".to_string();
+        let commits = vec![transition.clone(), unexplained.clone()];
+
+        let summary = classify_source_ahead_by(&commits, |_| false, |commit| commit == transition);
+
+        assert_eq!(summary.classification, "non-promotion");
+        assert_eq!(summary.transition_evidence_commits, vec![transition]);
+        assert_eq!(summary.other_commits, vec![unexplained]);
+    }
+
+    #[test]
+    fn consumed_transition_receipts_do_not_suppress_source_drift() {
+        let transitions = vec![
+            crate::tasks::promotion_state::Transition {
+                source_pr: "EffortlessMetrics/shiplog#666".to_string(),
+                source_merge_sha: "consumed-source".to_string(),
+                source_target: String::new(),
+                swarm_target: String::new(),
+                consumed_by: "EffortlessMetrics/shiplog#682".to_string(),
+                swarm_merge_sha: std::collections::BTreeMap::new(),
+                path: Vec::new(),
+            },
+            crate::tasks::promotion_state::Transition {
+                source_pr: "EffortlessMetrics/shiplog#682".to_string(),
+                source_merge_sha: "active-source".to_string(),
+                source_target: String::new(),
+                swarm_target: String::new(),
+                consumed_by: String::new(),
+                swarm_merge_sha: std::collections::BTreeMap::new(),
+                path: Vec::new(),
+            },
+        ];
+        let evidence = active_transition_source_merge_shas(&transitions);
+        let consumed_commit = "consumed-source source history".to_string();
+        let unexplained = "abc1234 chore: unreviewed source change".to_string();
+        let commits = vec![consumed_commit.clone(), unexplained.clone()];
+
+        let summary = classify_source_ahead_by(
+            &commits,
+            |_| false,
+            |commit| evidence.iter().any(|sha| commit.starts_with(sha)),
+        );
+
+        assert!(summary.transition_evidence_commits.is_empty());
+        assert_eq!(summary.other_commits, commits);
     }
 
     #[test]
@@ -5632,6 +5822,25 @@ Merge this PR with a regular merge commit; do not squash.
                 "Continue normal development in `EffortlessMetrics/shiplog-swarm`; no source promotion is pending."
             ]
         );
+    }
+
+    #[test]
+    fn next_actions_continue_when_tree_aligned_with_transition_evidence() {
+        for (classification, expected) in [
+            (
+                "transition-evidence-only",
+                "Continue normal development in `EffortlessMetrics/shiplog-swarm`; no source promotion is pending.",
+            ),
+            (
+                "transition-evidence-and-approved-governance",
+                "Continue normal development in `EffortlessMetrics/shiplog-swarm`; source-only differences are approved governance.",
+            ),
+        ] {
+            let actions =
+                topology_next_actions("tree-aligned", Some(true), classification, &[], &[]);
+
+            assert_eq!(actions, vec![expected]);
+        }
     }
 
     #[test]
