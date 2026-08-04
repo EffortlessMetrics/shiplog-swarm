@@ -117,6 +117,11 @@ swarm_pr_range = [
   "EffortlessMetrics/shiplog-swarm#366",
   "EffortlessMetrics/shiplog-swarm#368",
   "EffortlessMetrics/shiplog-swarm#370",
+  "EffortlessMetrics/shiplog-swarm#371",
+  "EffortlessMetrics/shiplog-swarm#373",
+  "EffortlessMetrics/shiplog-swarm#375",
+  "EffortlessMetrics/shiplog-swarm#377",
+  "EffortlessMetrics/shiplog-swarm#379",
 ]
 # Receipts explicitly deferred to a later substantive carry-forward. A
 # receipt listed here is treated as pending-substantive-carry, not stale.

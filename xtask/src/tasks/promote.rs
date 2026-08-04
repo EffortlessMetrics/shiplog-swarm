@@ -432,6 +432,7 @@ fn run_with_port_to(
         &inputs.workspace_root,
         &state.latest_promotion.promoted_swarm_head,
         &swarm_sha,
+        (swarm_sha == swarm_ref_sha).then_some(state.pending.swarm_pr_range.as_slice()),
     )?;
     let body_inputs = promotion_body::PromotionBodyInputs {
         workspace_root: inputs.workspace_root.clone(),
@@ -439,6 +440,7 @@ fn run_with_port_to(
         swarm_ref: inputs.swarm_ref.clone(),
         swarm_head: Some(swarm_sha.clone()),
         included_swarm_prs: included_swarm_prs.clone(),
+        current_pending_swarm_prs: Vec::new(),
         swarm_pr_run: None,
         swarm_main_run: Some(receipt.database_id.to_string()),
         source_pr_run: None,
@@ -808,6 +810,7 @@ fn run_verify_only(
         &inputs.workspace_root,
         &state.latest_promotion.promoted_swarm_head,
         swarm_sha,
+        None,
     )?;
     let shape_check = match landed_merge.shape {
         CheckpointShape::RawSwarmHead => format!(
@@ -1023,7 +1026,11 @@ fn included_swarm_prs(
     workspace_root: &Path,
     last_promoted_swarm_head: &str,
     swarm_sha: &str,
+    current_pending: Option<&[String]>,
 ) -> Result<Vec<String>> {
+    if let Some(receipts) = current_pending.filter(|receipts| !receipts.is_empty()) {
+        return Ok(receipts.to_vec());
+    }
     let log = port
         .git_output(
             workspace_root,
@@ -4862,8 +4869,13 @@ merge-old source-parent another-swarm-head
             &["commit", "-m", "fix: almost terminal (#778) garbage"],
         )?;
         let head = git_fixture(fixture.dir.path(), &["rev-parse", "HEAD"])?;
-        let receipts =
-            included_swarm_prs(&SystemPort, fixture.dir.path(), &fixture.promoted, &head)?;
+        let receipts = included_swarm_prs(
+            &SystemPort,
+            fixture.dir.path(),
+            &fixture.promoted,
+            &head,
+            None,
+        )?;
         ensure!(receipts == ["EffortlessMetrics/shiplog-swarm#255"]);
         Ok(())
     }
@@ -5080,6 +5092,24 @@ merge-old source-parent another-swarm-head
     fn extract_swarm_pr_receipts_empty_for_no_prs() {
         let subjects = ["chore: no marker", "another plain subject"];
         assert!(extract_swarm_pr_receipts(subjects.into_iter()).is_empty());
+    }
+
+    #[test]
+    fn included_swarm_prs_prefers_current_manifest_receipts() -> Result<()> {
+        let fixture = fixture_git()?;
+        let pending = vec![
+            "EffortlessMetrics/shiplog-swarm#371".to_string(),
+            "EffortlessMetrics/shiplog-swarm#379".to_string(),
+        ];
+        let receipts = included_swarm_prs(
+            &SystemPort,
+            fixture.dir.path(),
+            &fixture.promoted,
+            &fixture.current,
+            Some(&pending),
+        )?;
+        ensure!(receipts == pending);
+        Ok(())
     }
 
     #[test]
