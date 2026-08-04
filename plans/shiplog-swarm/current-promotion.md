@@ -115,10 +115,10 @@
   - decision receipt: `EffortlessMetrics/shiplog-swarm#351` at `5861dffe341d6f42cd145fe154c215c1c29836ca`
   - consumed by: `(active)`
 - path: `.github/workflows/release.yml`
-  - reason: Canonical source retains explicitly authorized release-writer jobs and the source-side explicit-shell fix; swarm remains verification-only.
+  - reason: The source release writer remains authoritative while merged #391 carries the reviewed swarm candidate verification contract; this is a bounded rebind, not a transfer of release authority.
   - source target: `175e8c8cee8110c4cf4a42d5534f5dffe45bf426`
-  - swarm target: `5861dffe341d6f42cd145fe154c215c1c29836ca`
-  - decision receipt: `EffortlessMetrics/shiplog-swarm#351` at `5861dffe341d6f42cd145fe154c215c1c29836ca`
+  - swarm target: `f99dcbd1ec331c9665b16748b2493bc0a4f0c25f`
+  - decision receipt: `EffortlessMetrics/shiplog-swarm#391` at `ac9308542fc6ec4daa1337bf81303bcf443542e1`
   - consumed by: `(active)`
 - path: `.github/workflows/security.yml`
   - reason: Canonical source scheduled security verification declares read-only permissions and the swarm remediation handoff.

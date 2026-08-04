@@ -423,12 +423,12 @@ swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "ec4b5257d46a4
 [[source_authority]]
 path = ".github/workflows/release.yml"
 source_target = "175e8c8cee8110c4cf4a42d5534f5dffe45bf426"
-swarm_target = "5861dffe341d6f42cd145fe154c215c1c29836ca"
-decision_receipt = "EffortlessMetrics/shiplog-swarm#351"
-decision_merge_sha = "5861dffe341d6f42cd145fe154c215c1c29836ca"
-reason = "Canonical source retains explicitly authorized release-writer jobs and the source-side explicit-shell fix; swarm remains verification-only."
+swarm_target = "f99dcbd1ec331c9665b16748b2493bc0a4f0c25f"
+decision_receipt = "EffortlessMetrics/shiplog-swarm#391"
+decision_merge_sha = "ac9308542fc6ec4daa1337bf81303bcf443542e1"
+reason = "The source release writer remains authoritative while merged #391 carries the reviewed swarm candidate verification contract; this is a bounded rebind, not a transfer of release authority."
 source_tree_entry = { mode = "100644", object_type = "blob", oid = "77c5ff31f0da4c15c4e9b1c3590b66ff34d95e35" }
-swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "1c8f97214cf86f0578d4d1678ff92b3f31673d94" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "1ca5135cfcbfcf657fe651274c9870197c52a011" }
 
 [[source_authority]]
 path = ".github/workflows/security.yml"
@@ -840,6 +840,7 @@ swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "f6e7f7318120a
 [[transition]]
 source_pr = "EffortlessMetrics/shiplog#682"
 source_merge_sha = "2f69daf921d74fb9472584c2a0df31857cfa2384"
+consumed_by = "EffortlessMetrics/shiplog-swarm#393"
 source_target = "175e8c8cee8110c4cf4a42d5534f5dffe45bf426"
 swarm_target = "f2f4847b062f7de4a97a8370fe6328ab8d8b03b1"
 
@@ -917,6 +918,7 @@ swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "c20a2c67ce8eb
 [[transition]]
 source_pr = "EffortlessMetrics/shiplog#682"
 source_merge_sha = "2f69daf921d74fb9472584c2a0df31857cfa2384"
+consumed_by = "EffortlessMetrics/shiplog-swarm#394"
 source_target = "175e8c8cee8110c4cf4a42d5534f5dffe45bf426"
 swarm_target = "16fcbd5941bddf86afab4370b03f3bda05d01413"
 
@@ -1006,6 +1008,7 @@ swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "52a70a45f050a
 [[transition]]
 source_pr = "EffortlessMetrics/shiplog#682"
 source_merge_sha = "2f69daf921d74fb9472584c2a0df31857cfa2384"
+consumed_by = "EffortlessMetrics/shiplog-swarm#394"
 source_target = "175e8c8cee8110c4cf4a42d5534f5dffe45bf426"
 swarm_target = "5c12405e3fd239aea4cdd71e03bcf52662fc7a4a"
 
@@ -1074,6 +1077,7 @@ swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "52a70a45f050a
 [[transition]]
 source_pr = "EffortlessMetrics/shiplog#682"
 source_merge_sha = "2f69daf921d74fb9472584c2a0df31857cfa2384"
+consumed_by = "EffortlessMetrics/shiplog-swarm#393"
 source_target = "175e8c8cee8110c4cf4a42d5534f5dffe45bf426"
 swarm_target = "04b26bad6c9037987278774056bbc901795b2172"
 
@@ -1106,3 +1110,163 @@ decision_merge_sha = "08f93314a62fa039493487bf008239d7f5648b4e"
 reason = "The reviewed #389 living release procedure supersedes the older source-side transition copy for this bounded promotion; this decision does not grant permanent swarm authority."
 source_tree_entry = { mode = "100644", object_type = "blob", oid = "126d86717c1e6c74602b979fc628b81bcf011054" }
 swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "63c5990cb88c0f84cab199e24223e9b4c9bf1bf5" }
+
+# PR #388, #392, and #393 changed paths covered by the older #384 and #382
+# bindings. Rebind their exact current results together so the next planner
+# run has one coherent, evidence-bearing ledger entry.
+[[transition]]
+source_pr = "EffortlessMetrics/shiplog#682"
+source_merge_sha = "2f69daf921d74fb9472584c2a0df31857cfa2384"
+source_target = "175e8c8cee8110c4cf4a42d5534f5dffe45bf426"
+swarm_target = "f99dcbd1ec331c9665b16748b2493bc0a4f0c25f"
+
+[[transition.path]]
+path = "plans/shiplog-swarm/transition-decisions.md"
+disposition = "missing_in_swarm"
+resolution = "discard_source"
+decision_receipt = "EffortlessMetrics/shiplog-swarm#393"
+decision_merge_sha = "f99dcbd1ec331c9665b16748b2493bc0a4f0c25f"
+reason = "The reviewed #393 ledger decision records the exact current runbook reconciliation; its swarm decision record supersedes the older source-side transition copy for this bounded promotion."
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "bbe7516331ab7e132aea0026049d61cb1040accd" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "f0c203b7008e905f1713d01173527ca131ebbbca" }
+
+[[transition.path]]
+path = "AGENTS.md"
+disposition = "missing_in_swarm"
+resolution = "discard_source"
+decision_receipt = "EffortlessMetrics/shiplog-swarm#391"
+decision_merge_sha = "ac9308542fc6ec4daa1337bf81303bcf443542e1"
+reason = "The reviewed #391 candidate-contract lane carries the current swarm development instructions for this bounded promotion."
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "85abfd3f0b7fe11d1b5c2a98bd64f3e1159521b9" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "e1dfc9209c300491a4b42e56cdebb563fa449a15" }
+
+[[transition.path]]
+path = "docs/README.md"
+disposition = "missing_in_swarm"
+resolution = "discard_source"
+decision_receipt = "EffortlessMetrics/shiplog-swarm#391"
+decision_merge_sha = "ac9308542fc6ec4daa1337bf81303bcf443542e1"
+reason = "The reviewed #391 candidate-contract lane carries the current swarm documentation index for this bounded promotion."
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "f55e5925589924de865f7fbcee2bbf6e224daa79" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "970be8d0ad1e48e22a40759ae60c06e7c53fab93" }
+
+[[transition.path]]
+path = "policy/workflow-allowlist.toml"
+disposition = "missing_in_swarm"
+resolution = "discard_source"
+decision_receipt = "EffortlessMetrics/shiplog-swarm#391"
+decision_merge_sha = "ac9308542fc6ec4daa1337bf81303bcf443542e1"
+reason = "The reviewed #391 candidate workflow pin update is the bounded current swarm policy result."
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "f2f094ba53216b2b6476184f2367f99e888dd153" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "11d7a0c73fbc8c8e9b5ff20ec1fbd91a73407482" }
+
+[[transition.path]]
+path = "scripts/release-install-smoke.ps1"
+disposition = "missing_in_swarm"
+resolution = "discard_source"
+decision_receipt = "EffortlessMetrics/shiplog-swarm#391"
+decision_merge_sha = "ac9308542fc6ec4daa1337bf81303bcf443542e1"
+reason = "The reviewed #391 Windows smoke-script repair is the bounded current swarm result."
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "4aaf761d35ea724d9bd5436e7d3d307b2fe188a5" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "273dcdc503eef22b71f11cdd0e92fbe50eb80f6c" }
+
+[[transition.path]]
+path = "scripts/release-install-smoke.sh"
+disposition = "missing_in_swarm"
+resolution = "discard_source"
+decision_receipt = "EffortlessMetrics/shiplog-swarm#391"
+decision_merge_sha = "ac9308542fc6ec4daa1337bf81303bcf443542e1"
+reason = "The reviewed #391 Unix smoke-script repair is the bounded current swarm result."
+source_tree_entry = { mode = "100755", object_type = "blob", oid = "cb85c988d088895cebf69532e5775995b66b474f" }
+swarm_tree_entry = { mode = "100755", object_type = "blob", oid = "0982f8f8c57f219d89ed8dc20035603999cbd81d" }
+
+[[transition.path]]
+path = "docs/status/SUPPORT_TIERS.md"
+disposition = "missing_in_swarm"
+resolution = "discard_source"
+decision_receipt = "EffortlessMetrics/shiplog-swarm#388"
+decision_merge_sha = "b816b6032e85ed698ae34ac1d60974cd6f8b8f53"
+reason = "The reviewed #388 protected-workspace report repair is the bounded current swarm choice for this path; it does not grant permanent swarm authority."
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "301913b6034d03b6fce6b1adb4ad48b22a89bac7" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "aaaba9333407e0380f6dcf28d65147120bd9ded5" }
+
+[[transition.path]]
+path = "docs/xtask.md"
+disposition = "missing_in_swarm"
+resolution = "discard_source"
+decision_receipt = "EffortlessMetrics/shiplog-swarm#388"
+decision_merge_sha = "b816b6032e85ed698ae34ac1d60974cd6f8b8f53"
+reason = "The reviewed #388 protected-workspace report repair is the bounded current swarm choice for this path; it does not grant permanent swarm authority."
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "6fcb4394cfaa1323a355cb627c100fd429bed27c" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "fd3b42375c5d63337eca64b3e317f35ae954f47f" }
+
+[[transition.path]]
+path = "xtask/src/tasks/repo_contract_report.rs"
+disposition = "missing_in_swarm"
+resolution = "discard_source"
+decision_receipt = "EffortlessMetrics/shiplog-swarm#388"
+decision_merge_sha = "b816b6032e85ed698ae34ac1d60974cd6f8b8f53"
+reason = "The reviewed #388 report repair preserves protected-workspace artifacts and is the bounded current swarm choice for this path; it does not grant permanent swarm authority."
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "fab37f26423e06a97326b521706c7067432a571f" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "5fe36aed687f9cf65babb3c8559de17a0ab54ec1" }
+
+[[transition.path]]
+path = "plans/shiplog-swarm/current-promotion.md"
+disposition = "missing_in_swarm"
+resolution = "discard_source"
+decision_receipt = "EffortlessMetrics/shiplog-swarm#381"
+decision_merge_sha = "1aee99e52e47f851269336c19eee400e3de44d1a"
+reason = "The generated current-promotion view remains the reviewed #381 bounded swarm result for this path."
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "2cf46f2668123bb939bd5c92beb02f8e375a5664" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "481ce9db1942c7a363e5cf2988c7e72d934e2512" }
+
+[[transition.path]]
+path = "xtask/src/tasks/promote.rs"
+disposition = "missing_in_swarm"
+resolution = "discard_source"
+decision_receipt = "EffortlessMetrics/shiplog-swarm#392"
+decision_merge_sha = "1bdfab7591b8a4aea29836509ba6e9dbde30e75c"
+reason = "The reviewed #392 planner repair rejects lossy Git output and is the bounded current swarm choice for this path."
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "3d58577fa9e518b76d22c266b8c861f6dca36335" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "2cc6880d6185679ebd2c7bfd7c6af70a2cc2a39a" }
+
+[[transition.path]]
+path = "xtask/src/cli.rs"
+disposition = "missing_in_swarm"
+resolution = "discard_source"
+decision_receipt = "EffortlessMetrics/shiplog-swarm#381"
+decision_merge_sha = "1aee99e52e47f851269336c19eee400e3de44d1a"
+reason = "The reviewed #381 CLI path remains the bounded swarm result for this promotion."
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "9eef06e823d210c51c5190fd8fe52475983d0d45" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "0e10f34fa8ea89a8a3f3f758dea82473774e2c14" }
+
+[[transition.path]]
+path = "xtask/src/tasks/promotion_body.rs"
+disposition = "missing_in_swarm"
+resolution = "discard_source"
+decision_receipt = "EffortlessMetrics/shiplog-swarm#381"
+decision_merge_sha = "1aee99e52e47f851269336c19eee400e3de44d1a"
+reason = "The reviewed #381 promotion-body path remains the bounded swarm result for this promotion."
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "ca9b020eb9ecc5f7b423de02120b6a99fbbbe21e" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "52a70a45f050acf06523ad89bf3077dae997b356" }
+
+
+# PR #393 materialized the preceding manifest update. Its evidence target is
+# the parent of #393; the self-referential path remains active while this
+# follow-up materializes the next ledger entry.
+[[transition]]
+source_pr = "EffortlessMetrics/shiplog#682"
+source_merge_sha = "2f69daf921d74fb9472584c2a0df31857cfa2384"
+source_target = "175e8c8cee8110c4cf4a42d5534f5dffe45bf426"
+swarm_target = "08f93314a62fa039493487bf008239d7f5648b4e"
+
+[[transition.path]]
+path = "plans/shiplog-swarm/promotion-state.toml"
+disposition = "missing_in_swarm"
+resolution = "discard_source"
+self_referential = true
+decision_receipt = "EffortlessMetrics/shiplog-swarm#393"
+decision_merge_sha = "f99dcbd1ec331c9665b16748b2493bc0a4f0c25f"
+reason = "The reviewed #393 manifest is the exact bounded promotion ledger; this self-referential binding records its source entry and the pre-#393 swarm result while allowing later manifest materialization."
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "bf3cbaa556a3b3249f952742bb2c6b28847f3876" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "fcd885aacf2233fd38625ff9051c038b500a6f4f" }
