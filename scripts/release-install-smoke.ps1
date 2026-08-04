@@ -54,15 +54,91 @@ function Get-Sha256Hex {
     }
 }
 
+function Find-UniqueCandidateFile {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Root,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Name
+    )
+
+    $matches = @(
+        Get-ChildItem -LiteralPath $Root -Recurse -File |
+            Where-Object { $_.Name -eq $Name }
+    )
+    if ($matches.Count -ne 1) {
+        throw "candidate bundle must contain exactly one $Name; found $($matches.Count) under $Root"
+    }
+    return $matches[0].FullName
+}
+
+function Assert-CandidateManifest {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ManifestPath,
+
+        [Parameter(Mandatory = $true)]
+        [string]$SumsPath,
+
+        [Parameter(Mandatory = $true)]
+        [string]$ExpectedTag,
+
+        [Parameter(Mandatory = $true)]
+        [string]$ExpectedSourceSha
+    )
+
+    if ($ExpectedSourceSha -notmatch '^[0-9a-fA-F]{40}$') {
+        throw "SHIPLOG_RELEASE_SOURCE_SHA must be a full 40-character commit SHA"
+    }
+
+    $entries = @{}
+    foreach ($line in Get-Content -LiteralPath $ManifestPath) {
+        if ([string]::IsNullOrWhiteSpace($line)) {
+            continue
+        }
+        $parts = $line -split '=', 2
+        if ($parts.Count -ne 2 -or $entries.ContainsKey($parts[0])) {
+            throw "malformed or duplicated candidate manifest field: $line"
+        }
+        $entries[$parts[0]] = $parts[1]
+    }
+
+    if ($entries['schema_version'] -ne '1') {
+        throw "candidate manifest has unsupported schema"
+    }
+    if ($entries['release_tag'] -ne $ExpectedTag) {
+        throw "candidate manifest is not bound to $ExpectedTag"
+    }
+    if ($entries['source_sha'] -ne $ExpectedSourceSha) {
+        throw "candidate manifest is not bound to source commit $ExpectedSourceSha"
+    }
+    if ($entries['asset_count'] -ne '4') {
+        throw "candidate manifest does not record the four supported binaries"
+    }
+    if ($entries['checksum_manifest_sha256'] -notmatch '^[0-9a-fA-F]{64}$') {
+        throw "candidate manifest has no valid checksum manifest digest"
+    }
+
+    $actualSumsSha = Get-Sha256Hex $SumsPath
+    if ($actualSumsSha -ne $entries['checksum_manifest_sha256'].ToLowerInvariant()) {
+        throw "candidate SHA256SUMS.txt digest mismatch`nexpected: $($entries['checksum_manifest_sha256'])`nactual:   $actualSumsSha"
+    }
+}
+
 if ($Version -eq "-h" -or $Version -eq "--help") {
     @"
 usage: scripts/release-install-smoke.ps1 <version>
 
-Downloads the Windows GitHub release binary, verifies SHA256SUMS.txt, proves the
-no-token first-use path and runs the no-network review rescue smoke path. This
-script is intended to work without Rust or Cargo installed.
+Verifies the Windows Shiplog release candidate, proves the no-token first-use
+path, and runs the no-network review rescue smoke path. By default the script
+downloads public GitHub Release assets. During staged release proof, point it at
+the exact workflow candidate bundle instead.
 
-Set SHIPLOG_RELEASE_REPO=owner/repo to verify a fork.
+Set SHIPLOG_RELEASE_CANDIDATE_DIR=path to use a local staged candidate bundle.
+Set SHIPLOG_RELEASE_SOURCE_SHA=<full-sha> with candidate mode to bind the bundle
+to the exact tagged source commit.
+Set SHIPLOG_RELEASE_REPO=owner/repo to verify a public release or fork.
 Set SHIPLOG_RELEASE_SMOKE_DIR=path to override the scratch directory.
 "@ | Write-Error
     exit 2
@@ -71,6 +147,8 @@ Set SHIPLOG_RELEASE_SMOKE_DIR=path to override the scratch directory.
 $versionNumber = $Version.TrimStart("v")
 $tag = "v$versionNumber"
 $repo = if ($env:SHIPLOG_RELEASE_REPO) { $env:SHIPLOG_RELEASE_REPO } else { "EffortlessMetrics/shiplog" }
+$candidateDir = $env:SHIPLOG_RELEASE_CANDIDATE_DIR
+$expectedSourceSha = $env:SHIPLOG_RELEASE_SOURCE_SHA
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = Split-Path -Parent $scriptDir
@@ -84,18 +162,44 @@ $downloadDir = Join-Path $workDir "download"
 $demoOut = Join-Path $workDir "demo-out"
 
 $asset = "shiplog-x86_64-pc-windows-msvc.exe"
-$baseUrl = "https://github.com/$repo/releases/download/$tag"
 $binaryPath = Join-Path $downloadDir "shiplog.exe"
 $sumsPath = Join-Path $downloadDir "SHA256SUMS.txt"
+$manifestPath = Join-Path $downloadDir "RELEASE_CANDIDATE.txt"
 
-Invoke-Step "downloading $repo@$tag release asset for Windows"
 Remove-Item -Recurse -Force $workDir -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force $downloadDir | Out-Null
-Invoke-WebRequest -UseBasicParsing -Uri "$baseUrl/$asset" -OutFile $binaryPath
-Invoke-WebRequest -UseBasicParsing -Uri "$baseUrl/SHA256SUMS.txt" -OutFile $sumsPath
+
+if ($candidateDir) {
+    if (-not $expectedSourceSha) {
+        throw "SHIPLOG_RELEASE_SOURCE_SHA is required with SHIPLOG_RELEASE_CANDIDATE_DIR"
+    }
+    $candidateRoot = (Resolve-Path -LiteralPath $candidateDir).Path
+    $candidateAsset = Find-UniqueCandidateFile -Root $candidateRoot -Name $asset
+    $candidateSums = Find-UniqueCandidateFile -Root $candidateRoot -Name "SHA256SUMS.txt"
+    $candidateManifest = Find-UniqueCandidateFile -Root $candidateRoot -Name "RELEASE_CANDIDATE.txt"
+
+    Invoke-Step "loading staged candidate $tag for Windows"
+    Copy-Item -LiteralPath $candidateAsset -Destination $binaryPath
+    Copy-Item -LiteralPath $candidateSums -Destination $sumsPath
+    Copy-Item -LiteralPath $candidateManifest -Destination $manifestPath
+    Assert-CandidateManifest `
+        -ManifestPath $manifestPath `
+        -SumsPath $sumsPath `
+        -ExpectedTag $tag `
+        -ExpectedSourceSha $expectedSourceSha
+}
+else {
+    $baseUrl = "https://github.com/$repo/releases/download/$tag"
+    Invoke-Step "downloading $repo@$tag release asset for Windows"
+    Invoke-WebRequest -UseBasicParsing -Uri "$baseUrl/$asset" -OutFile $binaryPath
+    Invoke-WebRequest -UseBasicParsing -Uri "$baseUrl/SHA256SUMS.txt" -OutFile $sumsPath
+}
 
 Invoke-Step "verifying SHA256SUMS.txt entry for $asset"
-$sumLine = Get-Content $sumsPath | Where-Object { $_ -match "/$([Regex]::Escape($asset))$" } | Select-Object -First 1
+$sumLine = Get-Content $sumsPath | Where-Object {
+    $parts = $_ -split "\s+"
+    $parts.Count -ge 2 -and [System.IO.Path]::GetFileName($parts[-1]) -eq $asset
+} | Select-Object -First 1
 if (-not $sumLine) {
     throw "no SHA256SUMS.txt entry found for $asset"
 }
@@ -105,7 +209,7 @@ if ($actualSha -ne $expectedSha) {
     throw "checksum mismatch for $asset`nexpected: $expectedSha`nactual:   $actualSha"
 }
 
-Invoke-Step "smoking downloaded binary"
+Invoke-Step "smoking candidate binary"
 $versionOutput = & $binaryPath --version
 if ($LASTEXITCODE -ne 0 -or $versionOutput.Trim() -ne "shiplog $versionNumber") {
     throw "unexpected version output: $versionOutput"
@@ -175,9 +279,9 @@ foreach ($artifact in @(
     }
 }
 
-# Structurally validate the receipts, not merely their existence: the
-# published binary must parse its own intake.report.json/packet.md/ledger/
-# coverage/bundle receipts back into their canonical shapes.
+# Structurally validate the receipts, not merely their existence: the candidate
+# binary must parse its own intake.report.json/packet.md/ledger/coverage/bundle
+# receipts back into their canonical shapes.
 Invoke-Step "structurally validating cold-start receipts"
 $reportJson = Join-Path $latestRun.FullName "intake.report.json"
 Invoke-Shiplog $binaryPath @("report", "validate", "--path", $reportJson, "--receipts") | Out-Null
@@ -194,4 +298,9 @@ if (-not (Get-ChildItem -Path $demoOut -Recurse -Filter "packet.md" | Select-Obj
     throw "no packet.md produced under $demoOut"
 }
 
-Write-Host "release install smoke passed for $repo@$tag"
+if ($candidateDir) {
+    Write-Host "staged release candidate smoke passed for $tag at $expectedSourceSha"
+}
+else {
+    Write-Host "release install smoke passed for $repo@$tag"
+}
