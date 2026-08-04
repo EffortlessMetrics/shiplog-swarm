@@ -76,6 +76,9 @@ function Find-UniqueCandidateFile {
 function Assert-CandidateManifest {
     param(
         [Parameter(Mandatory = $true)]
+        [string]$CandidateRoot,
+
+        [Parameter(Mandatory = $true)]
         [string]$ManifestPath,
 
         [Parameter(Mandatory = $true)]
@@ -116,6 +119,16 @@ function Assert-CandidateManifest {
     if ($entries['asset_count'] -ne '4') {
         throw "candidate manifest does not record the four supported binaries"
     }
+
+    foreach ($requiredAsset in @(
+        'shiplog-x86_64-unknown-linux-gnu',
+        'shiplog-x86_64-apple-darwin',
+        'shiplog-aarch64-apple-darwin',
+        'shiplog-x86_64-pc-windows-msvc.exe'
+    )) {
+        $null = Find-UniqueCandidateFile -Root $CandidateRoot -Name $requiredAsset
+    }
+
     if ($entries['checksum_manifest_sha256'] -notmatch '^[0-9a-fA-F]{64}$') {
         throw "candidate manifest has no valid checksum manifest digest"
     }
@@ -183,6 +196,7 @@ if ($candidateDir) {
     Copy-Item -LiteralPath $candidateSums -Destination $sumsPath
     Copy-Item -LiteralPath $candidateManifest -Destination $manifestPath
     Assert-CandidateManifest `
+        -CandidateRoot $candidateRoot `
         -ManifestPath $manifestPath `
         -SumsPath $sumsPath `
         -ExpectedTag $tag `
