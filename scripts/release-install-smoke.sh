@@ -251,11 +251,17 @@ for artifact in \
   fi
 done
 
-# Structurally validate the receipts, not merely their existence: the candidate
-# binary must parse its own intake.report.json/packet.md/ledger/coverage/bundle
-# receipts back into their canonical shapes.
+# The intake report records its path relative to the original cold-start
+# working directory. Validate from that same directory so the self-reference is
+# resolved once rather than joined onto the run directory a second time.
 echo "==> structurally validating cold-start receipts"
-"$binary_path" report validate --path "$latest_run/intake.report.json" --receipts
+latest_run_name="$(basename "$latest_run")"
+(
+  cd "$cold_start_dir"
+  "$binary_path" report validate \
+    --path "./out/$latest_run_name/intake.report.json" \
+    --receipts
+)
 
 echo "==> running no-network review rescue fixture"
 rm -rf "$demo_out"
