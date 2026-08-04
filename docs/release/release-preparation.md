@@ -133,6 +133,7 @@ Resolve the current exact head after fetching both remotes:
 git fetch origin --prune
 git fetch swarm --prune
 swarm_head="$(git rev-parse swarm/main)"
+mkdir -p target/source-of-truth
 
 cargo xtask promote --swarm-sha "$swarm_head" --dry-run \
   > target/source-of-truth/promote-plan-1.json
@@ -148,6 +149,7 @@ PowerShell equivalent:
 git fetch origin --prune
 git fetch swarm --prune
 $swarmHead = (git rev-parse swarm/main).Trim()
+New-Item -ItemType Directory -Force target/source-of-truth | Out-Null
 
 cargo xtask promote --swarm-sha $swarmHead --dry-run |
   Set-Content -NoNewline target/source-of-truth/promote-plan-1.json
@@ -332,12 +334,20 @@ If any exact-tag gate fails:
 
 ## Phase 5 — Publish
 
-Only after the exact tag workflow is green and its artifacts are reviewed:
+Only after the exact tag workflow is green and its artifacts are reviewed,
+publish the crate from a detached checkout of that same immutable tag:
 
 ```bash
+git fetch origin --prune --tags
+git checkout --detach vX.Y.Z
+test "$(git rev-parse HEAD)" = "$(git rev-list -n 1 vX.Y.Z)"
+
 cargo publish -p shiplog --locked
 gh release edit vX.Y.Z --draft=false --latest
 ```
+
+Do not publish from a moving `main`, an unmerged release-prep branch, or a local
+rebuild that is not the exact tag exercised by the source Release workflow.
 
 Verify public state:
 
@@ -453,7 +463,8 @@ source/swarm divergence is understood. Never rewrite `shiplog/main` history.
 
 ### Publication and closeout
 
-- [ ] crates.io publication succeeds and public metadata is verified.
+- [ ] crates.io publication ran from a detached checkout of the exact release
+      tag and public metadata is verified.
 - [ ] GitHub release is made public only after exact-tag proof.
 - [ ] Public assets, checksums, installers, and `--version` are verified.
 - [ ] Homebrew and Scoop updates use final public hashes and pass validation.
