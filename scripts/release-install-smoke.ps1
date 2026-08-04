@@ -293,12 +293,18 @@ foreach ($artifact in @(
     }
 }
 
-# Structurally validate the receipts, not merely their existence: the candidate
-# binary must parse its own intake.report.json/packet.md/ledger/coverage/bundle
-# receipts back into their canonical shapes.
+# The intake report records its path relative to the original cold-start
+# working directory. Validate from that same directory so the self-reference is
+# resolved once rather than joined onto the run directory a second time.
 Invoke-Step "structurally validating cold-start receipts"
-$reportJson = Join-Path $latestRun.FullName "intake.report.json"
-Invoke-Shiplog $binaryPath @("report", "validate", "--path", $reportJson, "--receipts") | Out-Null
+Push-Location -LiteralPath $coldStartDir
+try {
+    $relativeReport = Join-Path "." (Join-Path "out" (Join-Path $latestRun.Name "intake.report.json"))
+    Invoke-Shiplog $binaryPath @("report", "validate", "--path", $relativeReport, "--receipts") | Out-Null
+}
+finally {
+    Pop-Location
+}
 
 Invoke-Step "running no-network review rescue fixture"
 Remove-Item -Recurse -Force $demoOut -ErrorAction SilentlyContinue
