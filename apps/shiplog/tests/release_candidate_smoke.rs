@@ -18,7 +18,6 @@ struct CandidateFixture {
     candidate_dir: PathBuf,
     smoke_dir: PathBuf,
     asset_path: PathBuf,
-    asset_relative: String,
 }
 
 fn repo_root() -> PathBuf {
@@ -112,7 +111,6 @@ fn candidate_fixture() -> Result<CandidateFixture> {
         candidate_dir,
         smoke_dir,
         asset_path,
-        asset_relative: asset_relative.to_string(),
     };
     write_candidate_metadata(&fixture)?;
     Ok(fixture)
