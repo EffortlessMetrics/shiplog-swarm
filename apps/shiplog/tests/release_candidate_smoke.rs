@@ -1,3 +1,10 @@
+//! Ordinary-PR proof for the staged release-candidate selection contract.
+//!
+//! These tests synthesize one complete four-platform candidate bundle and drive
+//! the real platform smoke script. They prove selection, manifest, checksum,
+//! command, and receipt behavior without creating a tag or public release. They
+//! do not replace the explicit-tag four-runner proof required before #245 closes.
+
 use anyhow::{Context, Result, bail, ensure};
 use sha2::{Digest, Sha256};
 use std::fs;
