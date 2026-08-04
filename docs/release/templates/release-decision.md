@@ -1,7 +1,7 @@
 # shiplog X.Y.Z — Release Decision
 
-**Release target:** `vX.Y.Z`  
-**Theme:** `<one user-facing sentence>`  
+**Release target:** `vX.Y.Z`
+**Theme:** `<one user-facing sentence>`
 **Status:** proposed | ready to stage | shipped | cancelled
 
 ## Decision

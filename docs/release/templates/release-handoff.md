@@ -1,8 +1,8 @@
 # shiplog X.Y.Z — Release Execution Handoff
 
-**Release target:** `vX.Y.Z`  
-**Status:** preparing | staged | published | closed  
-**Release decision:** [`docs/release/X.Y.Z-release-decision.md`](docs/release/X.Y.Z-release-decision.md)  
+**Release target:** `vX.Y.Z`
+**Status:** preparing | staged | published | closed
+**Release decision:** [`docs/release/X.Y.Z-release-decision.md`](docs/release/X.Y.Z-release-decision.md)
 **Readiness ledger:** [`docs/release/X.Y.Z-readiness.md`](docs/release/X.Y.Z-readiness.md)
 
 Copy this template to root `RELEASE_HANDOFF_X.Y.Z.md`. The links above are

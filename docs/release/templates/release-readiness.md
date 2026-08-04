@@ -1,7 +1,7 @@
 # shiplog X.Y.Z — Release Readiness
 
-**Release target:** `vX.Y.Z`  
-**Theme:** `<one user-facing sentence>`  
+**Release target:** `vX.Y.Z`
+**Theme:** `<one user-facing sentence>`
 **Status:** preparing | ready to stage | staged | shipped | blocked
 
 ## Candidate identities

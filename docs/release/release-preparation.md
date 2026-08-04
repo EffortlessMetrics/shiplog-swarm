@@ -1,6 +1,6 @@
 # Shiplog Release Preparation and Execution
 
-**Status:** active living procedure  
+**Status:** active living procedure
 **Authority:** `shiplog-swarm` prepares and proves the complete shared
 candidate; `shiplog` owns source execution, tags, publication, and public
 release state.
@@ -331,20 +331,51 @@ execution PR.
 
 ## Phase 4 — Stage the exact tagged candidates
 
-Tag only the exact proven source commit:
+The swarm candidate contract is implemented and proven by the staged-candidate
+workflow on #391. The source-owned counterpart still needs to project that
+contract into the source release writer; this procedure does not claim an
+exact-tag run or public release until that source work and live evidence exist.
+
+Tag only the exact proven source commit recorded in the readiness ledger. Do
+not tag whichever source checkout happens to be current:
 
 ```bash
-git switch main
-git pull --ff-only origin main
-git status --short
+approved_sha="<40-character readiness SHA>"
+tag="vX.Y.Z"
 
-git tag -a vX.Y.Z -m "shiplog vX.Y.Z"
-git push origin vX.Y.Z
+if [[ ! "$approved_sha" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "approved readiness SHA must be a full 40-character commit SHA" >&2
+  exit 1
+fi
+
+git fetch origin "$approved_sha"
+
+test -z "$(git status --porcelain --untracked-files=no)"
+
+git switch --detach "$approved_sha"
+
+test "$(git rev-parse HEAD)" = "$approved_sha"
+
+if git rev-parse --quiet --verify "refs/tags/$tag" >/dev/null; then
+  echo "tag already exists: $tag" >&2
+  exit 1
+fi
+
+git tag -a "$tag" "$approved_sha" \
+  -m "Shiplog $tag"
+
+test "$(git rev-list -n 1 "$tag")" = "$approved_sha"
+git push origin "$tag"
 ```
 
-The tag push invokes the source `Release` workflow. A manual dispatch is only
-for an existing explicit semver tag and requires the owner-approval input. It
-does not replace the tag or authorize an untagged build.
+Stop before tagging when the tracked checkout is dirty or the approved SHA is
+unavailable. If source has advanced after readiness, do not silently adopt the
+new head; return to swarm and produce a new approved candidate. If the tag
+already exists, do not move or reuse it. If the immutable tag or candidate
+fails, repair through swarm and cut the next version. The tag push invokes the
+source `Release` workflow. A manual dispatch is only for an existing explicit
+semver tag and requires the owner-approval input; it does not replace the tag
+or authorize an untagged build.
 
 The workflow must keep the candidate non-current while it proves one immutable
 staged set. A draft GitHub release, retained workflow-artifact bundle, or other
