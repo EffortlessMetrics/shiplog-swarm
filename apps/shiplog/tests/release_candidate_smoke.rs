@@ -194,6 +194,36 @@ fn staged_candidate_smoke_uses_local_bundle_and_emits_receipts() -> Result<()> {
 }
 
 #[test]
+fn staged_candidate_smoke_rejects_incomplete_four_platform_bundle() -> Result<()> {
+    let fixture = candidate_fixture()?;
+    let current = current_release_asset()?;
+    let missing_relative = RELEASE_ASSETS
+        .iter()
+        .copied()
+        .find(|relative| *relative != current)
+        .context("fixture should have a non-host candidate asset")?;
+    let missing_name = Path::new(missing_relative)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .context("missing candidate asset name is not UTF-8")?;
+    fs::remove_file(fixture.candidate_dir.join(missing_relative))?;
+
+    let output = run_candidate_smoke(&fixture)?;
+    ensure!(
+        !output.status.success(),
+        "incomplete candidate set unexpectedly passed"
+    );
+    ensure!(
+        combined_output(&output).contains(&format!(
+            "candidate bundle must contain exactly one {missing_name}; found 0"
+        )),
+        "candidate mode must prove all four platform binaries exist: {}",
+        combined_output(&output)
+    );
+    Ok(())
+}
+
+#[test]
 fn staged_candidate_smoke_rejects_checksum_mismatch_before_execution() -> Result<()> {
     let fixture = candidate_fixture()?;
     let mut bytes = fs::read(&fixture.asset_path)?;
