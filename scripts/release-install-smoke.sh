@@ -228,6 +228,10 @@ fi
 
 rm -rf "$work_dir"
 mkdir -p "$download_dir"
+work_dir="$(cd -P -- "$work_dir" && pwd)"
+download_dir="$(cd -P -- "$download_dir" && pwd)"
+demo_out="$work_dir/demo-out"
+binary_path="$download_dir/$(basename -- "$binary_path")"
 
 if [[ "$candidate_dir" != "" ]]; then
   candidate_dir="$(cd -P -- "$candidate_dir" && pwd)"
@@ -252,7 +256,18 @@ fi
 
 echo "==> verifying SHA256SUMS.txt entry for $asset"
 expected_sha="$(
-  awk -v asset="$asset" '$2 ~ "/" asset "$" { print $1; found=1 } END { if (!found) exit 1 }' \
+  awk -v asset="$asset" '
+    {
+      path = $2
+      sub(/^.*\//, "", path)
+      if (path == asset) {
+        print $1
+        found = 1
+        exit
+      }
+    }
+    END { if (!found) exit 1 }
+  ' \
     "$download_dir/SHA256SUMS.txt"
 )"
 actual_sha="$(sha256_file "$binary_path")"

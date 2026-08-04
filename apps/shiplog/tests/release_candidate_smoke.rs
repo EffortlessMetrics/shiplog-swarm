@@ -108,9 +108,12 @@ fn candidate_fixture() -> Result<CandidateFixture> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let mut permissions = fs::metadata(&asset_path)?.permissions();
+        let mut permissions = fs::metadata(&asset_path)
+            .with_context(|| format!("read metadata for {}", asset_path.display()))?
+            .permissions();
         permissions.set_mode(0o755);
-        fs::set_permissions(&asset_path, permissions)?;
+        fs::set_permissions(&asset_path, permissions)
+            .with_context(|| format!("set executable permissions for {}", asset_path.display()))?;
     }
 
     let fixture = CandidateFixture {
@@ -176,6 +179,55 @@ fn manifest_path(fixture: &CandidateFixture) -> PathBuf {
     fixture.candidate_dir.join("RELEASE_CANDIDATE.txt")
 }
 
+fn rewrite_host_checksum_entry_as_flat_path(fixture: &CandidateFixture) -> Result<()> {
+    let asset = current_release_asset()?;
+    let asset_name = Path::new(asset)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .context("host candidate asset name is not UTF-8")?;
+    let sums_path = fixture.candidate_dir.join("SHA256SUMS.txt");
+    let sums = fs::read_to_string(&sums_path)
+        .with_context(|| format!("read checksum manifest {}", sums_path.display()))?;
+    let host_digest = sha256(&fixture.asset_path)?;
+    let rewritten = sums
+        .lines()
+        .map(|line| {
+            if line.ends_with(asset) {
+                format!("{host_digest}  {asset_name}")
+            } else {
+                line.to_owned()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n";
+    fs::write(&sums_path, rewritten)
+        .with_context(|| format!("write flat checksum manifest {}", sums_path.display()))?;
+    let sums_digest = sha256(&sums_path)?;
+    let manifest = manifest_path(fixture);
+    let text = fs::read_to_string(&manifest)
+        .with_context(|| format!("read candidate manifest {}", manifest.display()))?;
+    let updated = text
+        .lines()
+        .map(|line| {
+            if line.starts_with("checksum_manifest_sha256=") {
+                format!("checksum_manifest_sha256={sums_digest}")
+            } else {
+                line.to_owned()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n";
+    fs::write(&manifest, updated).with_context(|| {
+        format!(
+            "write flat-checksum candidate manifest {}",
+            manifest.display()
+        )
+    })?;
+    Ok(())
+}
+
 #[test]
 fn staged_candidate_smoke_uses_local_bundle_and_emits_receipts() -> Result<()> {
     let fixture = candidate_fixture()?;
@@ -221,7 +273,9 @@ fn staged_candidate_smoke_rejects_incomplete_four_platform_bundle() -> Result<()
         .file_name()
         .and_then(|name| name.to_str())
         .context("missing candidate asset name is not UTF-8")?;
-    fs::remove_file(fixture.candidate_dir.join(missing_relative))?;
+    let missing_path = fixture.candidate_dir.join(missing_relative);
+    fs::remove_file(&missing_path)
+        .with_context(|| format!("remove missing fixture asset {}", missing_path.display()))?;
 
     let output = run_candidate_smoke(&fixture)?;
     ensure!(
@@ -242,12 +296,17 @@ fn staged_candidate_smoke_rejects_incomplete_four_platform_bundle() -> Result<()
 fn staged_candidate_smoke_rejects_duplicate_manifest_fields() -> Result<()> {
     let fixture = candidate_fixture()?;
     let path = manifest_path(&fixture);
-    let mut manifest = fs::read_to_string(&path)?;
+    let mut manifest = fs::read_to_string(&path)
+        .with_context(|| format!("read candidate manifest {}", path.display()))?;
     manifest.push_str("release_tag=v0.0.0\n");
-    fs::write(&path, manifest)?;
+    fs::write(&path, manifest)
+        .with_context(|| format!("write duplicate-field manifest {}", path.display()))?;
 
     let output = run_candidate_smoke(&fixture)?;
-    ensure!(!output.status.success(), "duplicate manifest unexpectedly passed");
+    ensure!(
+        !output.status.success(),
+        "duplicate manifest unexpectedly passed"
+    );
     ensure!(
         combined_output(&output).contains("duplicate candidate manifest field: release_tag"),
         "duplicate keys must fail before candidate execution: {}",
@@ -257,12 +316,37 @@ fn staged_candidate_smoke_rejects_duplicate_manifest_fields() -> Result<()> {
 }
 
 #[test]
+fn staged_candidate_smoke_rejects_unknown_manifest_fields() -> Result<()> {
+    let fixture = candidate_fixture()?;
+    let path = manifest_path(&fixture);
+    let mut manifest = fs::read_to_string(&path)
+        .with_context(|| format!("read candidate manifest {}", path.display()))?;
+    manifest.push_str("unexpected=value\n");
+    fs::write(&path, manifest)
+        .with_context(|| format!("write unknown-field manifest {}", path.display()))?;
+
+    let output = run_candidate_smoke(&fixture)?;
+    ensure!(
+        !output.status.success(),
+        "unknown manifest field unexpectedly passed"
+    );
+    ensure!(
+        combined_output(&output).contains("unknown candidate manifest field: unexpected"),
+        "unknown keys must fail before candidate execution: {}",
+        combined_output(&output)
+    );
+    Ok(())
+}
+
+#[test]
 fn staged_candidate_smoke_rejects_invalid_workflow_identity() -> Result<()> {
     let fixture = candidate_fixture()?;
     let path = manifest_path(&fixture);
-    let manifest = fs::read_to_string(&path)?
+    let manifest = fs::read_to_string(&path)
+        .with_context(|| format!("read candidate manifest {}", path.display()))?
         .replace("workflow_run_id=1", "workflow_run_id=not-a-run");
-    fs::write(&path, manifest)?;
+    fs::write(&path, manifest)
+        .with_context(|| format!("write invalid-identity manifest {}", path.display()))?;
 
     let output = run_candidate_smoke(&fixture)?;
     ensure!(
@@ -280,9 +364,15 @@ fn staged_candidate_smoke_rejects_invalid_workflow_identity() -> Result<()> {
 #[test]
 fn staged_candidate_smoke_rejects_checksum_mismatch_before_execution() -> Result<()> {
     let fixture = candidate_fixture()?;
-    let mut bytes = fs::read(&fixture.asset_path)?;
+    let mut bytes = fs::read(&fixture.asset_path)
+        .with_context(|| format!("read candidate asset {}", fixture.asset_path.display()))?;
     bytes.extend_from_slice(b"corrupt");
-    fs::write(&fixture.asset_path, bytes)?;
+    fs::write(&fixture.asset_path, bytes).with_context(|| {
+        format!(
+            "write corrupted candidate asset {}",
+            fixture.asset_path.display()
+        )
+    })?;
 
     let output = run_candidate_smoke(&fixture)?;
     ensure!(
@@ -297,16 +387,45 @@ fn staged_candidate_smoke_rejects_checksum_mismatch_before_execution() -> Result
     Ok(())
 }
 
-#[cfg(unix)]
+#[test]
+fn staged_candidate_smoke_accepts_flat_checksum_entry() -> Result<()> {
+    let fixture = candidate_fixture()?;
+    rewrite_host_checksum_entry_as_flat_path(&fixture)?;
+    let output = run_candidate_smoke(&fixture)?;
+    ensure!(output.status.success(), "{}", combined_output(&output));
+    Ok(())
+}
+
 #[test]
 fn staged_candidate_smoke_rejects_broken_command_with_matching_checksum() -> Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-
     let fixture = candidate_fixture()?;
-    fs::write(&fixture.asset_path, "#!/usr/bin/env bash\nexit 42\n")?;
-    let mut permissions = fs::metadata(&fixture.asset_path)?.permissions();
-    permissions.set_mode(0o755);
-    fs::set_permissions(&fixture.asset_path, permissions)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::write(&fixture.asset_path, "#!/usr/bin/env bash\nexit 42\n").with_context(|| {
+            format!(
+                "write broken Unix candidate {}",
+                fixture.asset_path.display()
+            )
+        })?;
+        let mut permissions = fs::metadata(&fixture.asset_path)
+            .with_context(|| format!("read metadata for {}", fixture.asset_path.display()))?
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&fixture.asset_path, permissions).with_context(|| {
+            format!(
+                "set executable permissions for {}",
+                fixture.asset_path.display()
+            )
+        })?;
+    }
+    #[cfg(windows)]
+    fs::write(&fixture.asset_path, b"not a Windows executable").with_context(|| {
+        format!(
+            "write broken Windows candidate {}",
+            fixture.asset_path.display()
+        )
+    })?;
     write_candidate_metadata(&fixture)?;
 
     let output = run_candidate_smoke(&fixture)?;
@@ -318,6 +437,44 @@ fn staged_candidate_smoke_rejects_broken_command_with_matching_checksum() -> Res
         combined_output(&output).contains("candidate binary failed --version"),
         "matching checksums must not rescue a broken executable: {}",
         combined_output(&output)
+    );
+    Ok(())
+}
+
+#[test]
+fn release_workflow_binds_tag_push_identity_and_staged_contract() -> Result<()> {
+    let path = repo_root().join(".github/workflows/release.yml");
+    let workflow = fs::read_to_string(&path)
+        .with_context(|| format!("read release workflow {}", path.display()))?;
+    ensure!(
+        workflow.contains("WEBHOOK_SHA: ${{ github.sha }}"),
+        "preflight must receive the push webhook SHA through the step environment"
+    );
+    ensure!(
+        workflow.contains("EVENT_NAME\" == \"push\" && \"$release_sha\" != \"$WEBHOOK_SHA\""),
+        "tag-push preflight must reject a tag that moved after the webhook"
+    );
+    ensure!(
+        workflow.contains(
+            "Swarm verifies release inputs but cannot create a GitHub release."
+        ) && workflow.contains(
+            "Promote this exact proven tree to EffortlessMetrics/shiplog for authorized release execution."
+        ),
+        "the source handoff must preserve both durable summary statements"
+    );
+    ensure!(
+        workflow.contains("Confirm exact negative-control checkout")
+            && workflow.contains("run: test \"$(git rev-parse HEAD)\" = \"$RELEASE_SHA\""),
+        "negative controls must verify the checked-out release SHA"
+    );
+    ensure!(
+        !workflow.contains("actions/download-artifact@v8"),
+        "all download-artifact actions must be immutable"
+    );
+    ensure!(
+        workflow.contains("asset_count=$asset_count")
+            && workflow.contains("asset_count=\"${#expected[@]}\""),
+        "candidate manifest asset_count must derive from its canonical expected set"
     );
     Ok(())
 }

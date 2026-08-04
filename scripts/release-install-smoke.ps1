@@ -63,17 +63,17 @@ function Find-UniqueCandidateFile {
         [string]$Name
     )
 
-    $matches = @(
+    $candidateMatches = @(
         Get-ChildItem -LiteralPath $Root -Recurse -File -Force |
             Where-Object {
                 $_.Name -eq $Name -and
                 -not ($_.Attributes -band [System.IO.FileAttributes]::ReparsePoint)
             }
     )
-    if ($matches.Count -ne 1) {
-        throw "candidate bundle must contain exactly one $Name; found $($matches.Count) under $Root"
+    if ($candidateMatches.Count -ne 1) {
+        throw "candidate bundle must contain exactly one $Name; found $($candidateMatches.Count) under $Root"
     }
-    return $matches[0].FullName
+    return $candidateMatches[0].FullName
 }
 
 function Assert-CandidateManifest {
@@ -217,6 +217,12 @@ $manifestPath = Join-Path $downloadDir "RELEASE_CANDIDATE.txt"
 
 Remove-Item -Recurse -Force $workDir -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force $downloadDir | Out-Null
+$workDir = (Resolve-Path -LiteralPath $workDir).ProviderPath
+$downloadDir = (Resolve-Path -LiteralPath $downloadDir).ProviderPath
+$demoOut = Join-Path $workDir "demo-out"
+$binaryPath = Join-Path $downloadDir "shiplog.exe"
+$sumsPath = Join-Path $downloadDir "SHA256SUMS.txt"
+$manifestPath = Join-Path $downloadDir "RELEASE_CANDIDATE.txt"
 
 if ($candidateDir) {
     if (-not $expectedSourceSha) {
@@ -260,9 +266,14 @@ if ($actualSha -ne $expectedSha) {
 }
 
 Invoke-Step "smoking candidate binary"
-$versionOutput = @(& $binaryPath --version)
-if ($LASTEXITCODE -ne 0) {
-    throw "candidate binary failed --version"
+try {
+    $versionOutput = @(& $binaryPath --version)
+    if ($LASTEXITCODE -ne 0) {
+        throw "candidate binary failed --version"
+    }
+}
+catch {
+    throw "candidate binary failed --version: $($_.Exception.Message)"
 }
 $versionText = ($versionOutput -join [Environment]::NewLine).Trim()
 if ($versionText -ne "shiplog $versionNumber") {

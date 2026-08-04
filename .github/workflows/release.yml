@@ -66,22 +66,32 @@ jobs:
 
       - name: Checkout exact release tag
         shell: bash
+        env:
+          RELEASE_TAG: ${{ steps.release_tag.outputs.release_tag }}
         run: |
           set -euo pipefail
-          tag="${{ steps.release_tag.outputs.release_tag }}"
+          tag="$RELEASE_TAG"
           git fetch --force --depth=1 origin "refs/tags/$tag:refs/tags/$tag"
           git checkout --detach "$tag"
 
       - name: Resolve immutable release commit
         id: release_commit
         shell: bash
+        env:
+          RELEASE_TAG: ${{ steps.release_tag.outputs.release_tag }}
+          EVENT_NAME: ${{ github.event_name }}
+          WEBHOOK_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          tag="${{ steps.release_tag.outputs.release_tag }}"
+          tag="$RELEASE_TAG"
           release_sha="$(git rev-parse HEAD)"
           tag_commit="$(git rev-list -n 1 "$tag")"
           if [[ "$release_sha" != "$tag_commit" ]]; then
             echo "checked out $release_sha, but $tag resolves to $tag_commit" >&2
+            exit 1
+          fi
+          if [[ "$EVENT_NAME" == "push" && "$release_sha" != "$WEBHOOK_SHA" ]]; then
+            echo "tag $tag resolved to $release_sha, but the push webhook identified $WEBHOOK_SHA" >&2
             exit 1
           fi
           if [[ ! "$release_sha" =~ ^[0-9a-f]{40}$ ]]; then
@@ -91,7 +101,9 @@ jobs:
           echo "release_sha=$release_sha" >> "$GITHUB_OUTPUT"
 
       - name: Release hold guard
-        run: bash scripts/check-release-hold.sh "${{ steps.release_tag.outputs.release_tag }}"
+        env:
+          RELEASE_TAG: ${{ steps.release_tag.outputs.release_tag }}
+        run: bash scripts/check-release-hold.sh "$RELEASE_TAG"
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
@@ -144,7 +156,9 @@ jobs:
 
       - name: Confirm exact release commit
         shell: bash
-        run: test "$(git rev-parse HEAD)" = "${{ needs.release-preflight.outputs.release_sha }}"
+        env:
+          RELEASE_SHA: ${{ needs.release-preflight.outputs.release_sha }}
+        run: test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
@@ -152,7 +166,9 @@ jobs:
           toolchain: "1.95.0"
 
       - name: Install Rust target
-        run: rustup target add ${{ matrix.target }}
+        env:
+          TARGET: ${{ matrix.target }}
+        run: rustup target add "$TARGET"
 
       - name: Cache cargo registry
         uses: actions/cache@v6
@@ -173,15 +189,20 @@ jobs:
           key: ${{ runner.os }}-${{ matrix.target }}-cargo-release-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Build release
-        run: cargo build --release --target ${{ matrix.target }} -p shiplog --locked
+        env:
+          TARGET: ${{ matrix.target }}
+        run: cargo build --release --target "$TARGET" -p shiplog --locked
 
       - name: Stage binary
         shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+          EXT: ${{ matrix.ext }}
         run: |
           set -euo pipefail
           mkdir -p dist
-          src="target/${{ matrix.target }}/release/shiplog${{ matrix.ext }}"
-          dest="dist/shiplog-${{ matrix.target }}${{ matrix.ext }}"
+          src="target/$TARGET/release/shiplog$EXT"
+          dest="dist/shiplog-$TARGET$EXT"
           if [[ ! -f "$src" ]]; then
             echo "missing expected binary: $src" >&2
             find target -maxdepth 4 -type f -name 'shiplog*' -print >&2 || true
@@ -213,21 +234,27 @@ jobs:
 
       - name: Confirm exact release commit
         shell: bash
-        run: test "$(git rev-parse HEAD)" = "${{ needs.release-preflight.outputs.release_sha }}"
+        env:
+          RELEASE_SHA: ${{ needs.release-preflight.outputs.release_sha }}
+        run: test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
 
       - name: Extract version
         id: version
         shell: bash
+        env:
+          RELEASE_TAG: ${{ needs.release-preflight.outputs.release_tag }}
         run: |
-          VERSION=${{ needs.release-preflight.outputs.release_tag }}
+          VERSION="$RELEASE_TAG"
           VERSION=${VERSION#v}
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Record source release handoff
         shell: bash
         run: |
-          echo "Swarm verifies release inputs but cannot create a GitHub release."
-          echo "Promote this exact proven tree to EffortlessMetrics/shiplog for authorized release execution." >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "Swarm verifies release inputs but cannot create a GitHub release."
+            echo "Promote this exact proven tree to EffortlessMetrics/shiplog for authorized release execution."
+          } >> "$GITHUB_STEP_SUMMARY"
 
   # Assemble one immutable workflow-staged candidate set before acceptance.
   upload-assets:
@@ -249,16 +276,24 @@ jobs:
 
       - name: Confirm exact release commit
         shell: bash
-        run: test "$(git rev-parse HEAD)" = "${{ needs.release-preflight.outputs.release_sha }}"
+        env:
+          RELEASE_SHA: ${{ needs.release-preflight.outputs.release_sha }}
+        run: test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
 
       - name: Download all binary artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           path: artifacts
 
       - name: Generate candidate manifest and checksums
         id: candidate_manifest
         shell: bash
+        env:
+          RELEASE_TAG: ${{ needs.release-preflight.outputs.release_tag }}
+          RELEASE_SHA: ${{ needs.release-preflight.outputs.release_sha }}
+          REPOSITORY: ${{ github.repository }}
+          WORKFLOW_RUN_ID: ${{ github.run_id }}
+          WORKFLOW_RUN_ATTEMPT: ${{ github.run_attempt }}
         run: |
           set -euo pipefail
           cd artifacts
@@ -283,14 +318,15 @@ jobs:
           done
           checksum_manifest_sha256="$(sha256sum SHA256SUMS.txt | awk '{print $1}')"
 
+          asset_count="${#expected[@]}"
           cat > RELEASE_CANDIDATE.txt <<EOF
           schema_version=1
-          release_tag=${{ needs.release-preflight.outputs.release_tag }}
-          source_sha=${{ needs.release-preflight.outputs.release_sha }}
-          repository=${{ github.repository }}
-          workflow_run_id=${{ github.run_id }}
-          workflow_run_attempt=${{ github.run_attempt }}
-          asset_count=4
+          release_tag=$RELEASE_TAG
+          source_sha=$RELEASE_SHA
+          repository=$REPOSITORY
+          workflow_run_id=$WORKFLOW_RUN_ID
+          workflow_run_attempt=$WORKFLOW_RUN_ATTEMPT
+          asset_count=$asset_count
           checksum_manifest_sha256=$checksum_manifest_sha256
           EOF
           sed -i 's/^          //' RELEASE_CANDIDATE.txt
@@ -313,19 +349,26 @@ jobs:
             artifacts/shiplog-x86_64-pc-windows-msvc/shiplog-x86_64-pc-windows-msvc.exe
             artifacts/SHA256SUMS.txt
             artifacts/RELEASE_CANDIDATE.txt
-          retention-days: 5
+          retention-days: 30
 
       - name: Record staged candidate identity
         shell: bash
+        env:
+          RELEASE_TAG: ${{ needs.release-preflight.outputs.release_tag }}
+          RELEASE_SHA: ${{ needs.release-preflight.outputs.release_sha }}
+          ARTIFACT_ID: ${{ steps.candidates.outputs.artifact-id }}
+          ARTIFACT_DIGEST: ${{ steps.candidates.outputs.artifact-digest }}
+          CANDIDATE_MANIFEST_SHA256: ${{ steps.candidate_manifest.outputs.candidate_manifest_sha256 }}
+          CHECKSUM_MANIFEST_SHA256: ${{ steps.candidate_manifest.outputs.checksum_manifest_sha256 }}
         run: |
           {
             echo "## Workflow-staged candidate"
-            echo "- Tag: \`${{ needs.release-preflight.outputs.release_tag }}\`"
-            echo "- Source commit: \`${{ needs.release-preflight.outputs.release_sha }}\`"
-            echo "- Artifact id: \`${{ steps.candidates.outputs.artifact-id }}\`"
-            echo "- Artifact digest: \`${{ steps.candidates.outputs.artifact-digest }}\`"
-            echo "- Candidate manifest SHA-256: \`${{ steps.candidate_manifest.outputs.candidate_manifest_sha256 }}\`"
-            echo "- Checksum manifest SHA-256: \`${{ steps.candidate_manifest.outputs.checksum_manifest_sha256 }}\`"
+            echo "- Tag: \`$RELEASE_TAG\`"
+            echo "- Source commit: \`$RELEASE_SHA\`"
+            echo "- Artifact id: \`$ARTIFACT_ID\`"
+            echo "- Artifact digest: \`$ARTIFACT_DIGEST\`"
+            echo "- Candidate manifest SHA-256: \`$CANDIDATE_MANIFEST_SHA256\`"
+            echo "- Checksum manifest SHA-256: \`$CHECKSUM_MANIFEST_SHA256\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
   # Validate the staged candidate while retaining independent release-mode checks.
@@ -343,26 +386,38 @@ jobs:
 
       - name: Confirm exact release commit
         shell: bash
-        run: test "$(git rev-parse HEAD)" = "${{ needs.release-preflight.outputs.release_sha }}"
+        env:
+          RELEASE_SHA: ${{ needs.release-preflight.outputs.release_sha }}
+        run: test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
 
       - name: Download staged candidate set
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: verified-release-candidates
           path: candidate
 
       - name: Verify staged candidate identity
         shell: bash
+        env:
+          RELEASE_TAG: ${{ needs.release-preflight.outputs.release_tag }}
+          RELEASE_SHA: ${{ needs.release-preflight.outputs.release_sha }}
+          CANDIDATE_MANIFEST_SHA256: ${{ needs.upload-assets.outputs.candidate_manifest_sha256 }}
         run: |
           set -euo pipefail
+          expected_assets=(
+            shiplog-x86_64-unknown-linux-gnu/shiplog-x86_64-unknown-linux-gnu
+            shiplog-x86_64-apple-darwin/shiplog-x86_64-apple-darwin
+            shiplog-aarch64-apple-darwin/shiplog-aarch64-apple-darwin
+            shiplog-x86_64-pc-windows-msvc/shiplog-x86_64-pc-windows-msvc.exe
+          )
           grep -Fxq "schema_version=1" candidate/RELEASE_CANDIDATE.txt
-          grep -Fxq "release_tag=${{ needs.release-preflight.outputs.release_tag }}" candidate/RELEASE_CANDIDATE.txt
-          grep -Fxq "source_sha=${{ needs.release-preflight.outputs.release_sha }}" candidate/RELEASE_CANDIDATE.txt
-          grep -Fxq "asset_count=4" candidate/RELEASE_CANDIDATE.txt
+          grep -Fxq "release_tag=$RELEASE_TAG" candidate/RELEASE_CANDIDATE.txt
+          grep -Fxq "source_sha=$RELEASE_SHA" candidate/RELEASE_CANDIDATE.txt
+          grep -Fxq "asset_count=${#expected_assets[@]}" candidate/RELEASE_CANDIDATE.txt
           expected="$(sed -n 's/^checksum_manifest_sha256=//p' candidate/RELEASE_CANDIDATE.txt)"
           actual="$(sha256sum candidate/SHA256SUMS.txt | awk '{print $1}')"
           test "$actual" = "$expected"
-          test "$(sha256sum candidate/RELEASE_CANDIDATE.txt | awk '{print $1}')" = "${{ needs.upload-assets.outputs.candidate_manifest_sha256 }}"
+          test "$(sha256sum candidate/RELEASE_CANDIDATE.txt | awk '{print $1}')" = "$CANDIDATE_MANIFEST_SHA256"
 
       - name: Smoke staged Linux candidate
         shell: bash
@@ -427,12 +482,15 @@ jobs:
 
       - name: Generate validation summary
         shell: bash
+        env:
+          CANDIDATE_ARTIFACT_DIGEST: ${{ needs.upload-assets.outputs.candidate_artifact_digest }}
+          CANDIDATE_MANIFEST_SHA256: ${{ needs.upload-assets.outputs.candidate_manifest_sha256 }}
         run: |
           {
             echo "# Release Validation Results"
             echo
-            echo "- Staged candidate artifact digest: \`${{ needs.upload-assets.outputs.candidate_artifact_digest }}\`"
-            echo "- Candidate manifest SHA-256: \`${{ needs.upload-assets.outputs.candidate_manifest_sha256 }}\`"
+            echo "- Staged candidate artifact digest: \`$CANDIDATE_ARTIFACT_DIGEST\`"
+            echo "- Candidate manifest SHA-256: \`$CANDIDATE_MANIFEST_SHA256\`"
             echo "- Staged Linux candidate help/version/collect/render: **PASSED**"
             echo "- Independent release-mode command checks: **PASSED**"
             echo "- Multi-platform candidate assembly: **PASSED**"
@@ -473,10 +531,12 @@ jobs:
 
       - name: Confirm exact release commit
         shell: bash
-        run: test "$(git rev-parse HEAD)" = "${{ needs.release-preflight.outputs.release_sha }}"
+        env:
+          RELEASE_SHA: ${{ needs.release-preflight.outputs.release_sha }}
+        run: test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
 
       - name: Download exact staged candidate set
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: verified-release-candidates
           path: ${{ runner.temp }}/release-candidate
@@ -487,7 +547,8 @@ jobs:
         env:
           SHIPLOG_RELEASE_CANDIDATE_DIR: ${{ runner.temp }}/release-candidate
           SHIPLOG_RELEASE_SOURCE_SHA: ${{ needs.release-preflight.outputs.release_sha }}
-        run: bash scripts/release-install-smoke.sh "${{ needs.release-preflight.outputs.release_tag }}"
+          RELEASE_TAG: ${{ needs.release-preflight.outputs.release_tag }}
+        run: bash scripts/release-install-smoke.sh "$RELEASE_TAG"
 
       - name: Run staged-binary first-use acceptance (Windows)
         if: matrix.shell == 'pwsh'
@@ -495,7 +556,8 @@ jobs:
         env:
           SHIPLOG_RELEASE_CANDIDATE_DIR: ${{ runner.temp }}/release-candidate
           SHIPLOG_RELEASE_SOURCE_SHA: ${{ needs.release-preflight.outputs.release_sha }}
-        run: pwsh -NoProfile -File scripts/release-install-smoke.ps1 "${{ needs.release-preflight.outputs.release_tag }}"
+          RELEASE_TAG: ${{ needs.release-preflight.outputs.release_tag }}
+        run: pwsh -NoProfile -File scripts/release-install-smoke.ps1 "$env:RELEASE_TAG"
 
       - name: Upload first-use diagnostics and receipts
         if: always()
@@ -519,8 +581,14 @@ jobs:
           persist-credentials: false
           ref: ${{ needs.release-preflight.outputs.release_tag }}
 
+      - name: Confirm exact negative-control checkout
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ needs.release-preflight.outputs.release_sha }}
+        run: test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+
       - name: Download exact staged candidate set
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: verified-release-candidates
           path: ${{ runner.temp }}/release-candidate
@@ -619,7 +687,9 @@ jobs:
 
       - name: Confirm exact release commit
         shell: bash
-        run: test "$(git rev-parse HEAD)" = "${{ needs.release-preflight.outputs.release_sha }}"
+        env:
+          RELEASE_SHA: ${{ needs.release-preflight.outputs.release_sha }}
+        run: test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
