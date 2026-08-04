@@ -308,7 +308,8 @@ bounded rebind are:
 - decision receipt: `EffortlessMetrics/shiplog-swarm#389` at
   `08f93314a62fa039493487bf008239d7f5648b4e`
 
-The older #366 runbook entry remains historical. For this bounded promotion,
+The older ruleset-era runbook binding remains historical; #389 is the actual
+runbook change and its reviewed decision receipt. For this bounded promotion,
 take the exact #389 swarm entry and discard the source-side transition copy.
 This is an explicit consumptive decision, not permanent swarm authority.
 
