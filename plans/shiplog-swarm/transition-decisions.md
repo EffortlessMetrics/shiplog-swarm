@@ -263,3 +263,34 @@ new consumptive decision, not permanent swarm authority.
 The substantive manifest binding is recorded in
 `plans/shiplog-swarm/promotion-state.toml`. These decisions remain active
 until consumed by the next regular-merge source promotion checkpoint.
+
+## PR #375: hosted optional-lane runner repair
+
+The exact current promotion targets are:
+
+- source target: `175e8c8cee8110c4cf4a42d5534f5dffe45bf426`
+- swarm target: `355d4b66eed87eb20bd932da1b00028b75d63776`
+- historical source promotion: `EffortlessMetrics/shiplog#682` at
+  `2f69daf921d74fb9472584c2a0df31857cfa2384`
+- decision receipt: `EffortlessMetrics/shiplog-swarm#375` at
+  `355d4b66eed87eb20bd932da1b00028b75d63776`
+
+PR #375 repaired the optional BDD, fuzz, and property lanes after a
+self-hosted runner exhausted its disk during job setup. Source and swarm both
+changed these workflow paths after the last promotion, so the planner must not
+infer that the source copy is still preferred. The bounded decision is to take
+the exact swarm tree entries below and discard the source-side transition copy
+for this promotion. This is consumptive evidence, not permanent swarm
+authority; a future divergence requires a new decision. The manifest binding
+intentionally has no `consumed_by` value until a regular-merge source
+promotion checkpoint actually lands.
+
+| Path | Source target entry | Swarm target entry | Decision reason |
+|---|---|---|---|
+| `.github/workflows/bdd-testing.yml` | `100644/blob/0ecc48cc5dc11b29dedf2c41623ca726a10cd56b` | `100644/blob/b89439964c6dfc5c189f1e36655081f40eb5abc9` | The reviewed hosted-runner repair is the bounded promotion choice for broad BDD lanes. |
+| `.github/workflows/fuzzing.yml` | `100644/blob/b7989e348ead508d5189d8cfaaed5d816bef8891` | `100644/blob/b021777af505d84581789969091833d980c8101d` | The reviewed hosted-runner repair is the bounded promotion choice for fuzzing lanes. |
+| `.github/workflows/property-testing.yml` | `100644/blob/ed8f93fed515e74b3ba3e5fb7a91f3f8efeaeaae` | `100644/blob/b5a6bbf7634f0cdf0eb5c80353ae45d20dd333cf` | The reviewed hosted-runner repair is the bounded promotion choice for broad property lanes. |
+
+The decision does not alter source workflows, source settings, or the
+fail-closed planner. It only binds the already-merged swarm repair so the next
+read-only promotion plan can account for all three two-sided paths explicitly.

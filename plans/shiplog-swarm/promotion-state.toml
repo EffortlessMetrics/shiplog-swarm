@@ -823,3 +823,43 @@ decision_merge_sha = "16fcbd5941bddf86afab4370b03f3bda05d01413"
 reason = "The reviewed #371 manifest is the current bounded promotion ledger and supersedes the older self-referential copy."
 source_tree_entry = { mode = "100644", object_type = "blob", oid = "bf3cbaa556a3b3249f952742bb2c6b28847f3876" }
 swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "f6e7f7318120aad039230699802fae2a3c2e8bb4" }
+
+# PR #375 changed the optional BDD, fuzz, and property lanes from the
+# self-hosted selector to the hosted runner required by the current swarm CI
+# policy. The source promotion copy also changed these paths, so the planner
+# must have an explicit bounded decision instead of inferring a winner.
+[[transition]]
+source_pr = "EffortlessMetrics/shiplog#682"
+source_merge_sha = "2f69daf921d74fb9472584c2a0df31857cfa2384"
+source_target = "175e8c8cee8110c4cf4a42d5534f5dffe45bf426"
+swarm_target = "355d4b66eed87eb20bd932da1b00028b75d63776"
+
+[[transition.path]]
+path = ".github/workflows/bdd-testing.yml"
+disposition = "missing_in_swarm"
+resolution = "discard_source"
+decision_receipt = "EffortlessMetrics/shiplog-swarm#375"
+decision_merge_sha = "355d4b66eed87eb20bd932da1b00028b75d63776"
+reason = "The reviewed hosted-runner repair in #375 is the bounded promotion choice for the broad BDD workflow; this decision is consumptive and does not grant permanent swarm authority."
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "0ecc48cc5dc11b29dedf2c41623ca726a10cd56b" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "b89439964c6dfc5c189f1e36655081f40eb5abc9" }
+
+[[transition.path]]
+path = ".github/workflows/fuzzing.yml"
+disposition = "missing_in_swarm"
+resolution = "discard_source"
+decision_receipt = "EffortlessMetrics/shiplog-swarm#375"
+decision_merge_sha = "355d4b66eed87eb20bd932da1b00028b75d63776"
+reason = "The reviewed hosted-runner repair in #375 is the bounded promotion choice for the fuzzing workflows; this decision is consumptive and does not grant permanent swarm authority."
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "b7989e348ead508d5189d8cfaaed5d816bef8891" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "b021777af505d84581789969091833d980c8101d" }
+
+[[transition.path]]
+path = ".github/workflows/property-testing.yml"
+disposition = "missing_in_swarm"
+resolution = "discard_source"
+decision_receipt = "EffortlessMetrics/shiplog-swarm#375"
+decision_merge_sha = "355d4b66eed87eb20bd932da1b00028b75d63776"
+reason = "The reviewed hosted-runner repair in #375 is the bounded promotion choice for the broad property workflow; this decision is consumptive and does not grant permanent swarm authority."
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "ed8f93fed515e74b3ba3e5fb7a91f3f8efeaeaae" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "b5a6bbf7634f0cdf0eb5c80353ae45d20dd333cf" }
