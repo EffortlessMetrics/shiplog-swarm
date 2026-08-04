@@ -102,9 +102,10 @@ find_unique_candidate_file() {
 }
 
 validate_candidate_manifest() {
-  local manifest="$1"
-  local sums="$2"
-  local expected_sums_sha actual_sums_sha
+  local root="$1"
+  local manifest="$2"
+  local sums="$3"
+  local expected_sums_sha actual_sums_sha required_asset
 
   if [[ "$expected_source_sha" == "" ]]; then
     echo "SHIPLOG_RELEASE_SOURCE_SHA is required with SHIPLOG_RELEASE_CANDIDATE_DIR" >&2
@@ -131,6 +132,14 @@ validate_candidate_manifest() {
     echo "candidate manifest does not record the four supported binaries" >&2
     exit 1
   }
+
+  for required_asset in \
+    shiplog-x86_64-unknown-linux-gnu \
+    shiplog-x86_64-apple-darwin \
+    shiplog-aarch64-apple-darwin \
+    shiplog-x86_64-pc-windows-msvc.exe; do
+    find_unique_candidate_file "$root" "$required_asset" >/dev/null
+  done
 
   expected_sums_sha="$(sed -n 's/^checksum_manifest_sha256=//p' "$manifest")"
   if [[ ! "$expected_sums_sha" =~ ^[0-9a-fA-F]{64}$ ]]; then
@@ -166,6 +175,7 @@ if [[ "$candidate_dir" != "" ]]; then
   cp "$candidate_sums" "$download_dir/SHA256SUMS.txt"
   cp "$candidate_manifest" "$download_dir/RELEASE_CANDIDATE.txt"
   validate_candidate_manifest \
+    "$candidate_dir" \
     "$download_dir/RELEASE_CANDIDATE.txt" \
     "$download_dir/SHA256SUMS.txt"
 else
