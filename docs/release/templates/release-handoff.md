@@ -2,8 +2,11 @@
 
 **Release target:** `vX.Y.Z`  
 **Status:** preparing | staged | published | closed  
-**Release decision:** [`docs/release/X.Y.Z-release-decision.md`](../X.Y.Z-release-decision.md)  
-**Readiness ledger:** [`docs/release/X.Y.Z-readiness.md`](../X.Y.Z-readiness.md)
+**Release decision:** [`docs/release/X.Y.Z-release-decision.md`](docs/release/X.Y.Z-release-decision.md)  
+**Readiness ledger:** [`docs/release/X.Y.Z-readiness.md`](docs/release/X.Y.Z-readiness.md)
+
+Copy this template to root `RELEASE_HANDOFF_X.Y.Z.md`. The links above are
+written for that destination.
 
 This handoff records the execution boundary and observed public state. Replace
 all placeholders with evidence; do not mark it closed from intended commands.
