@@ -59,9 +59,14 @@ Typical final boundary:
 ```text
 git tag -a vX.Y.Z -m "shiplog vX.Y.Z"
 git push origin vX.Y.Z
+# After exact-tag workflow proof:
+git checkout --detach vX.Y.Z
 cargo publish -p shiplog --locked
 gh release edit vX.Y.Z --draft=false --latest
 ```
+
+Record that `cargo publish` ran from the exact detached tag checkout proven by
+the source Release workflow, not from a later moving `main`.
 
 ## Exceptions, rollback, or yank
 
