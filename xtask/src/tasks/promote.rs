@@ -157,6 +157,13 @@ trait PromotePort {
             "repos/EffortlessMetrics/shiplog/branches/main/protection",
         ])
     }
+    fn source_rulesets(&self) -> Result<Vec<u8>> {
+        self.gh_output(&["api", "repos/EffortlessMetrics/shiplog/rulesets"])
+    }
+    fn source_ruleset(&self, id: &str) -> Result<Vec<u8>> {
+        let path = format!("repos/{SOURCE_REPO}/rulesets/{id}");
+        self.gh_output(&["api", &path])
+    }
     /// `git patch-id --stable` over a patch supplied on stdin.
     fn git_patch_id(&self, patch: &str) -> Result<String> {
         super::transition::system_patch_id(patch)
@@ -595,27 +602,96 @@ fn run_with_port_to(
 }
 
 fn ensure_source_merge_control(port: &impl PromotePort) -> Result<()> {
-    let output = port
-        .source_branch_protection()
-        .context("promote: inspect source main branch protection before execution")?;
-    let protection: SourceBranchProtection =
-        serde_json::from_slice(&output).context("promote: parse source main branch protection")?;
-    let required_status_checks = protection.required_status_checks.context(
-        "promote: source main has no required status checks; configure branch protection before executing promotion",
-    )?;
-    let guard_required = required_status_checks
-        .contexts
-        .iter()
-        .any(|context| context == SOURCE_AUTOMATION_GUARD_CHECK)
-        || required_status_checks
-            .checks
-            .iter()
-            .any(|check| check.context == SOURCE_AUTOMATION_GUARD_CHECK);
+    if let Ok(output) = port.source_branch_protection()
+        && let Ok(protection) = serde_json::from_slice::<SourceBranchProtection>(&output)
+        && protection.required_status_checks.is_some_and(|checks| {
+            checks
+                .contexts
+                .iter()
+                .any(|context| context == SOURCE_AUTOMATION_GUARD_CHECK)
+                || checks
+                    .checks
+                    .iter()
+                    .any(|check| check.context == SOURCE_AUTOMATION_GUARD_CHECK)
+        })
+    {
+        return Ok(());
+    }
+
+    let rulesets = port
+        .source_rulesets()
+        .context("promote: inspect source main rulesets before execution")?;
+    if !rulesets_require_source_guard(&rulesets)?
+        && let Some(id) = active_source_ruleset_id(&rulesets)?
+    {
+        let detail = port
+            .source_ruleset(&id)
+            .with_context(|| format!("promote: inspect source ruleset {id}"))?;
+        let detail: serde_json::Value =
+            serde_json::from_slice(&detail).context("promote: parse source ruleset detail")?;
+        let detail = serde_json::to_vec(&serde_json::Value::Array(vec![detail]))
+            .context("promote: encode source ruleset detail")?;
+        ensure!(
+            rulesets_require_source_guard(&detail)?,
+            "promote: source main branch protection or ruleset does not require `{SOURCE_AUTOMATION_GUARD_CHECK}`; configure the source merge-control boundary before executing promotion"
+        );
+        return Ok(());
+    }
     ensure!(
-        guard_required,
-        "promote: source main branch protection does not require `{SOURCE_AUTOMATION_GUARD_CHECK}`; configure the source merge-control boundary before executing promotion"
+        rulesets_require_source_guard(&rulesets)?,
+        "promote: source main branch protection or ruleset does not require `{SOURCE_AUTOMATION_GUARD_CHECK}`; configure the source merge-control boundary before executing promotion"
     );
     Ok(())
+}
+
+fn active_source_ruleset_id(output: &[u8]) -> Result<Option<String>> {
+    let rulesets: Vec<serde_json::Value> =
+        serde_json::from_slice(output).context("promote: parse source repository rulesets")?;
+    Ok(rulesets.iter().find_map(|ruleset| {
+        let matches = ruleset.get("name").and_then(serde_json::Value::as_str) == Some("main")
+            && ruleset.get("target").and_then(serde_json::Value::as_str) == Some("branch")
+            && ruleset
+                .get("enforcement")
+                .and_then(serde_json::Value::as_str)
+                == Some("active");
+        matches.then(|| {
+            ruleset
+                .get("id")
+                .and_then(serde_json::Value::as_i64)
+                .map(|id| id.to_string())
+        })?
+    }))
+}
+
+fn rulesets_require_source_guard(output: &[u8]) -> Result<bool> {
+    let rulesets: Vec<serde_json::Value> =
+        serde_json::from_slice(output).context("promote: parse source repository rulesets")?;
+    Ok(rulesets.iter().any(|ruleset| {
+        ruleset.get("name").and_then(serde_json::Value::as_str) == Some("main")
+            && ruleset.get("target").and_then(serde_json::Value::as_str) == Some("branch")
+            && ruleset
+                .get("enforcement")
+                .and_then(serde_json::Value::as_str)
+                == Some("active")
+            && ruleset
+                .get("rules")
+                .and_then(serde_json::Value::as_array)
+                .is_some_and(|rules| {
+                    rules.iter().any(|rule| {
+                        rule.get("type").and_then(serde_json::Value::as_str)
+                            == Some("required_status_checks")
+                            && rule
+                                .pointer("/parameters/required_status_checks")
+                                .and_then(serde_json::Value::as_array)
+                                .is_some_and(|checks| {
+                                    checks.iter().any(|check| {
+                                        check.get("context").and_then(serde_json::Value::as_str)
+                                            == Some(SOURCE_AUTOMATION_GUARD_CHECK)
+                                    })
+                                })
+                    })
+                })
+    }))
 }
 
 /// Machine-readable receipt for `--verify-only`: confirms that an exact swarm
@@ -2476,6 +2552,8 @@ mod tests {
     struct StubPort {
         gh: RefCell<VecDeque<std::result::Result<Vec<u8>, String>>>,
         source_protection: RefCell<Option<std::result::Result<Vec<u8>, String>>>,
+        source_rulesets: RefCell<Option<std::result::Result<Vec<u8>, String>>>,
+        source_ruleset_detail: RefCell<Option<std::result::Result<Vec<u8>, String>>>,
         gh_calls: RefCell<Vec<Vec<String>>>,
         git_mutations: RefCell<Vec<Vec<String>>>,
         remote_target: Option<String>,
@@ -2546,6 +2624,30 @@ mod tests {
                 Some(Ok(output)) => Ok(output),
                 Some(Err(message)) => bail!("stub source protection: {message}"),
                 None => bail!("stub source protection response exhausted"),
+            }
+        }
+
+        fn source_rulesets(&self) -> Result<Vec<u8>> {
+            self.gh_calls.borrow_mut().push(vec![
+                "api".to_string(),
+                "repos/EffortlessMetrics/shiplog/rulesets".to_string(),
+            ]);
+            match self.source_rulesets.borrow_mut().take() {
+                Some(Ok(output)) => Ok(output),
+                Some(Err(message)) => bail!("stub source rulesets: {message}"),
+                None => bail!("stub source rulesets response exhausted"),
+            }
+        }
+
+        fn source_ruleset(&self, _id: &str) -> Result<Vec<u8>> {
+            self.gh_calls.borrow_mut().push(vec![
+                "api".to_string(),
+                "repos/EffortlessMetrics/shiplog/rulesets/12681248".to_string(),
+            ]);
+            match self.source_ruleset_detail.borrow_mut().take() {
+                Some(Ok(output)) => Ok(output),
+                Some(Err(message)) => bail!("stub source ruleset detail: {message}"),
+                None => bail!("stub source ruleset detail response exhausted"),
             }
         }
     }
@@ -3917,6 +4019,8 @@ merge-old source-parent another-swarm-head
                 br#"{"required_status_checks":{"contexts":["reject-routine-bot-pr"],"checks":[]}}"#
                     .to_vec(),
             ))),
+            source_rulesets: RefCell::new(Some(Ok(b"[]".to_vec()))),
+            source_ruleset_detail: RefCell::new(Some(Ok(b"{}".to_vec()))),
             git_mutations: RefCell::new(Vec::new()),
             remote_target: None,
             fail_merge_base: false,
@@ -4406,6 +4510,38 @@ merge-old source-parent another-swarm-head
     }
 
     #[test]
+    fn source_ruleset_required_guard_replaces_legacy_protection_endpoint() -> Result<()> {
+        let fixture = fixture_git()?;
+        let port = stub_port(&fixture, true, true);
+        *port.source_protection.borrow_mut() =
+            Some(Err("HTTP 404 Branch not protected".to_string()));
+        *port.source_rulesets.borrow_mut() = Some(Ok(
+            br#"[{"id":12681248,"name":"main","target":"branch","enforcement":"active"}]"#.to_vec(),
+        ));
+        *port.source_ruleset_detail.borrow_mut() = Some(Ok(
+            br#"{"id":12681248,"name":"main","target":"branch","enforcement":"active","rules":[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"reject-routine-bot-pr"}]}}]}"#.to_vec(),
+        ));
+
+        ensure_source_merge_control(&port)?;
+        ensure!(port.gh_calls.borrow().iter().any(|call| {
+            call.get(1)
+                .is_some_and(|path| path == "repos/EffortlessMetrics/shiplog/rulesets")
+        }));
+        Ok(())
+    }
+
+    #[test]
+    fn source_ruleset_without_guard_is_rejected() -> Result<()> {
+        ensure!(!rulesets_require_source_guard(
+            br#"[{"name":"main","target":"branch","enforcement":"active","rules":[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"Shiplog Rust Small Result"}]}}]}]"#,
+        )?);
+        ensure!(!rulesets_require_source_guard(
+            br#"[{"name":"main","target":"branch","enforcement":"disabled","rules":[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"reject-routine-bot-pr"}]}}]}]"#,
+        )?);
+        Ok(())
+    }
+
+    #[test]
     fn execution_rejects_source_protection_without_guard_before_mutation() -> Result<()> {
         let fixture = fixture_git()?;
         let port = stub_port(&fixture, true, true);
@@ -4664,6 +4800,8 @@ merge-old source-parent another-swarm-head
                 br#"{"required_status_checks":{"contexts":["reject-routine-bot-pr"],"checks":[]}}"#
                     .to_vec(),
             ))),
+            source_rulesets: RefCell::new(Some(Ok(b"[]".to_vec()))),
+            source_ruleset_detail: RefCell::new(Some(Ok(b"{}".to_vec()))),
             gh_calls: RefCell::new(Vec::new()),
             git_mutations: RefCell::new(Vec::new()),
             remote_target: None,
