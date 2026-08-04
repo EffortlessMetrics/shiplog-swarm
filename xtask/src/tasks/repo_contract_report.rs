@@ -217,6 +217,7 @@ struct LocalCheckoutReport {
     branch_summary: Option<String>,
     clean: Option<bool>,
     status_entries: Vec<String>,
+    protected_workspace_entries: Vec<String>,
     local_branch_count: usize,
     unprotected_local_branch_count: usize,
     unprotected_local_branches: Vec<String>,
@@ -630,7 +631,7 @@ fn recommended_next_slice_from_statuses(
     receipt_freshness_status: &str,
     receipt_freshness_missing_receipts: &[String],
 ) -> RecommendedNextSliceReport {
-    if local_checkout_status != "clean" {
+    if !matches!(local_checkout_status, "clean" | "protected-only") {
         return RecommendedNextSliceReport {
             status: "blocked".to_string(),
             title: "Clean the local checkout before opening new work".to_string(),
@@ -986,7 +987,7 @@ fn local_checkout_from_status_and_branch_lines(
     local_branch_lines: Vec<String>,
     source_merged_lines: Vec<String>,
     swarm_merged_lines: Vec<String>,
-    notes: Vec<String>,
+    mut notes: Vec<String>,
 ) -> LocalCheckoutReport {
     let branch_summary = lines
         .first()
@@ -996,9 +997,26 @@ fn local_checkout_from_status_and_branch_lines(
         .into_iter()
         .skip(usize::from(branch_summary.is_some()))
         .collect::<Vec<_>>();
-    let clean = branch_summary
-        .as_ref()
-        .map(|_| status_entries.iter().all(|entry| entry.trim().is_empty()));
+    let protected_workspace_entries = status_entries
+        .iter()
+        .filter(|entry| is_protected_workspace_entry(entry))
+        .cloned()
+        .collect::<Vec<_>>();
+    if !protected_workspace_entries.is_empty() {
+        notes.push(format!(
+            "protected workspace artifacts are visible and non-blocking: {}",
+            protected_workspace_entries.join(", ")
+        ));
+    }
+    let actionable_status_entries = status_entries
+        .iter()
+        .filter(|entry| !is_protected_workspace_entry(entry))
+        .collect::<Vec<_>>();
+    let clean = branch_summary.as_ref().map(|_| {
+        actionable_status_entries
+            .iter()
+            .all(|entry| entry.trim().is_empty())
+    });
     let local_branch_count = local_branch_lines.len();
     let current_branch = current_branch_name(branch_summary.as_deref());
     let source_merged = local_branch_set(source_merged_lines);
@@ -1028,23 +1046,30 @@ fn local_checkout_from_status_and_branch_lines(
     let unprotected_local_branch_count = unprotected_local_branches.len();
     let local_merged_cleanup_review_commands =
         local_merged_cleanup_review_commands(&local_merged_cleanup_candidates);
-    let status = match (clean, local_merged_cleanup_candidates.is_empty()) {
-        (Some(true), true) => "clean",
-        (Some(true), false) => "review-needed",
-        (Some(false), _) => "dirty",
-        (None, _) => "unavailable",
+    let status = match (
+        clean,
+        local_merged_cleanup_candidates.is_empty(),
+        protected_workspace_entries.is_empty(),
+    ) {
+        (Some(true), true, true) => "clean",
+        (Some(true), true, false) => "protected-only",
+        (Some(true), false, _) => "review-needed",
+        (Some(false), _, _) => "dirty",
+        (None, _, _) => "unavailable",
     }
     .to_string();
     let next_actions = local_checkout_next_actions(
         clean,
         local_merged_cleanup_candidates.len(),
         unprotected_local_branch_count,
+        !protected_workspace_entries.is_empty(),
     );
 
     LocalCheckoutReport {
         branch_summary,
         clean,
         status_entries,
+        protected_workspace_entries,
         local_branch_count,
         unprotected_local_branch_count,
         unprotected_local_branches,
@@ -1055,6 +1080,17 @@ fn local_checkout_from_status_and_branch_lines(
         notes,
         next_actions,
     }
+}
+
+const PROTECTED_WORKSPACE_ROOTS: [&str; 2] = [".claude/", "target-audit/"];
+
+fn is_protected_workspace_entry(entry: &str) -> bool {
+    let Some(path) = entry.trim().strip_prefix("?? ") else {
+        return false;
+    };
+    PROTECTED_WORKSPACE_ROOTS
+        .iter()
+        .any(|root| path.starts_with(root))
 }
 
 fn current_branch_name(branch_summary: Option<&str>) -> Option<String> {
@@ -1092,15 +1128,23 @@ fn local_checkout_next_actions(
     clean: Option<bool>,
     local_merged_cleanup_count: usize,
     unprotected_local_branch_count: usize,
+    has_protected_workspace_entries: bool,
 ) -> Vec<String> {
     const LOCAL_BRANCH_INVENTORY_REVIEW_THRESHOLD: usize = 50;
 
     match clean {
         Some(true) if local_merged_cleanup_count == 0 => {
-            let mut actions = vec![
-                "Local checkout is clean; continue with the active source-of-truth work item."
-                    .to_string(),
-            ];
+            let mut actions = if has_protected_workspace_entries {
+                vec![
+                    "Only protected workspace artifacts are untracked; preserve them and continue with the active source-of-truth work item."
+                        .to_string(),
+                ]
+            } else {
+                vec![
+                    "Local checkout is clean; continue with the active source-of-truth work item."
+                        .to_string(),
+                ]
+            };
             if unprotected_local_branch_count >= LOCAL_BRANCH_INVENTORY_REVIEW_THRESHOLD {
                 actions.push(format!(
                     "Local branch inventory has {unprotected_local_branch_count} unprotected branch(es); review with `git branch --format=\"%(refname:short)\"` before deleting anything."
@@ -3679,6 +3723,14 @@ fn render_markdown(report: &RepoContractReport) -> String {
     );
     push_row(
         &mut out,
+        "Protected workspace entries",
+        &format!(
+            "{} item(s)",
+            report.local_checkout.protected_workspace_entries.len()
+        ),
+    );
+    push_row(
+        &mut out,
         "Local branches",
         &format!("{} branch(es)", report.local_checkout.local_branch_count),
     );
@@ -3720,6 +3772,11 @@ fn render_markdown(report: &RepoContractReport) -> String {
         &mut out,
         "Local checkout status entries",
         &report.local_checkout.status_entries,
+    );
+    push_markdown_list(
+        &mut out,
+        "Protected workspace entries",
+        &report.local_checkout.protected_workspace_entries,
     );
     push_markdown_list_limited(
         &mut out,
@@ -5913,6 +5970,78 @@ Merge this PR with a regular merge commit; do not squash.
                 .iter()
                 .any(|action| action.contains("Local checkout is clean"))
         );
+    }
+
+    #[test]
+    fn local_checkout_keeps_protected_workspace_artifacts_visible_without_blocking() {
+        let report = local_checkout_from_status_lines(
+            vec![
+                "## HEAD (no branch)".to_string(),
+                "?? .claude/".to_string(),
+                "?? target-audit/".to_string(),
+            ],
+            Vec::new(),
+        );
+
+        assert_eq!(report.status, "protected-only");
+        assert_eq!(report.clean, Some(true));
+        assert_eq!(report.status_entries.len(), 2);
+        assert_eq!(report.protected_workspace_entries, report.status_entries);
+        assert!(
+            report
+                .notes
+                .iter()
+                .any(|note| note.contains("protected workspace artifacts"))
+        );
+        assert!(
+            report
+                .next_actions
+                .iter()
+                .any(|action| action.contains("Only protected workspace artifacts are untracked"))
+        );
+        let recommendation = recommended_next_slice_from_statuses(
+            &report.status,
+            "clean",
+            "tree-aligned",
+            0,
+            "clean",
+            "green",
+            "aligned",
+            "aligned",
+            "current",
+            &[],
+        );
+        assert_ne!(recommendation.status, "blocked");
+    }
+
+    #[test]
+    fn local_checkout_keeps_unknown_untracked_entries_blocking_with_protected_artifacts() {
+        let report = local_checkout_from_status_lines(
+            vec![
+                "## HEAD (no branch)".to_string(),
+                "?? .claude/".to_string(),
+                "?? scratch.txt".to_string(),
+            ],
+            Vec::new(),
+        );
+
+        assert_eq!(report.status, "dirty");
+        assert_eq!(report.clean, Some(false));
+        assert_eq!(report.protected_workspace_entries, vec!["?? .claude/"]);
+        assert_eq!(report.status_entries.len(), 2);
+    }
+
+    #[test]
+    fn protected_workspace_classifier_requires_an_untracked_root() {
+        assert!(is_protected_workspace_entry("?? .claude/"));
+        assert!(is_protected_workspace_entry("?? target-audit/report.json"));
+        assert!(!is_protected_workspace_entry(" M .claude/notes.md"));
+        assert!(!is_protected_workspace_entry("?? .claude"));
+        assert!(!is_protected_workspace_entry("?? .claude-copy/"));
+        assert!(!is_protected_workspace_entry("?? target-audit"));
+        assert!(!is_protected_workspace_entry(
+            "?? target-audit-copy/report.json"
+        ));
     }
 
     #[test]
