@@ -475,17 +475,6 @@ source_tree_entry = { mode = "100644", object_type = "blob", oid = "323cc19cbbc5
 swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "0492fc378c453095c109f17d12b253793b6b233a" }
 
 [[transition.path]]
-path = "plans/shiplog-swarm/promotion-state.toml"
-disposition = "missing_in_swarm"
-resolution = "discard_source"
-self_referential = true
-decision_receipt = "EffortlessMetrics/shiplog-swarm#353"
-decision_merge_sha = "fc19c648c9eba8a76a67d55af55cd2a5bc77291c"
-reason = "The swarm manifest contains the current active source-authority receipts and pending promotion range."
-source_tree_entry = { mode = "100644", object_type = "blob", oid = "bf3cbaa556a3b3249f952742bb2c6b28847f3876" }
-swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "3eae48353c759d5936dd1fcbc3cce21b5a1debef" }
-
-[[transition.path]]
 path = "xtask/src/tasks/promotion_state.rs"
 disposition = "converged_at_target"
 resolution = "discard_source"
@@ -534,6 +523,26 @@ decision_merge_sha = "fc19c648c9eba8a76a67d55af55cd2a5bc77291c"
 reason = "The swarm file policy carries the regression guard rejecting unsupported matrix context in workflow shells."
 source_tree_entry = { mode = "100644", object_type = "blob", oid = "a6cb804a9c2fa5bb7d2e9d6f9a7aaad8367a5e59" }
 swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "9c337a7ecac7f7acb049b15ecdd9f3b2987ef2f7" }
+
+# The manifest path was later rewritten by PR #371. Retain its original
+# #353 evidence as history while removing its stale active authority.
+[[transition]]
+source_pr = "EffortlessMetrics/shiplog#682"
+source_merge_sha = "2f69daf921d74fb9472584c2a0df31857cfa2384"
+consumed_by = "EffortlessMetrics/shiplog-swarm#372"
+source_target = "175e8c8cee8110c4cf4a42d5534f5dffe45bf426"
+swarm_target = "fc19c648c9eba8a76a67d55af55cd2a5bc77291c"
+
+[[transition.path]]
+path = "plans/shiplog-swarm/promotion-state.toml"
+disposition = "missing_in_swarm"
+resolution = "discard_source"
+self_referential = true
+decision_receipt = "EffortlessMetrics/shiplog-swarm#353"
+decision_merge_sha = "fc19c648c9eba8a76a67d55af55cd2a5bc77291c"
+reason = "The historical #353 manifest binding is superseded by the exact #371 receipt."
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "bf3cbaa556a3b3249f952742bb2c6b28847f3876" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "3eae48353c759d5936dd1fcbc3cce21b5a1debef" }
 
 # These three paths were superseded by the exact-target #366 repair. Keep the
 # older evidence as history, but consume its authority before the newer binding
@@ -632,6 +641,7 @@ swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "242960879e57e
 [[transition]]
 source_pr = "EffortlessMetrics/shiplog#682"
 source_merge_sha = "2f69daf921d74fb9472584c2a0df31857cfa2384"
+consumed_by = "EffortlessMetrics/shiplog-swarm#372"
 source_target = "175e8c8cee8110c4cf4a42d5534f5dffe45bf426"
 swarm_target = "af58980110c9296aeec4ab4f0c6a7c3e6de7fb0c"
 
@@ -644,6 +654,9 @@ decision_merge_sha = "af58980110c9296aeec4ab4f0c6a7c3e6de7fb0c"
 reason = "The generated promotion view materialized by the #361 manifest binding must follow the current swarm manifest and decision ledger."
 source_tree_entry = { mode = "100644", object_type = "blob", oid = "2cf46f2668123bb939bd5c92beb02f8e375a5664" }
 swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "eba80cd5c5cde305f38b003bf13a295c0931bf70" }
+
+# PR #371 rewrote the generated view again. Retain the #361 target as history
+# and consume it before the new exact-target binding below.
 
 # PR #366 updated the source merge-control contract after the older #682
 # transition bindings. Keep this exact-target rebind separate so the earlier
@@ -726,13 +739,22 @@ reason = "The swarm promotion preflight recognizes the active source repository 
 source_tree_entry = { mode = "100644", object_type = "blob", oid = "3d58577fa9e518b76d22c266b8c861f6dca36335" }
 swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "b4f5389955e87500823507ed00872bc57050729a" }
 
+# The report path was later rewritten by PR #371. Keep the prior #366 target
+# as consumed evidence while the sibling paths in that receipt stay active.
+[[transition]]
+source_pr = "EffortlessMetrics/shiplog#535"
+source_merge_sha = "50effd4c94848e91a64d5c24795438855888ff18"
+consumed_by = "EffortlessMetrics/shiplog-swarm#372"
+source_target = "175e8c8cee8110c4cf4a42d5534f5dffe45bf426"
+swarm_target = "c1aae92a2ad7ee35738de5bf6a990fc0477e5191"
+
 [[transition.path]]
 path = "xtask/src/tasks/repo_contract_report.rs"
 disposition = "missing_in_swarm"
 resolution = "discard_source"
 decision_receipt = "EffortlessMetrics/shiplog-swarm#366"
 decision_merge_sha = "c1aae92a2ad7ee35738de5bf6a990fc0477e5191"
-reason = "The swarm source-of-truth report resolves repository ruleset detail and does not misclassify source main."
+reason = "The historical #366 report binding is superseded by the exact #371 receipt."
 source_tree_entry = { mode = "100644", object_type = "blob", oid = "fab37f26423e06a97326b521706c7067432a571f" }
 swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "d51899107d0a34957bd7ddcc9d35c877fe301f14" }
 
@@ -754,3 +776,50 @@ decision_merge_sha = "7fd206266bc89210032c30746adcb5d0a99d8c79"
 reason = "The merged #368 ledger records the current exact-target ruleset repair and must supersede the older transition copy for this bounded promotion."
 source_tree_entry = { mode = "100644", object_type = "blob", oid = "bbe7516331ab7e132aea0026049d61cb1040accd" }
 swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "eb000798936d38200a8cda1909920ce62099e3f4" }
+
+# PR #371 changed the manifest, generated view, and source-of-truth report.
+# Bind those exact current entries to the reviewed #371 decision receipt.
+[[transition]]
+source_pr = "EffortlessMetrics/shiplog#682"
+source_merge_sha = "2f69daf921d74fb9472584c2a0df31857cfa2384"
+source_target = "175e8c8cee8110c4cf4a42d5534f5dffe45bf426"
+swarm_target = "16fcbd5941bddf86afab4370b03f3bda05d01413"
+
+[[transition.path]]
+path = "plans/shiplog-swarm/current-promotion.md"
+disposition = "missing_in_swarm"
+resolution = "discard_source"
+decision_receipt = "EffortlessMetrics/shiplog-swarm#371"
+decision_merge_sha = "16fcbd5941bddf86afab4370b03f3bda05d01413"
+reason = "The reviewed #371 promotion view carries the current pending range and transition-evidence report state."
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "2cf46f2668123bb939bd5c92beb02f8e375a5664" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "e121609ea975bccb7e47a31e7a7593007d4c3474" }
+
+[[transition.path]]
+path = "xtask/src/tasks/repo_contract_report.rs"
+disposition = "missing_in_swarm"
+resolution = "discard_source"
+decision_receipt = "EffortlessMetrics/shiplog-swarm#371"
+decision_merge_sha = "16fcbd5941bddf86afab4370b03f3bda05d01413"
+reason = "The reviewed #371 report classifies active transition evidence without granting consumed receipts ongoing authority."
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "fab37f26423e06a97326b521706c7067432a571f" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "27f8fdad6c7c65ca84435fc05c870bfdd58cc2ba" }
+
+# The manifest is self-referential: its evidence target is the parent of #371,
+# and the current entry must prove that #371 materialized a new ledger value.
+[[transition]]
+source_pr = "EffortlessMetrics/shiplog#682"
+source_merge_sha = "2f69daf921d74fb9472584c2a0df31857cfa2384"
+source_target = "175e8c8cee8110c4cf4a42d5534f5dffe45bf426"
+swarm_target = "c435bdb4ada5cc2f08c26eec7e924e14caeee522"
+
+[[transition.path]]
+path = "plans/shiplog-swarm/promotion-state.toml"
+disposition = "missing_in_swarm"
+resolution = "discard_source"
+self_referential = true
+decision_receipt = "EffortlessMetrics/shiplog-swarm#371"
+decision_merge_sha = "16fcbd5941bddf86afab4370b03f3bda05d01413"
+reason = "The reviewed #371 manifest is the current bounded promotion ledger and supersedes the older self-referential copy."
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "bf3cbaa556a3b3249f952742bb2c6b28847f3876" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "f6e7f7318120aad039230699802fae2a3c2e8bb4" }
