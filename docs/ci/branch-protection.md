@@ -46,10 +46,13 @@ The two repositories have different GitHub branch-protection state:
 - `EffortlessMetrics/shiplog-swarm/main` is protected. It requires exactly
   `Shiplog Rust Small Result`, with strict status checks enabled. Force pushes
   and branch deletion are disabled; administrator enforcement is disabled.
-- `EffortlessMetrics/shiplog/main` is currently unprotected. Its protection
-  endpoint returns 404 (`Branch not protected`), so no GitHub-level required
-  check is enforced there. Source-side enforcement remains the separate work
-  tracked by issue #294.
+- `EffortlessMetrics/shiplog/main` is governed by the active repository
+  ruleset `main` (ruleset `12681248`). It requires the metadata-only
+  `reject-routine-bot-pr` check, and also enforces pull-request-only merges,
+  deletion protection, and non-fast-forward protection. The legacy
+  `/branches/main/protection` endpoint returns 404 because source uses a
+  ruleset rather than the legacy branch-protection API. There are no bypass
+  actors in the ruleset.
 
 The swarm setting is the normal-development merge gate. The source setting is
 the release/public-surface boundary and must not be changed as part of an
@@ -57,16 +60,17 @@ ordinary swarm PR.
 
 ## Required checks (target steady state)
 
-These describe what should appear in branch-protection settings for
-`shiplog/main` once source protection is enabled. The source `main` branch is
-currently unprotected at the GitHub level (verified via the
-`/repos/EffortlessMetrics/shiplog/branches/main/protection` endpoint returning
-404 "Branch not protected"). The table is the **target** set, encoded by the
+These describe the future correctness checks that should be added to the
+source ruleset after they have completed a safe migration cycle. The active
+ruleset currently requires only `reject-routine-bot-pr`, which is the
+source-side merge-control boundary for routine automation. The legacy
+`/branches/main/protection` endpoint returning 404 is not evidence that the
+source branch is unprotected. The table is the **target** set, encoded by the
 routed default PR summary and by
 `blocking = true` lanes in
 [`policy/ci-lanes.toml`](../../policy/ci-lanes.toml). It describes what
-would be required-enforced on `shiplog/main` if source protection were
-enabled, not what is currently enforced on either repository.
+should be additionally required on `shiplog/main` after migration, not what
+is currently enforced on either repository.
 
 | Required check | Source | Why required |
 |---|---|---|
@@ -98,11 +102,11 @@ These should **not** be required:
 ## Migration history
 
 The v0.5.0 ladder shipped every PR that would have triggered a
-branch-protection setting change under the rule above. Because
-`shiplog/main` was never protected during the ladder, those source-side
-setting changes
-were not actually performed — they remain forward-looking guidance. Swarm
-protection is recorded separately in the current enforcement section above.
+branch-protection setting change under the rule above. Because the source
+ruleset was not configured during that ladder, the correctness-check changes
+remain forward-looking guidance. The later source ruleset rollout added the
+routine-automation guard separately; swarm protection is recorded in the
+current enforcement section above.
 
 - **PR #146** added `pr-plan / forecast` as a check. Required-eligible
   but not enforced (no protection setting was added).
@@ -118,30 +122,26 @@ protection is recorded separately in the current enforcement section above.
 - **PR #165** added `Policy gates` to `ci.yml` as a blocking job and
   registered `[lane.ci_policy]` with `blocking = true`.
 
-When/if branch-protection is enabled on `shiplog/main`, the sequencing rules
-in [`required-check-migration.md`](required-check-migration.md)
-describe how to make those required-check changes safely (avoid
+The sequencing rules in [`required-check-migration.md`](required-check-migration.md)
+describe how to add the remaining correctness checks safely (avoid
 pending-check deadlocks, rename in-merge, etc.).
 
-## Why source checks are not blocking today
+## Why source correctness checks are not blocking today
 
-GitHub branch-protection on `shiplog/main` is disabled. The
-`/repos/EffortlessMetrics/shiplog/branches/main/protection` endpoint
-returns 404 "Branch not protected"; no required-check enforcement is
-active on the source repository. The `shiplog-swarm/main` branch does
+The active `main` ruleset on `shiplog` currently requires only
+`reject-routine-bot-pr`. That guard blocks routine Dependabot and Factory
+Droid product PRs while allowing normal authors, but it is not a substitute
+for the broader correctness set below. The `shiplog-swarm/main` branch does
 enforce `Shiplog Rust Small Result`; that is the normal-development gate.
-The "target steady state" table above describes what
-`blocking = true` lanes in `policy/ci-lanes.toml` would require if
-source protection were enabled — it is the source of truth for the
-**intended** source required-check set, not a description of currently
-enforced behavior.
+The "target steady state" table above describes what `blocking = true` lanes
+in `policy/ci-lanes.toml` should add to the source ruleset after migration;
+it is not a description of currently enforced source checks.
 
-Enabling protection (and choosing the corresponding required-check list) on
-`shiplog/main` is a separate release decision. Until that happens, the
-configured `ci.yml` routes still run for pushes to `main` and `full-ci` pull
-requests, but no source GitHub-level gate forces a green status before merge
-— reviewers and the CodeRabbit/Droid advisory lanes provide the practical
-source merge gate today.
+Adding the remaining correctness checks to `shiplog/main` is a separate
+release decision. Until that happens, the configured `ci.yml` routes still
+run for pushes to `main` and `full-ci` pull requests, but the source ruleset
+does not yet force the broader correctness set before merge. The required
+`reject-routine-bot-pr` check remains the source merge-control boundary.
 
 ## See also
 

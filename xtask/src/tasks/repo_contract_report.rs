@@ -2170,7 +2170,40 @@ fn inspect_source_branch_protection(workspace_root: &Path) -> SourceBranchProtec
             } else {
                 detail
             };
-            source_branch_protection_from_error(&path, &detail)
+            let rulesets_path = format!("repos/{SOURCE_REPO}/rulesets");
+            match Command::new("gh").args(["api", &rulesets_path]).output() {
+                Ok(rulesets_output) if rulesets_output.status.success() => {
+                    match serde_json::from_slice::<serde_json::Value>(&rulesets_output.stdout) {
+                        Ok(value) => source_branch_protection_from_rulesets_json(
+                            source_rulesets_with_details(value, &rulesets_path),
+                        ),
+                        Err(err) => source_branch_protection_from_parts(
+                            None,
+                            Vec::new(),
+                            None,
+                            None,
+                            None,
+                            None,
+                            vec![format!(
+                                "gh api {rulesets_path} returned invalid JSON: {err}"
+                            )],
+                        ),
+                    }
+                }
+                Ok(rulesets_output) => {
+                    let rulesets_detail = String::from_utf8_lossy(&rulesets_output.stderr)
+                        .trim()
+                        .to_string();
+                    source_branch_protection_from_error(
+                        &path,
+                        &format!("{detail}; gh api {rulesets_path} failed: {rulesets_detail}"),
+                    )
+                }
+                Err(err) => source_branch_protection_from_error(
+                    &path,
+                    &format!("{detail}; gh api {rulesets_path} failed: {err}"),
+                ),
+            }
         }
         Err(err) => {
             notes.push(format!("gh api {path} failed: {err}"));
@@ -2241,6 +2274,137 @@ fn source_branch_protection_from_json(value: serde_json::Value) -> SourceBranchP
     )
 }
 
+fn source_rulesets_with_details(value: serde_json::Value, list_path: &str) -> serde_json::Value {
+    let Some(ruleset) = value.as_array().and_then(|rulesets| {
+        rulesets.iter().find(|ruleset| {
+            ruleset.get("name").and_then(serde_json::Value::as_str) == Some(SOURCE_BRANCH)
+                && ruleset.get("target").and_then(serde_json::Value::as_str) == Some("branch")
+                && ruleset
+                    .get("enforcement")
+                    .and_then(serde_json::Value::as_str)
+                    == Some("active")
+        })
+    }) else {
+        return value;
+    };
+    if ruleset
+        .get("rules")
+        .and_then(serde_json::Value::as_array)
+        .is_some()
+    {
+        return value;
+    }
+    let Some(id) = ruleset.get("id").and_then(serde_json::Value::as_i64) else {
+        return value;
+    };
+    let detail_path = format!("{list_path}/{id}");
+    let Ok(output) = Command::new("gh").args(["api", &detail_path]).output() else {
+        return value;
+    };
+    if !output.status.success() {
+        return value;
+    }
+    let Ok(detail) = serde_json::from_slice::<serde_json::Value>(&output.stdout) else {
+        return value;
+    };
+    serde_json::Value::Array(vec![detail])
+}
+
+fn source_branch_protection_from_rulesets_json(
+    value: serde_json::Value,
+) -> SourceBranchProtectionReport {
+    let Some(rulesets) = value.as_array() else {
+        return source_branch_protection_from_parts(
+            None,
+            Vec::new(),
+            None,
+            None,
+            None,
+            None,
+            vec!["source rulesets response was not an array".to_string()],
+        );
+    };
+
+    let Some(ruleset) = rulesets.iter().find(|ruleset| {
+        ruleset.get("name").and_then(serde_json::Value::as_str) == Some(SOURCE_BRANCH)
+            && ruleset.get("target").and_then(serde_json::Value::as_str) == Some("branch")
+            && ruleset
+                .get("enforcement")
+                .and_then(serde_json::Value::as_str)
+                == Some("active")
+    }) else {
+        return source_branch_protection_from_parts(
+            Some(false),
+            Vec::new(),
+            None,
+            None,
+            None,
+            None,
+            vec!["no active source main repository ruleset was found".to_string()],
+        );
+    };
+
+    let required_status_checks = ruleset
+        .get("rules")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|rule| {
+            rule.get("type").and_then(serde_json::Value::as_str) == Some("required_status_checks")
+        })
+        .flat_map(|rule| {
+            rule.pointer("/parameters/required_status_checks")
+                .and_then(serde_json::Value::as_array)
+                .into_iter()
+                .flatten()
+        })
+        .filter_map(|check| {
+            check
+                .get("context")
+                .and_then(serde_json::Value::as_str)
+                .map(ToOwned::to_owned)
+        })
+        .collect::<Vec<_>>();
+    let strict_required_status_checks = ruleset
+        .get("rules")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .find(|rule| {
+            rule.get("type").and_then(serde_json::Value::as_str) == Some("required_status_checks")
+        })
+        .and_then(|rule| {
+            rule.pointer("/parameters/strict_required_status_checks_policy")
+                .and_then(serde_json::Value::as_bool)
+        });
+    let has_rule = |kind: &str| {
+        ruleset
+            .get("rules")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|rules| {
+                rules
+                    .iter()
+                    .any(|rule| rule.get("type").and_then(serde_json::Value::as_str) == Some(kind))
+            })
+    };
+
+    source_branch_protection_from_parts(
+        Some(true),
+        required_status_checks,
+        strict_required_status_checks,
+        None,
+        Some(!has_rule("non_fast_forward")),
+        Some(!has_rule("deletion")),
+        vec![format!(
+            "source uses active repository ruleset `{}` rather than the legacy branch-protection endpoint",
+            ruleset
+                .get("id")
+                .and_then(serde_json::Value::as_i64)
+                .map_or_else(|| "main".to_string(), |id| id.to_string())
+        )],
+    )
+}
+
 fn source_branch_protection_from_parts(
     protection_present: Option<bool>,
     actual_required_status_checks: Vec<String>,
@@ -2258,7 +2422,7 @@ fn source_branch_protection_from_parts(
     .to_string();
     let next_actions = match status.as_str() {
         "protected" => vec![
-            "Review the source required-check set and synthetic bot-event proof for issue #294; this report is observational only."
+            "Review the source required-check set and synthetic bot-event proof; this report is observational only."
                 .to_string(),
         ],
         "unprotected" => vec![
@@ -5107,8 +5271,57 @@ Merge this PR with a regular merge commit; do not squash.
             report
                 .next_actions
                 .iter()
-                .any(|action| action.contains("issue #294"))
+                .any(|action| action.contains("required-check set"))
         );
+    }
+
+    #[test]
+    fn source_ruleset_reports_required_guard_and_protection_shape() {
+        let report = source_branch_protection_from_rulesets_json(serde_json::json!([{
+            "id": 12681248,
+            "name": "main",
+            "target": "branch",
+            "enforcement": "active",
+            "rules": [
+                { "type": "deletion" },
+                { "type": "non_fast_forward" },
+                {
+                    "type": "required_status_checks",
+                    "parameters": {
+                        "strict_required_status_checks_policy": false,
+                        "required_status_checks": [
+                            { "context": "reject-routine-bot-pr" }
+                        ]
+                    }
+                }
+            ]
+        }]));
+
+        assert_eq!(report.status, "protected");
+        assert_eq!(report.protection_present, Some(true));
+        assert_eq!(
+            report.actual_required_status_checks,
+            vec!["reject-routine-bot-pr"]
+        );
+        assert_eq!(report.allow_force_pushes, Some(false));
+        assert_eq!(report.allow_deletions, Some(false));
+        assert!(report.notes.iter().any(|note| note.contains("ruleset")));
+    }
+
+    #[test]
+    fn source_ruleset_without_active_main_is_unprotected() {
+        let report = source_branch_protection_from_rulesets_json(serde_json::json!([
+            {
+                "id": 12681248,
+                "name": "main",
+                "target": "branch",
+                "enforcement": "disabled",
+                "rules": []
+            }
+        ]));
+
+        assert_eq!(report.status, "unprotected");
+        assert_eq!(report.protection_present, Some(false));
     }
 
     #[test]
