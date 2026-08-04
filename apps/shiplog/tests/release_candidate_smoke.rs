@@ -47,8 +47,7 @@ fn write_candidate_metadata(fixture: &CandidateFixture) -> Result<()> {
         let path = fixture.candidate_dir.join(relative);
         sums.push_str(&format!("{}  {relative}\n", sha256(&path)?));
     }
-    fs::write(&sums_path, sums)
-        .with_context(|| format!("write {}", sums_path.display()))?;
+    fs::write(&sums_path, sums).with_context(|| format!("write {}", sums_path.display()))?;
 
     let manifest_path = fixture.candidate_dir.join("RELEASE_CANDIDATE.txt");
     fs::write(
@@ -137,7 +136,9 @@ fn run_candidate_smoke(fixture: &CandidateFixture) -> Result<Output> {
     #[cfg(not(windows))]
     let mut command = {
         let script_path = root.join("scripts/release-install-smoke.sh");
-        let script = script_path.to_str().context("Bash smoke path is not UTF-8")?;
+        let script = script_path
+            .to_str()
+            .context("Bash smoke path is not UTF-8")?;
         let mut command = Command::new("bash");
         command.args([script, version]);
         command
@@ -178,11 +179,17 @@ fn staged_candidate_smoke_uses_local_bundle_and_emits_receipts() -> Result<()> {
         "candidate mode should report its exact proof boundary: {text}"
     );
     ensure!(
-        fixture.smoke_dir.join("cold-start/status.latest.json").is_file(),
+        fixture
+            .smoke_dir
+            .join("cold-start/status.latest.json")
+            .is_file(),
         "candidate smoke should retain the status receipt"
     );
     ensure!(
-        fixture.smoke_dir.join("demo-review-rescue.stdout").is_file(),
+        fixture
+            .smoke_dir
+            .join("demo-review-rescue.stdout")
+            .is_file(),
         "candidate smoke should retain the no-network rescue transcript"
     );
     Ok(())
@@ -196,7 +203,10 @@ fn staged_candidate_smoke_rejects_checksum_mismatch_before_execution() -> Result
     fs::write(&fixture.asset_path, bytes)?;
 
     let output = run_candidate_smoke(&fixture)?;
-    ensure!(!output.status.success(), "corrupted candidate unexpectedly passed");
+    ensure!(
+        !output.status.success(),
+        "corrupted candidate unexpectedly passed"
+    );
     ensure!(
         combined_output(&output).contains("checksum mismatch"),
         "corruption should fail at the checksum boundary: {}",
@@ -218,7 +228,10 @@ fn staged_candidate_smoke_rejects_broken_command_with_matching_checksum() -> Res
     write_candidate_metadata(&fixture)?;
 
     let output = run_candidate_smoke(&fixture)?;
-    ensure!(!output.status.success(), "broken candidate unexpectedly passed");
+    ensure!(
+        !output.status.success(),
+        "broken candidate unexpectedly passed"
+    );
     ensure!(
         combined_output(&output).contains("candidate binary failed --version"),
         "matching checksums must not rescue a broken executable: {}",
