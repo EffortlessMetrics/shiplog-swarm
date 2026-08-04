@@ -64,7 +64,7 @@ fn write_candidate_metadata(fixture: &CandidateFixture) -> Result<()> {
                 "release_tag=v{}\n",
                 "source_sha={}\n",
                 "repository=EffortlessMetrics/shiplog-swarm\n",
-                "workflow_run_id=fixture\n",
+                "workflow_run_id=1\n",
                 "workflow_run_attempt=1\n",
                 "asset_count=4\n",
                 "checksum_manifest_sha256={}\n"
@@ -172,6 +172,10 @@ fn combined_output(output: &Output) -> String {
     )
 }
 
+fn manifest_path(fixture: &CandidateFixture) -> PathBuf {
+    fixture.candidate_dir.join("RELEASE_CANDIDATE.txt")
+}
+
 #[test]
 fn staged_candidate_smoke_uses_local_bundle_and_emits_receipts() -> Result<()> {
     let fixture = candidate_fixture()?;
@@ -179,6 +183,10 @@ fn staged_candidate_smoke_uses_local_bundle_and_emits_receipts() -> Result<()> {
     ensure!(output.status.success(), "{}", combined_output(&output));
 
     let text = combined_output(&output);
+    ensure!(
+        text.contains("release install smoke passed"),
+        "all successful modes should emit the general release smoke line: {text}"
+    );
     ensure!(
         text.contains("staged release candidate smoke passed"),
         "candidate mode should report its exact proof boundary: {text}"
@@ -225,6 +233,45 @@ fn staged_candidate_smoke_rejects_incomplete_four_platform_bundle() -> Result<()
             "candidate bundle must contain exactly one {missing_name}; found 0"
         )),
         "candidate mode must prove all four platform binaries exist: {}",
+        combined_output(&output)
+    );
+    Ok(())
+}
+
+#[test]
+fn staged_candidate_smoke_rejects_duplicate_manifest_fields() -> Result<()> {
+    let fixture = candidate_fixture()?;
+    let path = manifest_path(&fixture);
+    let mut manifest = fs::read_to_string(&path)?;
+    manifest.push_str("release_tag=v0.0.0\n");
+    fs::write(&path, manifest)?;
+
+    let output = run_candidate_smoke(&fixture)?;
+    ensure!(!output.status.success(), "duplicate manifest unexpectedly passed");
+    ensure!(
+        combined_output(&output).contains("duplicate candidate manifest field: release_tag"),
+        "duplicate keys must fail before candidate execution: {}",
+        combined_output(&output)
+    );
+    Ok(())
+}
+
+#[test]
+fn staged_candidate_smoke_rejects_invalid_workflow_identity() -> Result<()> {
+    let fixture = candidate_fixture()?;
+    let path = manifest_path(&fixture);
+    let manifest = fs::read_to_string(&path)?
+        .replace("workflow_run_id=1", "workflow_run_id=not-a-run");
+    fs::write(&path, manifest)?;
+
+    let output = run_candidate_smoke(&fixture)?;
+    ensure!(
+        !output.status.success(),
+        "unsafe workflow identity unexpectedly passed"
+    );
+    ensure!(
+        combined_output(&output).contains("invalid workflow run identity"),
+        "manifest identities must stay closed and machine-shaped: {}",
         combined_output(&output)
     );
     Ok(())
