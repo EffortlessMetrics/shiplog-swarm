@@ -2410,7 +2410,9 @@ fn git_output_with_env(
             String::from_utf8_lossy(&output.stderr).trim()
         );
     }
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    Ok(super::transition::decode_git_stdout(args, &output.stdout)?
+        .trim()
+        .to_string())
 }
 
 fn git_status(workspace_root: &Path, args: &[&str]) -> Result<()> {
