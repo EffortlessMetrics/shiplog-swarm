@@ -23,6 +23,7 @@ use std::path::Path;
 pub const MANIFEST_REL: &str = "plans/shiplog-swarm/promotion-state.toml";
 pub const GENERATED_REL: &str = "plans/shiplog-swarm/current-promotion.md";
 pub const PROMOTION_STATE_PATH: &str = MANIFEST_REL;
+pub const SELF_REFERENTIAL_PATHS: &[&str] = &[PROMOTION_STATE_PATH, GENERATED_REL];
 
 const GENERATED_BANNER: &str = "<!-- GENERATED FROM plans/shiplog-swarm/promotion-state.toml BY `cargo xtask promotion-state`. DO NOT EDIT BY HAND. -->";
 const VALID_STATUSES: &[&str] = &["completed", "pending"];
@@ -469,12 +470,11 @@ fn validate_transitions(transitions: &[Transition]) -> Result<()> {
                 }
                 active_paths.insert(path.path.clone(), entry.source_pr.clone());
             }
-            if path.self_referential && path.path != PROMOTION_STATE_PATH {
+            if path.self_referential && !SELF_REFERENTIAL_PATHS.contains(&path.path.as_str()) {
                 bail!(
-                    "transition {} path {} may mark self_referential only for {}",
+                    "transition {} path {} may mark self_referential only for the promotion manifest or generated current view",
                     entry.source_pr,
-                    path.path,
-                    PROMOTION_STATE_PATH
+                    path.path
                 );
             }
             if path.disposition == TransitionDisposition::ConvergedAtTarget
@@ -936,7 +936,7 @@ swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "bbbbbbbbbbbbb
     }
 
     #[test]
-    fn self_referential_transition_is_restricted_to_the_promotion_manifest() -> Result<()> {
+    fn self_referential_transition_allows_the_manifest_and_generated_view() -> Result<()> {
         let state = manifest_with_transition(
             r#"
 [[transition]]
@@ -958,6 +958,27 @@ swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "bbbbbbbbbbbbb
         )?;
         assert!(state.transition[0].path[0].self_referential);
 
+        let generated_view = manifest_with_transition(
+            r#"
+[[transition]]
+source_pr = "EffortlessMetrics/shiplog#674"
+source_merge_sha = "b31d5f6d9700698b463d8f2b71b9d48a191f433c"
+source_target = "1111111111111111111111111111111111111111"
+swarm_target = "2222222222222222222222222222222222222222"
+[[transition.path]]
+path = "plans/shiplog-swarm/current-promotion.md"
+disposition = "missing_in_swarm"
+resolution = "discard_source"
+self_referential = true
+decision_receipt = "EffortlessMetrics/shiplog-swarm#242"
+decision_merge_sha = "7d0a1b2c3d4e5f60718293a4b5c6d7e8f9a0b1c2"
+reason = "The generated view is derived from the promotion manifest."
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" }
+"#,
+        )?;
+        assert!(generated_view.transition[0].path[0].self_referential);
+
         let error = manifest_with_transition(
             r#"
 [[transition]]
@@ -977,7 +998,7 @@ source_tree_entry = { mode = "100644", object_type = "blob", oid = "aaaaaaaaaaaa
 swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" }
 "#,
         )
-        .expect_err("self_referential must be restricted to the promotion manifest");
+        .expect_err("self_referential must be restricted to generated promotion state");
         assert!(format!("{error:#}").contains("may mark self_referential only"));
         Ok(())
     }
