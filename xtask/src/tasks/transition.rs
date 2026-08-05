@@ -44,7 +44,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use super::promotion_state::{
-    PROMOTION_STATE_PATH, SourceAuthorityDecision, Transition, TransitionDisposition,
+    SELF_REFERENTIAL_PATHS, SourceAuthorityDecision, Transition, TransitionDisposition,
     TransitionPath, TransitionResolution, TreeEntry,
 };
 
@@ -528,12 +528,6 @@ fn check_path(
     };
     let evidence_source_entry = tree_entry(port, workspace_root, &entry.source_target, &path.path)?;
     let evidence_swarm_entry = tree_entry(port, workspace_root, &entry.swarm_target, &path.path)?;
-    verify_tree_entries(
-        path.source_tree_entry.as_ref(),
-        path.swarm_tree_entry.as_ref(),
-        evidence_source_entry.as_ref(),
-        evidence_swarm_entry.as_ref(),
-    )?;
     verify_current_tree_entries(
         path,
         path.source_tree_entry.as_ref(),
@@ -625,6 +619,12 @@ fn verify_current_tree_entries(
     evidence_swarm: Option<&TreeEntry>,
 ) -> Result<()> {
     if !path.self_referential && path.disposition != TransitionDisposition::ConvergedAtTarget {
+        verify_tree_entries(
+            recorded_source,
+            recorded_swarm,
+            evidence_source,
+            evidence_swarm,
+        )?;
         return verify_tree_entries(
             recorded_source,
             recorded_swarm,
@@ -635,8 +635,8 @@ fn verify_current_tree_entries(
 
     if path.self_referential {
         ensure!(
-            path.path == PROMOTION_STATE_PATH,
-            "self-referential transition path {} is not the canonical promotion manifest",
+            SELF_REFERENTIAL_PATHS.contains(&path.path.as_str()),
+            "self-referential transition path {} is not the promotion manifest or generated current view",
             path.path
         );
     } else {
@@ -1040,6 +1040,7 @@ fn reaches_source_result(source_section: &str, swarm_section: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tasks::promotion_state::{GENERATED_REL, PROMOTION_STATE_PATH};
     use std::cell::RefCell;
 
     const CARGO_LOCK: &str = "Cargo.lock";
@@ -1479,6 +1480,51 @@ mod tests {
         transition_path.decision_receipt = decision.clone();
         transition_path.decision_merge_sha = decision_sha.to_string();
         transition_path.reason = "The active receipt is stored in this manifest.".to_string();
+        transition_path.source_tree_entry = Some(blob_entry(source_oid));
+        transition_path.swarm_tree_entry = Some(blob_entry(evidence_swarm_oid));
+
+        let port = StubPort::new()
+            .ancestor("origin/evidence")
+            .ancestor("swarm/evidence")
+            .merged(&source, &transition.source_merge_sha, &patch)
+            .merged(&decision, decision_sha, "")
+            .blob("origin/evidence", path, source_oid)
+            .blob("swarm/evidence", path, evidence_swarm_oid)
+            .blob("origin/main", path, source_oid)
+            .blob("swarm/main", path, current_swarm_oid);
+        let current_refs = TransitionRefs {
+            source_repo: SOURCE,
+            swarm_repo: SWARM,
+            source_target: "origin/main",
+            swarm_target: "swarm/main",
+        };
+
+        let authority = derive_authority(&port, Path::new("."), &current_refs, &[transition])?;
+        assert!(authority.discard_source.contains_key(path));
+        Ok(())
+    }
+
+    #[test]
+    fn self_referential_generated_view_may_change_only_its_current_swarm_entry() -> Result<()> {
+        let path = GENERATED_REL;
+        let patch = section(path, "old", "new", "generated-view");
+        let source_oid = "9f2c1b6a0d4e5f708192a3b4c5d6e7f809a1b2c3";
+        let evidence_swarm_oid = "8e1b2c3d4f5061728394a5b6c7d8e9f0a1b2c3d4";
+        let current_swarm_oid = "7d0a1b2c3d4e5f60718293a4b5c6d7e8f9a0b1c2";
+        let decision_sha = "6c9d0e1f2a3b4c5d6e7f8091a2b3c4d5e6f70819";
+        let source = format!("{SOURCE}#657");
+        let decision = format!("{SWARM}#242");
+        let mut transition = entry(TransitionDisposition::MissingInSwarm, &[]);
+        transition.source_target = "origin/evidence".to_string();
+        transition.swarm_target = "swarm/evidence".to_string();
+        let transition_path = &mut transition.path[0];
+        transition_path.path = path.to_string();
+        transition_path.resolution = Some(TransitionResolution::DiscardSource);
+        transition_path.self_referential = true;
+        transition_path.decision_receipt = decision.clone();
+        transition_path.decision_merge_sha = decision_sha.to_string();
+        transition_path.reason =
+            "The generated view is derived from the promotion manifest.".to_string();
         transition_path.source_tree_entry = Some(blob_entry(source_oid));
         transition_path.swarm_tree_entry = Some(blob_entry(evidence_swarm_oid));
 
