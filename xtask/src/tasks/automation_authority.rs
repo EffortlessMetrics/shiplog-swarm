@@ -248,11 +248,17 @@ fn inspect_source_bot_guard(workflows: &Path, findings: &mut Vec<String>) -> Res
         .and_then(Yaml::as_str)
         .unwrap_or_default();
     let normalized_condition = condition.split_whitespace().collect::<String>();
-    if normalized_condition
-        != "github.repository=='EffortlessMetrics/shiplog'&&(github.event_name=='pull_request_target'||github.event_name=='workflow_dispatch')"
+    let required_condition_markers = [
+        "github.repository=='EffortlessMetrics/shiplog'",
+        "github.event_name=='pull_request_target'",
+        "github.event_name=='workflow_dispatch'",
+    ];
+    if required_condition_markers
+        .iter()
+        .any(|required| !normalized_condition.contains(required))
     {
         findings.push(
-            "source automation guard job condition must match the source pull-request and synthetic dispatch events"
+            "source automation guard job condition must include the source pull-request and synthetic dispatch events"
                 .to_string(),
         );
     }
@@ -640,6 +646,21 @@ mod tests {
     }
 
     #[test]
+    fn source_guard_accepts_actor_filtering_in_job_condition() -> Result<()> {
+        let dir = fixture(RepositoryRole::Source, false)?;
+        let path = dir
+            .path()
+            .join(".github/workflows/source-automation-guard.yml");
+        let text = fs::read_to_string(&path)?.replace(
+            "(github.event_name == 'pull_request_target' ||\n      github.event_name == 'workflow_dispatch')",
+            "(github.event_name == 'workflow_dispatch' ||\n      (github.event_name == 'pull_request_target' &&\n      (github.event.pull_request.user.login == 'dependabot[bot]' ||\n      github.event.pull_request.user.login == 'factory-droid[bot]')))",
+        );
+        fs::write(path, text)?;
+        ensure!(inspect(dir.path(), RepositoryRole::Source)?.is_empty());
+        Ok(())
+    }
+
+    #[test]
     fn source_review_bots_may_write_comments_without_repository_contents() -> Result<()> {
         let dir = fixture(RepositoryRole::Source, false)?;
         for name in ["droid-review.yml", "droid.yml"] {
@@ -757,7 +778,7 @@ mod tests {
         ensure!(
             impossible_findings
                 .iter()
-                .any(|finding| finding.contains("condition must match the source pull-request"))
+                .any(|finding| finding.contains("condition must include the source pull-request"))
         );
 
         let permissive_dir = fixture(RepositoryRole::Source, false)?;
