@@ -1281,4 +1281,4 @@ decision_receipt = "EffortlessMetrics/shiplog-swarm#394"
 decision_merge_sha = "9d38e58a885d214301bb494315882657e5e506de"
 reason = "PR #394 materialized the reconciled promotion ledger and regenerated this current view; this exact binding consumes the post-#394 result without granting permanent swarm authority."
 source_tree_entry = { mode = "100644", object_type = "blob", oid = "2cf46f2668123bb939bd5c92beb02f8e375a5664" }
-swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "afc811f082821bc353e0494e49d7c75e41c48ef0" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "2904c308f8c0e57c01b535a862c5e2a56c86d6f3" }
