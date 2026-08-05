@@ -521,7 +521,7 @@ decision_receipt = "EffortlessMetrics/shiplog-swarm#353"
 decision_merge_sha = "fc19c648c9eba8a76a67d55af55cd2a5bc77291c"
 reason = "The swarm validator is the current fail-closed static checker for synthetic actor proof and guard shape."
 source_tree_entry = { mode = "100644", object_type = "blob", oid = "60184651df83b939abc0a1202f54410da4d6d71e" }
-swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "7916833ea3f286c3eb4f64d7ceee492b15541871" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "a584b5243f658f2b1033baf623c119d7d392e628" }
 
 [[transition.path]]
 path = "xtask/src/tasks/file_policy.rs"
