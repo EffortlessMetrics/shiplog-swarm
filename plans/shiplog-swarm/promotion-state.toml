@@ -514,16 +514,6 @@ source_tree_entry = { mode = "100644", object_type = "blob", oid = "979f4d444bfa
 swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "31defb7dea7b915ae5cf3c84d6f330e66e379de3" }
 
 [[transition.path]]
-path = "xtask/src/tasks/automation_authority.rs"
-disposition = "missing_in_swarm"
-resolution = "discard_source"
-decision_receipt = "EffortlessMetrics/shiplog-swarm#353"
-decision_merge_sha = "fc19c648c9eba8a76a67d55af55cd2a5bc77291c"
-reason = "The swarm validator is the current fail-closed static checker for synthetic actor proof and guard shape."
-source_tree_entry = { mode = "100644", object_type = "blob", oid = "60184651df83b939abc0a1202f54410da4d6d71e" }
-swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "a584b5243f658f2b1033baf623c119d7d392e628" }
-
-[[transition.path]]
 path = "xtask/src/tasks/file_policy.rs"
 disposition = "missing_in_swarm"
 resolution = "discard_source"
@@ -1283,3 +1273,22 @@ decision_merge_sha = "9d38e58a885d214301bb494315882657e5e506de"
 reason = "PR #394 materialized the reconciled promotion ledger and regenerated this current view; this exact binding consumes the post-#394 result without granting permanent swarm authority."
 source_tree_entry = { mode = "100644", object_type = "blob", oid = "2cf46f2668123bb939bd5c92beb02f8e375a5664" }
 swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "afc811f082821bc353e0494e49d7c75e41c48ef0" }
+
+# PR #402 changed the swarm-side authority checker after the older #353
+# evidence target. Rebind only that path to the exact current swarm target;
+# the older decision remains represented by its receipt and merge history.
+[[transition]]
+source_pr = "EffortlessMetrics/shiplog#682"
+source_merge_sha = "2f69daf921d74fb9472584c2a0df31857cfa2384"
+source_target = "175e8c8cee8110c4cf4a42d5534f5dffe45bf426"
+swarm_target = "c13ae940ad13af6b568315621d544e8394c56b99"
+
+[[transition.path]]
+path = "xtask/src/tasks/automation_authority.rs"
+disposition = "missing_in_swarm"
+resolution = "discard_source"
+decision_receipt = "EffortlessMetrics/shiplog-swarm#402"
+decision_merge_sha = "8f33babade69c7f83ac4f03d52768f0dbb12f6df"
+reason = "The reviewed #402 semantic source-guard checker repair supersedes the older #353 result for this path; this bounded rebind keeps the repaired validator on swarm without granting permanent authority."
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "60184651df83b939abc0a1202f54410da4d6d71e" }
+swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "a584b5243f658f2b1033baf623c119d7d392e628" }
