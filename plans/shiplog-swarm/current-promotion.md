@@ -10,6 +10,9 @@
 **Source governance:** `EffortlessMetrics/shiplog#681`
 **Source governance:** `EffortlessMetrics/shiplog#684`
 **Source governance:** `EffortlessMetrics/shiplog#686`
+**Source governance:** `EffortlessMetrics/shiplog#688`
+**Source governance:** `EffortlessMetrics/shiplog#689`
+**Source governance:** `EffortlessMetrics/shiplog#690`
 **Source post-merge proof:** `https://github.com/EffortlessMetrics/shiplog/actions/runs/30806322336`
 
 ## Included work
@@ -116,7 +119,7 @@
   - consumed by: `(active)`
 - path: `.github/workflows/release.yml`
   - reason: The source release writer remains authoritative while merged #391 carries the reviewed swarm candidate verification contract; this is a bounded rebind, not a transfer of release authority.
-  - source target: `175e8c8cee8110c4cf4a42d5534f5dffe45bf426`
+  - source target: `a0e6efdf010d026c72a4280a5a642f82180c98ed`
   - swarm target: `f99dcbd1ec331c9665b16748b2493bc0a4f0c25f`
   - decision receipt: `EffortlessMetrics/shiplog-swarm#391` at `ac9308542fc6ec4daa1337bf81303bcf443542e1`
   - consumed by: `(active)`

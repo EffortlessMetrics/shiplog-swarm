@@ -36,6 +36,9 @@ source_governance = [
   "EffortlessMetrics/shiplog#681",
   "EffortlessMetrics/shiplog#684",
   "EffortlessMetrics/shiplog#686",
+  "EffortlessMetrics/shiplog#688",
+  "EffortlessMetrics/shiplog#689",
+  "EffortlessMetrics/shiplog#690",
 ]
 # Latest source post-merge routed proof, once recorded. Empty until observed.
 source_post_merge_proof = "https://github.com/EffortlessMetrics/shiplog/actions/runs/30806322336"
@@ -422,12 +425,12 @@ swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "ec4b5257d46a4
 
 [[source_authority]]
 path = ".github/workflows/release.yml"
-source_target = "175e8c8cee8110c4cf4a42d5534f5dffe45bf426"
+source_target = "a0e6efdf010d026c72a4280a5a642f82180c98ed"
 swarm_target = "f99dcbd1ec331c9665b16748b2493bc0a4f0c25f"
 decision_receipt = "EffortlessMetrics/shiplog-swarm#391"
 decision_merge_sha = "ac9308542fc6ec4daa1337bf81303bcf443542e1"
 reason = "The source release writer remains authoritative while merged #391 carries the reviewed swarm candidate verification contract; this is a bounded rebind, not a transfer of release authority."
-source_tree_entry = { mode = "100644", object_type = "blob", oid = "77c5ff31f0da4c15c4e9b1c3590b66ff34d95e35" }
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "7c877fa22d918d03086de17e44ec864dbefecdff" }
 swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "1ca5135cfcbfcf657fe651274c9870197c52a011" }
 
 [[source_authority]]
@@ -1117,7 +1120,7 @@ swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "63c5990cb88c0
 [[transition]]
 source_pr = "EffortlessMetrics/shiplog#682"
 source_merge_sha = "2f69daf921d74fb9472584c2a0df31857cfa2384"
-source_target = "175e8c8cee8110c4cf4a42d5534f5dffe45bf426"
+source_target = "a0e6efdf010d026c72a4280a5a642f82180c98ed"
 swarm_target = "f99dcbd1ec331c9665b16748b2493bc0a4f0c25f"
 
 [[transition.path]]
@@ -1157,7 +1160,7 @@ resolution = "discard_source"
 decision_receipt = "EffortlessMetrics/shiplog-swarm#391"
 decision_merge_sha = "ac9308542fc6ec4daa1337bf81303bcf443542e1"
 reason = "The reviewed #391 candidate workflow pin update is the bounded current swarm policy result."
-source_tree_entry = { mode = "100644", object_type = "blob", oid = "f2f094ba53216b2b6476184f2367f99e888dd153" }
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "fa08744a7476d7dad56e4118e9ba932ebd1d06c9" }
 swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "11d7a0c73fbc8c8e9b5ff20ec1fbd91a73407482" }
 
 [[transition.path]]
@@ -1167,7 +1170,7 @@ resolution = "discard_source"
 decision_receipt = "EffortlessMetrics/shiplog-swarm#391"
 decision_merge_sha = "ac9308542fc6ec4daa1337bf81303bcf443542e1"
 reason = "The reviewed #391 Windows smoke-script repair is the bounded current swarm result."
-source_tree_entry = { mode = "100644", object_type = "blob", oid = "4aaf761d35ea724d9bd5436e7d3d307b2fe188a5" }
+source_tree_entry = { mode = "100644", object_type = "blob", oid = "6f54286d6fc800eeeab23b0eb684208d707bbf13" }
 swarm_tree_entry = { mode = "100644", object_type = "blob", oid = "273dcdc503eef22b71f11cdd0e92fbe50eb80f6c" }
 
 [[transition.path]]
@@ -1177,7 +1180,7 @@ resolution = "discard_source"
 decision_receipt = "EffortlessMetrics/shiplog-swarm#391"
 decision_merge_sha = "ac9308542fc6ec4daa1337bf81303bcf443542e1"
 reason = "The reviewed #391 Unix smoke-script repair is the bounded current swarm result."
-source_tree_entry = { mode = "100755", object_type = "blob", oid = "cb85c988d088895cebf69532e5775995b66b474f" }
+source_tree_entry = { mode = "100755", object_type = "blob", oid = "8796e20e8ebc4ddaf8fdcbb80abb60ede805d7f8" }
 swarm_tree_entry = { mode = "100755", object_type = "blob", oid = "0982f8f8c57f219d89ed8dc20035603999cbd81d" }
 
 [[transition.path]]
