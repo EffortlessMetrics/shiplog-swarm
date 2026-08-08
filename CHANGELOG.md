@@ -28,6 +28,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Fixed GitHub setup readiness reporting `GitHub authentication unavailable via
+  unavailable for github.com: gh_unavailable`. Every unavailable path records
+  the source as unavailable, so the `via` clause always rendered as "via
+  unavailable", and the reason was the raw machine code. The summary now names
+  a source only when there is one and pairs the code with a description, as in
+  `GitHub authentication unavailable for github.com: the gh CLI is not
+  installed or not on PATH (gh_unavailable)`. The machine code is still
+  present, so scripts matching `doctor --setup --json` on it keep working.
+- Fixed documentation never mentioning `GH_TOKEN`, which shiplog prefers over
+  `GITHUB_TOKEN`. The config reference now documents the full GitHub
+  credential resolution order, including the Enterprise variables and the `gh`
+  CLI fallback, and records `SHIPLOG_LLM_API_KEY`. The setup guide's example
+  readiness output showed `GITHUB_TOKEN not set`, which the tool never emits.
 - Fixed date flags reporting `input contains invalid characters`, `premature
   end of input`, or `input is out of range` — none of which name the expected
   format. `--since`, `--until`, and the `add`/`journal add`/`journal edit`

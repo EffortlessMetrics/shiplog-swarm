@@ -137,7 +137,11 @@ Prerequisites:
 
 - Rust 1.95+
 - Optional provider tokens when those sources are enabled:
-  `GITHUB_TOKEN`, `GITLAB_TOKEN`, `JIRA_TOKEN`, or `LINEAR_API_KEY`
+  `GH_TOKEN` or `GITHUB_TOKEN`, `GITLAB_TOKEN`, `JIRA_TOKEN`, or
+  `LINEAR_API_KEY`. For GitHub, `GH_TOKEN` is preferred over `GITHUB_TOKEN`,
+  Enterprise hosts use `GH_ENTERPRISE_TOKEN` or `GITHUB_ENTERPRISE_TOKEN`, and
+  an authenticated `gh` CLI is reused when no variable is set. See
+  [GitHub credential resolution](docs/config-reference.md#github-credential-resolution).
 - `SHIPLOG_REDACT_KEY` only when rendering manager/public share packets
 
 ## Setup troubleshooting
@@ -156,7 +160,9 @@ shiplog status --latest
 
 `start --yes` writes the same local-first setup files as `init --guided` and
 requires explicit confirmation. `start --dry-run` previews them without
-writing. `doctor --setup`, `sources status`,
+writing. As in the quick start above, `start` is not in the shipped `v0.11.0`
+binary yet; use `shiplog init --guided` if `start` reports an unrecognized
+subcommand. `doctor --setup`, `sources status`,
 `doctor --setup --json`, and `status --latest` are read-only. They do not query
 providers, render share packets, or mutate provider records.
 

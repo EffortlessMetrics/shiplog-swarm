@@ -62,6 +62,8 @@ pub enum GithubAuthReason {
 }
 
 impl GithubAuthReason {
+    /// Stable machine code. Scripts and agents match on this, so it does not
+    /// change with wording.
     pub fn label(self) -> &'static str {
         match self {
             Self::InvalidApiBase => "invalid_api_base",
@@ -73,6 +75,51 @@ impl GithubAuthReason {
             Self::GhTimedOut => "gh_timed_out",
             Self::GhHostAmbiguous => "gh_host_ambiguous",
         }
+    }
+
+    /// What went wrong, in words. Reported alongside `label`, never instead of
+    /// it, so the machine code stays available to anything matching on it.
+    pub fn description(self) -> &'static str {
+        match self {
+            Self::InvalidApiBase => "the configured API base is not a usable HTTPS URL",
+            Self::MissingCredential => {
+                "no GitHub credential was found in the environment or the gh CLI"
+            }
+            Self::GhUnavailable => "the gh CLI is not installed or not on PATH",
+            Self::GhLoggedOut => "the gh CLI is not logged in to this host",
+            Self::GhMalformedOutput => "the gh CLI returned output shiplog could not read",
+            Self::GhCommandFailed => "the gh CLI exited with an error",
+            Self::GhTimedOut => "the gh CLI did not respond in time",
+            Self::GhHostAmbiguous => {
+                "the gh CLI is logged in to several hosts and none matches the configured host"
+            }
+        }
+    }
+}
+
+/// One-line summary of a failed GitHub credential resolution.
+///
+/// Every unavailable path records `GithubAuthSource::Unavailable`, so the
+/// older `via {source}` phrasing always rendered as "unavailable via
+/// unavailable". Name the source only when there is one to name, and pair the
+/// machine code with a description so a first-time user is not handed a bare
+/// `gh_unavailable`.
+pub fn describe_unavailable(metadata: &GithubAuthMetadata) -> String {
+    let via = match metadata.source {
+        GithubAuthSource::Unavailable => String::new(),
+        source => format!(" via {}", source.label()),
+    };
+    match metadata.reason {
+        Some(reason) => format!(
+            "GitHub authentication unavailable{via} for {}: {} ({})",
+            metadata.host,
+            reason.description(),
+            reason.label()
+        ),
+        None => format!(
+            "GitHub authentication unavailable{via} for {}",
+            metadata.host
+        ),
     }
 }
 
@@ -380,6 +427,70 @@ fn terminate_child(child: &mut Child) {
 mod tests {
     use super::*;
     use anyhow::{anyhow, ensure};
+
+    fn unavailable_metadata(reason: GithubAuthReason) -> GithubAuthMetadata {
+        GithubAuthMetadata {
+            source: GithubAuthSource::Unavailable,
+            host: "github.com".to_owned(),
+            account: None,
+            availability: GithubAuthAvailability::Unavailable,
+            reason: Some(reason),
+        }
+    }
+
+    #[test]
+    fn unavailable_summary_never_says_via_unavailable() {
+        // Every unavailable path records source Unavailable, so the old
+        // "via {source}" clause always rendered as "unavailable via unavailable".
+        let summary = describe_unavailable(&unavailable_metadata(GithubAuthReason::GhUnavailable));
+        assert!(
+            !summary.contains("via unavailable"),
+            "unexpected summary: {summary}"
+        );
+        assert!(
+            summary.contains("the gh CLI is not installed or not on PATH"),
+            "unexpected summary: {summary}"
+        );
+    }
+
+    #[test]
+    fn unavailable_summary_keeps_the_machine_code_for_scripts() {
+        // doctor --setup --json exposes this string and no separate reason
+        // field, so the code has to survive alongside the description.
+        for reason in [
+            GithubAuthReason::InvalidApiBase,
+            GithubAuthReason::MissingCredential,
+            GithubAuthReason::GhUnavailable,
+            GithubAuthReason::GhLoggedOut,
+            GithubAuthReason::GhMalformedOutput,
+            GithubAuthReason::GhCommandFailed,
+            GithubAuthReason::GhTimedOut,
+            GithubAuthReason::GhHostAmbiguous,
+        ] {
+            let summary = describe_unavailable(&unavailable_metadata(reason));
+            assert!(
+                summary.contains(reason.label()),
+                "{} dropped its machine code: {summary}",
+                reason.label()
+            );
+            assert!(
+                summary.contains(reason.description()),
+                "{} dropped its description: {summary}",
+                reason.label()
+            );
+        }
+    }
+
+    #[test]
+    fn unavailable_summary_names_a_source_when_there_is_one() {
+        let mut metadata = unavailable_metadata(GithubAuthReason::GhLoggedOut);
+        metadata.source = GithubAuthSource::GhToken;
+        let summary = describe_unavailable(&metadata);
+        assert!(
+            summary.contains("via GH_TOKEN"),
+            "unexpected summary: {summary}"
+        );
+    }
 
     #[test]
     fn selects_dotcom_environment_variables_in_order() -> Result<()> {

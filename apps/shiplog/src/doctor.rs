@@ -846,13 +846,7 @@ fn github_auth_summary(metadata: &github_auth::GithubAuthMetadata) -> String {
         .map(|account| format!(", account {account}"))
         .unwrap_or_default();
     match metadata.reason {
-        Some(reason) => format!(
-            "GitHub authentication unavailable via {} for {}: {}{}",
-            metadata.source.label(),
-            metadata.host,
-            reason.label(),
-            account
-        ),
+        Some(_) => format!("{}{account}", github_auth::describe_unavailable(metadata)),
         None => format!(
             "GitHub authentication ready via {} for {}{}",
             metadata.source.label(),
