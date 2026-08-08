@@ -12950,7 +12950,47 @@ fn make_git_ingestor(
 
 mod commands;
 
+/// True when a panic message describes stdio failing because the reader closed
+/// the pipe.
+///
+/// The standard library reports these as `failed printing to stdout: Broken
+/// pipe (os error 32)` on Unix and `... (os error 232)` on Windows. Match the
+/// library's fixed prefix together with a broken-pipe indication so unrelated
+/// write failures, such as a full disk, still panic loudly.
+fn is_broken_pipe_panic(message: &str) -> bool {
+    let stdio_write_failure = message.contains("failed printing to stdout")
+        || message.contains("failed printing to stderr");
+    let broken_pipe = message.contains("Broken pipe")
+        || message.contains("os error 32")
+        || message.contains("os error 232");
+    stdio_write_failure && broken_pipe
+}
+
+/// Exit quietly when a downstream reader closes the pipe.
+///
+/// `shiplog status | head -1` and `shiplog intake | less` are ordinary usage,
+/// but `println!` panics on `EPIPE`, so they aborted with a Rust panic dump and
+/// exit code 101. Panics are evidence-loss events here (see
+/// `docs/NO_PANIC_POLICY.md`), and a consumer that stopped reading is not an
+/// error, so treat it as a successful end of output. Every other panic still
+/// reaches the previous hook unchanged.
+fn install_broken_pipe_hook() {
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let message = info
+            .payload()
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| info.payload().downcast_ref::<&str>().copied());
+        if message.is_some_and(is_broken_pipe_panic) {
+            std::process::exit(0);
+        }
+        previous(info);
+    }));
+}
+
 fn main() -> Result<()> {
+    install_broken_pipe_hook();
     commands::dispatch()
 }
 
@@ -17222,6 +17262,34 @@ fn latest_period_run_summary(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn broken_pipe_panic_detects_unix_and_windows_stdio_closures() {
+        assert!(is_broken_pipe_panic(
+            "failed printing to stdout: Broken pipe (os error 32)"
+        ));
+        assert!(is_broken_pipe_panic(
+            "failed printing to stderr: Broken pipe (os error 32)"
+        ));
+        assert!(is_broken_pipe_panic(
+            "failed printing to stdout: The pipe is being closed. (os error 232)"
+        ));
+    }
+
+    #[test]
+    fn broken_pipe_panic_leaves_other_failures_loud() {
+        // A full disk must still panic rather than exit as a clean success.
+        assert!(!is_broken_pipe_panic(
+            "failed printing to stdout: No space left on device (os error 28)"
+        ));
+        // Broken-pipe wording unrelated to stdio writes is not our case.
+        assert!(!is_broken_pipe_panic(
+            "provider request failed: Broken pipe (os error 32)"
+        ));
+        assert!(!is_broken_pipe_panic(
+            "called `Option::unwrap()` on a `None` value"
+        ));
+    }
 
     fn date_args() -> DateArgs {
         DateArgs {
