@@ -28,6 +28,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Fixed every command aborting with a Rust panic dump and exit code 101 when
+  the reader closed the pipe, so ordinary `shiplog status | head -1` or
+  `shiplog doctor --setup | less` reported a crash instead of a clean stop. A
+  closed consumer is now a successful end of output, while other stdio
+  failures such as a full disk still panic loudly.
 - Fixed source names outside the known set keeping their original case in
   `SourceSystem::Other`, so `"Jira"` and `"jira"` compared and re-serialised as
   different sources and broke grouping and round-trips for third-party source
