@@ -8,7 +8,9 @@ use std::process::Command as StdCommand;
 use tempfile::TempDir;
 
 fn shiplog_cmd() -> Command {
-    Command::from_std(std::process::Command::new(env!("CARGO_BIN_EXE_shiplog")))
+    let mut inner = std::process::Command::new(env!("CARGO_BIN_EXE_shiplog"));
+    shiplog_testkit::env::clear_ambient_credentials(&mut inner);
+    Command::from_std(inner)
 }
 
 fn repo_root() -> PathBuf {

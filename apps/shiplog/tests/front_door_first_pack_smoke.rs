@@ -48,12 +48,10 @@ use tempfile::TempDir;
 const MANUAL_NO_EVENTS_REPAIR_KEY: &str = "manual:manual_evidence_missing:no_events";
 
 fn shiplog_cmd(tmp: &Path) -> Command {
-    let mut cmd = Command::from_std(std::process::Command::new(env!("CARGO_BIN_EXE_shiplog")));
-    cmd.current_dir(tmp)
-        .env_remove("GITHUB_TOKEN")
-        .env_remove("GITLAB_TOKEN")
-        .env_remove("JIRA_TOKEN")
-        .env_remove("LINEAR_API_KEY");
+    let mut inner = std::process::Command::new(env!("CARGO_BIN_EXE_shiplog"));
+    shiplog_testkit::env::clear_ambient_credentials(&mut inner);
+    let mut cmd = Command::from_std(inner);
+    cmd.current_dir(tmp);
     cmd
 }
 

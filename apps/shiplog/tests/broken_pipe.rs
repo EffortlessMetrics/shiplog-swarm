@@ -11,7 +11,9 @@ use std::process::{Command, Stdio};
 use tempfile::TempDir;
 
 fn shiplog_bin() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_shiplog"))
+    let mut command = Command::new(env!("CARGO_BIN_EXE_shiplog"));
+    shiplog_testkit::env::clear_ambient_credentials(&mut command);
+    command
 }
 
 /// Set up a minimal local scaffold so the exercised commands have real output.

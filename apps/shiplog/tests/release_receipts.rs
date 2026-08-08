@@ -21,12 +21,8 @@ use shiplog_testkit::bdd::{Scenario, ScenarioContext};
 
 fn shiplog_cmd(cwd: &Path) -> Command {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_shiplog"));
-    cmd.current_dir(cwd)
-        .env_remove("GITHUB_TOKEN")
-        .env_remove("GITLAB_TOKEN")
-        .env_remove("JIRA_TOKEN")
-        .env_remove("LINEAR_API_KEY")
-        .env_remove("SHIPLOG_REDACT_KEY");
+    shiplog_testkit::env::clear_ambient_credentials(&mut cmd);
+    cmd.current_dir(cwd);
     cmd
 }
 
