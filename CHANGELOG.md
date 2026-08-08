@@ -28,6 +28,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Fixed the CLI test suites reading provider credentials from the developer's
+  own shell. `cargo xtask ci-small` failed 17 setup-readiness tests on any
+  machine with `GH_TOKEN` exported, because shiplog prefers it over the
+  `GITHUB_TOKEN` those tests set. The credential-free suites had the mirror
+  problem: they cleared `GITHUB_TOKEN` but not `GH_TOKEN`, so the cold-start
+  and first-use proofs stopped proving a no-token path on exactly the machines
+  most likely to have one. Every binary-driving test now clears the full
+  credential set up front and opts back in explicitly.
 - Fixed every command aborting with a Rust panic dump and exit code 101 when
   the reader closed the pipe, so ordinary `shiplog status | head -1` or
   `shiplog doctor --setup | less` reported a crash instead of a clean stop. A

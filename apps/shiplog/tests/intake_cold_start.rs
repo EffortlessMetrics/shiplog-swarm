@@ -29,16 +29,22 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
+/// A command with every provider credential cleared.
+///
+/// The cold-start contract is about a first-time user who has not configured
+/// any provider, so the developer's own shell must not supply one.
+fn credential_free_cmd() -> Command {
+    let mut inner = std::process::Command::new(env!("CARGO_BIN_EXE_shiplog"));
+    shiplog_testkit::env::clear_ambient_credentials(&mut inner);
+    Command::from_std(inner)
+}
+
 /// Standard cold-start invocation. Matches the documented happy path in
 /// `docs/product/rapid-first-intake.md` § 2.
 fn cold_start_cmd(tmp: &Path, out: &Path) -> Command {
-    let mut cmd = Command::from_std(std::process::Command::new(env!("CARGO_BIN_EXE_shiplog")));
+    let mut cmd = credential_free_cmd();
     cmd.current_dir(tmp)
-        .env_remove("GITHUB_TOKEN")
         .env("GH_CONFIG_DIR", tmp.join("gh-config"))
-        .env_remove("GITLAB_TOKEN")
-        .env_remove("JIRA_TOKEN")
-        .env_remove("LINEAR_API_KEY")
         .args([
             "intake",
             "--last-6-months",
@@ -251,13 +257,9 @@ fn cold_start_default_window_resolves_to_six_months_when_flag_omitted() {
     let tmp = TempDir::new().unwrap();
     let out = tmp.path().join("out");
 
-    Command::from_std(std::process::Command::new(env!("CARGO_BIN_EXE_shiplog")))
+    credential_free_cmd()
         .current_dir(tmp.path())
-        .env_remove("GITHUB_TOKEN")
         .env("GH_CONFIG_DIR", tmp.path().join("gh-config"))
-        .env_remove("GITLAB_TOKEN")
-        .env_remove("JIRA_TOKEN")
-        .env_remove("LINEAR_API_KEY")
         .args(["intake", "--out", out.to_str().unwrap(), "--no-open"])
         .assert()
         .success();
@@ -475,13 +477,9 @@ enabled = false
     )
     .unwrap();
 
-    Command::from_std(std::process::Command::new(env!("CARGO_BIN_EXE_shiplog")))
+    credential_free_cmd()
         .current_dir(tmp.path())
-        .env_remove("GITHUB_TOKEN")
         .env("GH_CONFIG_DIR", tmp.path().join("gh-config"))
-        .env_remove("GITLAB_TOKEN")
-        .env_remove("JIRA_TOKEN")
-        .env_remove("LINEAR_API_KEY")
         .args([
             "intake",
             "--out",

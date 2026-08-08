@@ -30,7 +30,10 @@ use std::os::unix::fs::PermissionsExt;
 type CliTestResult = Result<(), Box<dyn std::error::Error>>;
 
 fn shiplog_cmd() -> Command {
-    let mut command = Command::from_std(std::process::Command::new(env!("CARGO_BIN_EXE_shiplog")));
+    let mut inner = std::process::Command::new(env!("CARGO_BIN_EXE_shiplog"));
+    // Clear first: a later `.env(...)` by an individual test still wins.
+    shiplog_testkit::env::clear_ambient_credentials(&mut inner);
+    let mut command = Command::from_std(inner);
     command.env("GH_CONFIG_DIR", ".shiplog-test-gh-config");
     command
 }

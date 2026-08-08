@@ -8,7 +8,9 @@ use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
 fn shiplog_cmd() -> Command {
-    Command::from_std(std::process::Command::new(env!("CARGO_BIN_EXE_shiplog")))
+    let mut inner = std::process::Command::new(env!("CARGO_BIN_EXE_shiplog"));
+    shiplog_testkit::env::clear_ambient_credentials(&mut inner);
+    Command::from_std(inner)
 }
 
 fn fixture_dir() -> PathBuf {

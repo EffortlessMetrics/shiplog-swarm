@@ -11,6 +11,7 @@ use shiplog::schema::workstream::WorkstreamsFile;
 
 pub mod bdd;
 pub mod bdd_scenarios;
+pub mod env;
 pub mod proptest;
 
 // BDD scenario modules
