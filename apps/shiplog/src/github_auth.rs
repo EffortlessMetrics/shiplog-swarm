@@ -90,9 +90,9 @@ impl GithubAuthReason {
             Self::GhMalformedOutput => "the gh CLI returned output shiplog could not read",
             Self::GhCommandFailed => "the gh CLI exited with an error",
             Self::GhTimedOut => "the gh CLI did not respond in time",
-            Self::GhHostAmbiguous => {
-                "the gh CLI is logged in to several hosts and none matches the configured host"
-            }
+            // Reached whenever no logged-in host matches, which includes being
+            // logged in to exactly one other host. Do not claim there are several.
+            Self::GhHostAmbiguous => "the gh CLI is logged in, but not to the configured host",
         }
     }
 }
@@ -479,6 +479,22 @@ mod tests {
                 reason.label()
             );
         }
+    }
+
+    #[test]
+    fn host_mismatch_does_not_claim_several_logged_in_hosts() {
+        // resolve_from_gh returns GhHostAmbiguous whenever no logged-in host
+        // matches, so a user logged in to exactly one other host reaches it.
+        let summary =
+            describe_unavailable(&unavailable_metadata(GithubAuthReason::GhHostAmbiguous));
+        assert!(
+            !summary.contains("several"),
+            "one non-matching host must not be described as several: {summary}"
+        );
+        assert!(
+            summary.contains("not to the configured host"),
+            "unexpected summary: {summary}"
+        );
     }
 
     #[test]
