@@ -12801,16 +12801,7 @@ fn resolve_github_credential(api_base: &str) -> Result<github_auth::GithubCreden
     match github_auth::resolve(Some(api_base)) {
         github_auth::GithubAuthResolution::Available(credential) => Ok(credential),
         github_auth::GithubAuthResolution::Unavailable(metadata) => {
-            let reason = metadata
-                .reason
-                .map(github_auth::GithubAuthReason::label)
-                .unwrap_or("unknown");
-            anyhow::bail!(
-                "GitHub authentication unavailable via {} for {}: {}",
-                metadata.source.label(),
-                metadata.host,
-                reason
-            )
+            anyhow::bail!("{}", github_auth::describe_unavailable(&metadata))
         }
     }
 }
@@ -12829,16 +12820,7 @@ fn github_auth_unavailable_reason(api_base: Option<&str>) -> String {
             credential.metadata().source.label()
         ),
         github_auth::GithubAuthResolution::Unavailable(metadata) => {
-            let reason = metadata
-                .reason
-                .map(github_auth::GithubAuthReason::label)
-                .unwrap_or("unknown");
-            format!(
-                "GitHub authentication unavailable via {} for {}: {}",
-                metadata.source.label(),
-                metadata.host,
-                reason
-            )
+            github_auth::describe_unavailable(&metadata)
         }
     }
 }

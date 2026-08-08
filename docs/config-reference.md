@@ -114,15 +114,50 @@ Relative paths are resolved from the directory containing `shiplog.toml`.
 
 | Variable | Used by | Notes |
 |----------|---------|-------|
-| `GITHUB_TOKEN` | GitHub | Required by `doctor` and collection when GitHub is enabled. |
+| `GH_TOKEN` | GitHub (github.com) | Preferred over `GITHUB_TOKEN`. See GitHub credential resolution below. |
+| `GITHUB_TOKEN` | GitHub (github.com) | Used when `GH_TOKEN` is unset or empty. |
+| `GH_ENTERPRISE_TOKEN` | GitHub (Enterprise) | Preferred over `GITHUB_ENTERPRISE_TOKEN` for a non-dotcom host. |
+| `GITHUB_ENTERPRISE_TOKEN` | GitHub (Enterprise) | Used when `GH_ENTERPRISE_TOKEN` is unset or empty. |
 | `GITLAB_TOKEN` | GitLab | Required by `doctor` and collection when GitLab is enabled. |
 | `JIRA_TOKEN` | Jira | Required by `doctor` and collection when Jira is enabled. |
 | `LINEAR_API_KEY` | Linear | Required by `doctor` and collection when Linear is enabled. |
 | `SHIPLOG_REDACT_KEY` | Redaction | Default key env var for manager/public packets and bundles. |
+| `SHIPLOG_LLM_API_KEY` | LLM clustering | Only used by the optional, off-by-default `llm` feature. |
 | `JIRA_AUTH_USER` | Jira example | Only used if `sources.jira.auth_user_env = "JIRA_AUTH_USER"`. |
 
 You can change the redaction key env var with `[redaction] key_env`.
 Do not put token values in `shiplog.toml`.
+
+### GitHub credential resolution
+
+GitHub does not take a single required variable. For the selected host,
+shiplog uses the first credential it finds:
+
+```text
+github.com          1. GH_TOKEN
+                    2. GITHUB_TOKEN
+                    3. an authenticated gh CLI credential for the host
+
+Enterprise host     1. GH_ENTERPRISE_TOKEN
+                    2. GITHUB_ENTERPRISE_TOKEN
+                    3. an authenticated gh CLI credential for the host
+```
+
+Two consequences are worth knowing before you export anything:
+
+- `GH_TOKEN` wins over `GITHUB_TOKEN`. If you export `GITHUB_TOKEN` for one
+  account while `GH_TOKEN` is already set for another, shiplog uses the
+  `GH_TOKEN` account.
+- Dotcom and Enterprise variables never substitute for each other. An
+  Enterprise variable is ignored for github.com, and vice versa.
+
+A usable environment credential stops shiplog from running `gh` at all, so
+`gh auth login` is a fallback rather than an override. Run
+`shiplog auth github status` or `shiplog doctor --setup` to see which source
+was chosen; both name it.
+
+The full contract is in
+[SHIPLOG-SPEC-0012](specs/SHIPLOG-SPEC-0012-github-credential-resolution.md).
 
 ## Defaults
 

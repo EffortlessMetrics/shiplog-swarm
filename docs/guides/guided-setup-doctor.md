@@ -137,8 +137,9 @@ Examples:
 Manual journal [blocked; enabled]: manual_events.yaml malformed
   Next (read-only): shiplog doctor --setup
 
-GitHub token [unavailable; enabled]: GITHUB_TOKEN not set
-  Next (read-only): set GITHUB_TOKEN
+GitHub authentication [unavailable; enabled]: GitHub authentication unavailable
+for github.com: the gh CLI is not installed or not on PATH (gh_unavailable)
+  Next (read-only): shiplog auth github status
 
 Manager share [blocked; enabled]: SHIPLOG_REDACT_KEY not set
   Next (read-only): set SHIPLOG_REDACT_KEY
