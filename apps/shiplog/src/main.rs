@@ -1121,7 +1121,7 @@ struct AddArgs {
     #[arg(long, default_value = CONFIG_FILENAME)]
     config: PathBuf,
     /// Single event date, in YYYY-MM-DD format. Defaults to today.
-    #[arg(long)]
+    #[arg(long, value_parser = parse_cli_date)]
     date: Option<NaiveDate>,
     /// Manual event type.
     #[arg(long = "type", value_enum, default_value = "note")]
@@ -1258,13 +1258,13 @@ struct JournalAddArgs {
     #[arg(long = "type", value_enum, default_value = "note")]
     event_type: JournalEventType,
     /// Single event date, in YYYY-MM-DD format.
-    #[arg(long)]
+    #[arg(long, value_parser = parse_cli_date)]
     date: Option<NaiveDate>,
     /// Inclusive start date for a multi-day event.
-    #[arg(long)]
+    #[arg(long, value_parser = parse_cli_date)]
     start: Option<NaiveDate>,
     /// Inclusive end date for a multi-day event.
-    #[arg(long)]
+    #[arg(long, value_parser = parse_cli_date)]
     end: Option<NaiveDate>,
     /// Factual title for the work.
     #[arg(long)]
@@ -1316,13 +1316,13 @@ struct JournalEditArgs {
     #[arg(long = "type", value_enum)]
     event_type: Option<JournalEventType>,
     /// Replace with a single event date, in YYYY-MM-DD format.
-    #[arg(long)]
+    #[arg(long, value_parser = parse_cli_date)]
     date: Option<NaiveDate>,
     /// Replace with an inclusive start date for a multi-day event.
-    #[arg(long)]
+    #[arg(long, value_parser = parse_cli_date)]
     start: Option<NaiveDate>,
     /// Replace with an inclusive end date for a multi-day event.
-    #[arg(long)]
+    #[arg(long, value_parser = parse_cli_date)]
     end: Option<NaiveDate>,
     /// Replace the factual title.
     #[arg(long)]
@@ -2293,13 +2293,42 @@ enum Source {
     },
 }
 
+/// Parse a CLI date argument, reporting the expected format when it fails.
+///
+/// `NaiveDate`'s own parse errors reach the user as `input contains invalid
+/// characters`, `premature end of input`, or `input is out of range`. None of
+/// them name `YYYY-MM-DD`, so `--since 08/15/2026` gave the user nothing to act
+/// on. Accepted input is unchanged: this defers to the same `FromStr` and only
+/// replaces the message.
+fn parse_cli_date(raw: &str) -> Result<NaiveDate, String> {
+    if let Ok(date) = raw.parse::<NaiveDate>() {
+        return Ok(date);
+    }
+
+    // Separate "you used the wrong format" from "that day does not exist", so
+    // `--since 2026-02-30` is not answered by restating a format it already used.
+    let iso_shaped = {
+        let fields: Vec<&str> = raw.split('-').collect();
+        fields.len() == 3
+            && fields
+                .iter()
+                .all(|field| !field.is_empty() && field.bytes().all(|byte| byte.is_ascii_digit()))
+    };
+
+    Err(if iso_shaped {
+        "not a real calendar date; expected YYYY-MM-DD, such as 2026-08-15".to_owned()
+    } else {
+        "expected a date as YYYY-MM-DD, such as 2026-08-15".to_owned()
+    })
+}
+
 #[derive(Args, Debug, Clone, Default)]
 struct DateArgs {
     /// Start date (inclusive), YYYY-MM-DD.
-    #[arg(long)]
+    #[arg(long, value_parser = parse_cli_date)]
     since: Option<NaiveDate>,
     /// End date (exclusive), YYYY-MM-DD.
-    #[arg(long)]
+    #[arg(long, value_parser = parse_cli_date)]
     until: Option<NaiveDate>,
     /// Use the last six months, ending today.
     #[arg(long)]
@@ -17265,6 +17294,45 @@ fn latest_period_run_summary(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cli_date_parser_accepts_what_naive_date_accepted() {
+        // Behavior must not narrow: these all parsed before the value_parser.
+        for raw in ["2026-08-15", "2026-8-5", "2026-02-29"] {
+            assert_eq!(
+                parse_cli_date(raw).ok(),
+                raw.parse::<NaiveDate>().ok(),
+                "{raw} should parse exactly as it did through FromStr"
+            );
+        }
+    }
+
+    #[test]
+    fn cli_date_parser_names_the_expected_format() {
+        for raw in ["notadate", "08/15/2026", "2026", "2026-08"] {
+            let message = parse_cli_date(raw).expect_err("should reject");
+            assert!(
+                message.contains("YYYY-MM-DD"),
+                "{raw} produced {message:?}, which never names the expected format"
+            );
+        }
+    }
+
+    #[test]
+    fn cli_date_parser_separates_an_impossible_day_from_a_bad_format() {
+        // The format was right here; repeating it would not help the user.
+        let message = parse_cli_date("2026-02-30").expect_err("should reject");
+        assert!(
+            message.contains("not a real calendar date"),
+            "expected a calendar-date message, got {message:?}"
+        );
+
+        let message = parse_cli_date("08/15/2026").expect_err("should reject");
+        assert!(
+            !message.contains("not a real calendar date"),
+            "a wrong-format value should get the format message, got {message:?}"
+        );
+    }
 
     #[test]
     fn broken_pipe_panic_detects_unix_and_windows_stdio_closures() {
