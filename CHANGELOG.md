@@ -28,6 +28,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Fixed date flags reporting `input contains invalid characters`, `premature
+  end of input`, or `input is out of range` — none of which name the expected
+  format. `--since`, `--until`, and the `add`/`journal add`/`journal edit`
+  date, start, and end flags now answer `08/15/2026` with `expected a date as
+  YYYY-MM-DD, such as 2026-08-15`, and answer a well-formed but impossible day
+  such as `2026-02-30` with `not a real calendar date` instead of restating a
+  format it already used. Accepted input is unchanged.
 - Fixed the CLI test suites reading provider credentials from the developer's
   own shell. `cargo xtask ci-small` failed 17 setup-readiness tests on any
   machine with `GH_TOKEN` exported, because shiplog prefers it over the
