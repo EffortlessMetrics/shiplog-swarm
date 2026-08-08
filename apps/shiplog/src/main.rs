@@ -12954,14 +12954,17 @@ mod commands;
 /// the pipe.
 ///
 /// The standard library reports these as `failed printing to stdout: Broken
-/// pipe (os error 32)` on Unix and `... (os error 232)` on Windows. Match the
-/// library's fixed prefix together with a broken-pipe indication so unrelated
-/// write failures, such as a full disk, still panic loudly.
+/// pipe (os error 32)` on Unix and `... The pipe is being closed. (os error
+/// 232)` on Windows. Match the library's fixed prefix together with a
+/// broken-pipe indication so unrelated write failures, such as a full disk,
+/// still panic loudly.
+///
+/// The Unix arm requires both the text and the errno: Windows reuses error 32
+/// for `ERROR_SHARING_VIOLATION`, which is not a closed pipe.
 fn is_broken_pipe_panic(message: &str) -> bool {
     let stdio_write_failure = message.contains("failed printing to stdout")
         || message.contains("failed printing to stderr");
-    let broken_pipe = message.contains("Broken pipe")
-        || message.contains("os error 32")
+    let broken_pipe = (message.contains("Broken pipe") && message.contains("os error 32"))
         || message.contains("os error 232");
     stdio_write_failure && broken_pipe
 }
@@ -17285,6 +17288,11 @@ mod tests {
         // Broken-pipe wording unrelated to stdio writes is not our case.
         assert!(!is_broken_pipe_panic(
             "provider request failed: Broken pipe (os error 32)"
+        ));
+        // Windows reuses error 32 for a sharing violation, which is a real
+        // write failure and must stay loud.
+        assert!(!is_broken_pipe_panic(
+            "failed printing to stdout: The process cannot access the file because it is being used by another process. (os error 32)"
         ));
         assert!(!is_broken_pipe_panic(
             "called `Option::unwrap()` on a `None` value"

@@ -67,10 +67,10 @@ fn status_survives_a_reader_that_stops_after_one_line() {
             !stderr.contains("panicked"),
             "attempt {attempt}: closing the pipe panicked shiplog:\n{stderr}"
         );
-        assert_ne!(
+        assert_eq!(
             code,
-            Some(101),
-            "attempt {attempt}: closing the pipe aborted shiplog with a panic exit code"
+            Some(0),
+            "attempt {attempt}: closing the pipe did not end shiplog successfully"
         );
     }
 }
@@ -86,10 +86,10 @@ fn doctor_setup_survives_a_reader_that_stops_after_one_line() {
             !stderr.contains("panicked"),
             "attempt {attempt}: closing the pipe panicked shiplog:\n{stderr}"
         );
-        assert_ne!(
+        assert_eq!(
             code,
-            Some(101),
-            "attempt {attempt}: closing the pipe aborted shiplog with a panic exit code"
+            Some(0),
+            "attempt {attempt}: closing the pipe did not end shiplog successfully"
         );
     }
 }
