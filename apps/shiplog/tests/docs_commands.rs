@@ -69,7 +69,14 @@ fn contributor_docs_and_wrappers_share_the_fresh_clone_contract() -> anyhow::Res
     assert!(!workflow.contains("pull_request:\n    paths:"));
     assert!(workflow.contains("persist-credentials: false"));
     assert!(workflow.contains("extraheader"));
-    assert!(workflow.contains("unset GITHUB_TOKEN GH_TOKEN GITLAB_TOKEN"));
+    // Both contributor lanes must clear ambient credentials before building.
+    // This asserts only that they clear through the shared list; which names
+    // that list must hold is proven by
+    // `credential_free_lanes_clear_every_ambient_credential` in
+    // `release_candidate_smoke.rs`. Pinning the names here instead is what let
+    // the list fall three credentials behind what shiplog reads.
+    assert!(workflow.contains("unset \"${ambient_credential_env_vars[@]}\""));
+    assert!(workflow.contains("$AmbientCredentialEnvVars |"));
     assert!(workflow.contains("Remove-Item \"Env:$_\""));
     assert!(!workflow.contains("SHIPLOG_REDACT_KEY: \"\""));
     assert!(workflow.contains("shiplog-no-gh"));

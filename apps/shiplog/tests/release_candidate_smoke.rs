@@ -190,13 +190,9 @@ fn run_candidate_smoke(fixture: &CandidateFixture) -> Result<Output> {
         .current_dir(&root)
         .env("SHIPLOG_RELEASE_CANDIDATE_DIR", &fixture.candidate_dir)
         .env("SHIPLOG_RELEASE_SOURCE_SHA", SOURCE_SHA)
-        .env("SHIPLOG_RELEASE_SMOKE_DIR", &fixture.smoke_dir)
-        .env_remove("GITHUB_TOKEN")
-        .env_remove("GH_TOKEN")
-        .env_remove("GITLAB_TOKEN")
-        .env_remove("JIRA_TOKEN")
-        .env_remove("LINEAR_API_KEY")
-        .env_remove("SHIPLOG_REDACT_KEY")
+        .env("SHIPLOG_RELEASE_SMOKE_DIR", &fixture.smoke_dir);
+    shiplog_testkit::env::clear_ambient_credentials(&mut command);
+    command
         .output()
         .context("run staged release candidate smoke")
 }
@@ -586,5 +582,99 @@ fn release_workflow_binds_tag_push_identity_and_staged_contract() -> Result<()> 
         }
         other => bail!("unsupported repository_role in automation authority policy: {other}"),
     }
+    Ok(())
+}
+
+/// Extract every ambient-credential list a file declares under `opener`.
+///
+/// Each declaration is one array literal, so the names are whatever survives
+/// between the opening delimiter and its closing paren once quoting, commas,
+/// and comments are stripped. The workflow declares the same list once per
+/// step, so this returns one entry per declaration rather than only the first.
+fn declared_credential_lists(text: &str, opener: &str, path: &Path) -> Result<Vec<Vec<String>>> {
+    let mut lists = Vec::new();
+    for (index, chunk) in text.split(opener).enumerate().skip(1) {
+        let body = chunk.split_once(')').with_context(|| {
+            format!(
+                "unterminated ambient credential list {index} in {}",
+                path.display()
+            )
+        })?;
+        lists.push(
+            body.0
+                .lines()
+                .map(|line| line.split('#').next().unwrap_or_default())
+                .flat_map(|line| line.split(','))
+                .flat_map(|token| token.split_whitespace())
+                .map(|token| token.trim().trim_matches(['"', '\'']).trim())
+                .filter(|token| !token.is_empty())
+                .map(str::to_owned)
+                .collect(),
+        );
+    }
+
+    ensure!(
+        !lists.is_empty(),
+        "{} must declare its ambient credential list as `{opener}`",
+        path.display()
+    );
+    Ok(lists)
+}
+
+/// The published-binary and fresh-clone lanes claim they run "without provider
+/// credentials".
+///
+/// That claim is only true if they clear every variable shiplog reads a
+/// credential from. The copies drifted once already: the scripts and the
+/// contributor workflow kept clearing six names after the enterprise and LLM
+/// lookups were added, so an exported `GH_ENTERPRISE_TOKEN` silently un-proved
+/// the no-token path exactly where a token is most likely present. Pin every
+/// copy to the canonical list in both directions: nothing missing, and nothing
+/// stale pretending to be coverage.
+#[test]
+fn credential_free_lanes_clear_every_ambient_credential() -> Result<()> {
+    let canonical = shiplog_testkit::env::AMBIENT_CREDENTIAL_ENV_VARS;
+    let root = repo_root();
+
+    for (relative, opener) in [
+        (
+            "scripts/release-install-smoke.sh",
+            "ambient_credential_env_vars=(",
+        ),
+        (
+            "scripts/release-install-smoke.ps1",
+            "$AmbientCredentialEnvVars = @(",
+        ),
+        (
+            ".github/workflows/contributor-acceptance.yml",
+            "ambient_credential_env_vars=(",
+        ),
+        (
+            ".github/workflows/contributor-acceptance.yml",
+            "$AmbientCredentialEnvVars = @(",
+        ),
+    ] {
+        let path = root.join(relative);
+        let text = fs::read_to_string(&path)
+            .with_context(|| format!("read credential-free lane {}", path.display()))?;
+
+        for declared in declared_credential_lists(&text, opener, &path)? {
+            for name in canonical {
+                ensure!(
+                    declared.iter().any(|declared| declared == name),
+                    "{relative} does not clear {name}, so its credential-free \
+                     claim is false when {name} is exported"
+                );
+            }
+            for name in &declared {
+                ensure!(
+                    canonical.contains(&name.as_str()),
+                    "{relative} clears {name}, which is not a credential shiplog \
+                     reads; add it to AMBIENT_CREDENTIAL_ENV_VARS or drop it here"
+                );
+            }
+        }
+    }
+
     Ok(())
 }

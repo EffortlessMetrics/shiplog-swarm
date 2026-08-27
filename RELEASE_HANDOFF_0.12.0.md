@@ -90,8 +90,15 @@ and released as the next patch version — `v0.12.0` is not moved or reused.
 - Remove the "not in the shipped `v0.11.0` binary" caveat for `shiplog start`
   from `README.md` and `docs/guides/guided-setup-doctor.md` as part of the
   release-preparation PR, once `start` actually ships.
-- Audit `scripts/release-install-smoke.sh` and `.ps1` for the ambient
-  credential isolation that #407 fixed in the Rust suites.
+- ~~Audit `scripts/release-install-smoke.sh` and `.ps1` for the ambient
+  credential isolation that #407 fixed in the Rust suites.~~ Done: both
+  scripts cleared six of the nine credentials shiplog reads, so an exported
+  `GH_ENTERPRISE_TOKEN`, `GITHUB_ENTERPRISE_TOKEN`, or `SHIPLOG_LLM_API_KEY`
+  reached the binary during the "no provider credentials" first-use proof. The
+  fresh-clone contributor-acceptance workflow carried the same stale list in
+  four steps. Every lane now clears the full list, and
+  `credential_free_lanes_clear_every_ambient_credential` pins each declaration
+  to `AMBIENT_CREDENTIAL_ENV_VARS`.
 - Provider connection flows and share setup ergonomics remain deferred per the
   release decision.
 
