@@ -5,6 +5,23 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# Every environment variable shiplog reads a provider credential from. Keep this
+# in step with AMBIENT_CREDENTIAL_ENV_VARS in crates/shiplog-testkit/src/env.rs:
+# a credential left ambient here is still visible to the binary, so the
+# "without provider credentials" first-use claim below stops being true exactly
+# on the machines most likely to have one exported.
+$AmbientCredentialEnvVars = @(
+    "GH_TOKEN",
+    "GITHUB_TOKEN",
+    "GH_ENTERPRISE_TOKEN",
+    "GITHUB_ENTERPRISE_TOKEN",
+    "GITLAB_TOKEN",
+    "JIRA_TOKEN",
+    "LINEAR_API_KEY",
+    "SHIPLOG_REDACT_KEY",
+    "SHIPLOG_LLM_API_KEY"
+)
+
 function Invoke-Step {
     param(
         [Parameter(Mandatory = $true)]
@@ -286,7 +303,7 @@ $coldStartDir = Join-Path $workDir "cold-start"
 Remove-Item -Recurse -Force $coldStartDir -ErrorAction SilentlyContinue
 $ghConfigDir = Join-Path $coldStartDir "gh-config"
 New-Item -ItemType Directory -Force $ghConfigDir | Out-Null
-foreach ($name in @("GITHUB_TOKEN", "GH_TOKEN", "GITLAB_TOKEN", "JIRA_TOKEN", "LINEAR_API_KEY", "SHIPLOG_REDACT_KEY")) {
+foreach ($name in $AmbientCredentialEnvVars) {
     Remove-Item "Env:$name" -ErrorAction SilentlyContinue
 }
 $env:GH_CONFIG_DIR = $ghConfigDir

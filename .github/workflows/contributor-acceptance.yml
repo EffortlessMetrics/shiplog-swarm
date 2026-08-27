@@ -83,20 +83,27 @@ jobs:
         if: runner.os != 'Windows'
         shell: bash
         run: |
-          unset GITHUB_TOKEN GH_TOKEN GITLAB_TOKEN JIRA_TOKEN LINEAR_API_KEY SHIPLOG_REDACT_KEY
-          test -z "${GITHUB_TOKEN+x}${GH_TOKEN+x}${GITLAB_TOKEN+x}${JIRA_TOKEN+x}${LINEAR_API_KEY+x}${SHIPLOG_REDACT_KEY+x}"
+          ambient_credential_env_vars=(GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN GITLAB_TOKEN JIRA_TOKEN LINEAR_API_KEY SHIPLOG_REDACT_KEY SHIPLOG_LLM_API_KEY)
+          unset "${ambient_credential_env_vars[@]}"
+          for name in "${ambient_credential_env_vars[@]}"; do
+            if [[ -n "${!name+x}" ]]; then
+              echo "environment retained credential variable $name" >&2
+              exit 1
+            fi
+          done
           cargo build --workspace --locked
 
       - name: Build the locked workspace (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          'GITHUB_TOKEN', 'GH_TOKEN', 'GITLAB_TOKEN', 'JIRA_TOKEN', 'LINEAR_API_KEY', 'SHIPLOG_REDACT_KEY' |
+          $AmbientCredentialEnvVars = @('GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN', 'GITLAB_TOKEN', 'JIRA_TOKEN', 'LINEAR_API_KEY', 'SHIPLOG_REDACT_KEY', 'SHIPLOG_LLM_API_KEY')
+          $AmbientCredentialEnvVars |
             ForEach-Object { Remove-Item "Env:$_" -ErrorAction SilentlyContinue }
-          $retained = @('GITHUB_TOKEN', 'GH_TOKEN', 'GITLAB_TOKEN', 'JIRA_TOKEN', 'LINEAR_API_KEY', 'SHIPLOG_REDACT_KEY' |
+          $retained = @($AmbientCredentialEnvVars |
             Where-Object { Test-Path "Env:$_" })
           if ($retained.Count -ne 0) {
-            throw 'contributor build environment retained a credential variable'
+            throw "contributor build environment retained a credential variable: $($retained -join ', ')"
           }
           cargo build --workspace --locked
 
@@ -104,20 +111,27 @@ jobs:
         if: runner.os != 'Windows'
         shell: bash
         run: |
-          unset GITHUB_TOKEN GH_TOKEN GITLAB_TOKEN JIRA_TOKEN LINEAR_API_KEY SHIPLOG_REDACT_KEY
-          test -z "${GITHUB_TOKEN+x}${GH_TOKEN+x}${GITLAB_TOKEN+x}${JIRA_TOKEN+x}${LINEAR_API_KEY+x}${SHIPLOG_REDACT_KEY+x}"
+          ambient_credential_env_vars=(GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN GITLAB_TOKEN JIRA_TOKEN LINEAR_API_KEY SHIPLOG_REDACT_KEY SHIPLOG_LLM_API_KEY)
+          unset "${ambient_credential_env_vars[@]}"
+          for name in "${ambient_credential_env_vars[@]}"; do
+            if [[ -n "${!name+x}" ]]; then
+              echo "environment retained credential variable $name" >&2
+              exit 1
+            fi
+          done
           bash scripts/dev-check.sh
 
       - name: Run canonical contributor gate (PowerShell)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          'GITHUB_TOKEN', 'GH_TOKEN', 'GITLAB_TOKEN', 'JIRA_TOKEN', 'LINEAR_API_KEY', 'SHIPLOG_REDACT_KEY' |
+          $AmbientCredentialEnvVars = @('GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN', 'GITLAB_TOKEN', 'JIRA_TOKEN', 'LINEAR_API_KEY', 'SHIPLOG_REDACT_KEY', 'SHIPLOG_LLM_API_KEY')
+          $AmbientCredentialEnvVars |
             ForEach-Object { Remove-Item "Env:$_" -ErrorAction SilentlyContinue }
-          $retained = @('GITHUB_TOKEN', 'GH_TOKEN', 'GITLAB_TOKEN', 'JIRA_TOKEN', 'LINEAR_API_KEY', 'SHIPLOG_REDACT_KEY' |
+          $retained = @($AmbientCredentialEnvVars |
             Where-Object { Test-Path "Env:$_" })
           if ($retained.Count -ne 0) {
-            throw 'contributor gate environment retained a credential variable'
+            throw "contributor gate environment retained a credential variable: $($retained -join ', ')"
           }
           ./scripts/dev-check.ps1
 

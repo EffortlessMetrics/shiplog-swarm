@@ -28,6 +28,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Fixed the credential-free acceptance lanes proving less than they claim. The
+  published-binary smoke scripts (`scripts/release-install-smoke.sh` and
+  `.ps1`) and the fresh-clone contributor-acceptance workflow all assert they
+  run "without provider credentials", but each cleared six credentials while
+  shiplog reads nine: an exported `GH_ENTERPRISE_TOKEN`,
+  `GITHUB_ENTERPRISE_TOKEN`, or `SHIPLOG_LLM_API_KEY` stayed visible to the
+  binary, so the no-token path stopped being proven exactly on the machines
+  most likely to have one set. Every lane now clears the full list, and
+  `credential_free_lanes_clear_every_ambient_credential` pins each declaration
+  to `AMBIENT_CREDENTIAL_ENV_VARS` in both directions so the copies cannot
+  drift apart again.
 - Fixed GitHub setup readiness reporting `GitHub authentication unavailable via
   unavailable for github.com: gh_unavailable`. Every unavailable path records
   the source as unavailable, so the `via` clause always rendered as "via

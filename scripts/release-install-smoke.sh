@@ -33,6 +33,23 @@ repo="${SHIPLOG_RELEASE_REPO:-EffortlessMetrics/shiplog}"
 candidate_dir="${SHIPLOG_RELEASE_CANDIDATE_DIR:-}"
 expected_source_sha="${SHIPLOG_RELEASE_SOURCE_SHA:-}"
 
+# Every environment variable shiplog reads a provider credential from. Keep this
+# in step with AMBIENT_CREDENTIAL_ENV_VARS in crates/shiplog-testkit/src/env.rs:
+# a credential left ambient here is still visible to the binary, so the
+# "without provider credentials" first-use claim below stops being true exactly
+# on the machines most likely to have one exported.
+ambient_credential_env_vars=(
+  GH_TOKEN
+  GITHUB_TOKEN
+  GH_ENTERPRISE_TOKEN
+  GITHUB_ENTERPRISE_TOKEN
+  GITLAB_TOKEN
+  JIRA_TOKEN
+  LINEAR_API_KEY
+  SHIPLOG_REDACT_KEY
+  SHIPLOG_LLM_API_KEY
+)
+
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd -- "$script_dir/.." && pwd)"
 work_dir="${SHIPLOG_RELEASE_SMOKE_DIR:-$repo_root/target/release-install-smoke/$tag}"
@@ -295,7 +312,7 @@ echo "==> proving the no-token first-use path"
 cold_start_dir="$work_dir/cold-start"
 rm -rf "$cold_start_dir"
 mkdir -p "$cold_start_dir/gh-config"
-unset GITHUB_TOKEN GH_TOKEN GITLAB_TOKEN JIRA_TOKEN LINEAR_API_KEY SHIPLOG_REDACT_KEY || true
+unset "${ambient_credential_env_vars[@]}" || true
 export GH_CONFIG_DIR="$cold_start_dir/gh-config"
 
 (
