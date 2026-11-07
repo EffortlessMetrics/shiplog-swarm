@@ -56,7 +56,7 @@ swarm and is promoted again.
 ## GitHub Actions validation
 
 For workflow or composite-action edits, run
-`jactionlint --profile correctness --no-online --shellcheck= --pyflakes=`
+`jactionlint --config-file .github/jactionlint.yaml --profile correctness --no-online --shellcheck= --pyflakes=`
 from the repository root. If the uv-installed command is not on PATH, use
 `uvx --from jactionlint==2.5.0 jactionlint` with those arguments. The path-filtered
 `Workflow Lint` lane uses the same static checks; ShellCheck, Pyflakes, and

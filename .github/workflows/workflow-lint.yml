@@ -31,6 +31,7 @@ jobs:
       - name: Validate GitHub Actions
         uses: jdx/jactionlint@9e87e8f34edfc00b849a27807e26eff9d00b936d # v2.5.0
         with:
+          config-file: .github/jactionlint.yaml
           profile: correctness
           online: false
           args: --shellcheck= --pyflakes=
