@@ -13,6 +13,19 @@ status = "advisory"
 # See docs/FILE_POLICY.md.
 
 [[entry]]
+path = ".github/workflows/workflow-lint.yml"
+owner = "repo-infra/ci"
+reason = "Path-filtered, read-only static workflow validation with pinned jactionlint correctness rules. Runs independently of routed Rust and release execution; no online, ShellCheck, or Pyflakes checks."
+permissions = ["contents:read"]
+secrets_used = []
+external_actions = [
+  "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+  "jdx/jactionlint@9e87e8f34edfc00b849a27807e26eff9d00b936d",
+]
+created = "2026-11-07"
+expires = "permanent"
+
+[[entry]]
 path = ".github/workflows/source-automation-guard.yml"
 owner = "repo-infra/release"
 reason = "Source-side fail-closed guard for routine Dependabot and Factory Droid product PRs. It runs only in canonical source, reads pull-request metadata without checkout, and leaves remediation in shiplog-swarm."

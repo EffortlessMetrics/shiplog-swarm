@@ -53,6 +53,17 @@ rollback, and closeout procedure. Versioned readiness/decision files and root
 references. A product or shared-documentation defect found on source returns to
 swarm and is promoted again.
 
+## GitHub Actions validation
+
+For workflow or composite-action edits, run
+`jactionlint --profile correctness --no-online --shellcheck= --pyflakes=`
+from the repository root. If the uv-installed command is not on PATH, use
+`uvx --from jactionlint==2.5.0 jactionlint` with those arguments. The path-filtered
+`Workflow Lint` lane uses the same static checks; ShellCheck, Pyflakes, and
+online checks are not part of this lane. Do not substitute a YAML parse or
+claim that linting proves hosted execution or cache timings. See
+[CONTRIBUTING.md](CONTRIBUTING.md#github-actions-validation).
+
 ## Code Review Standards
 
 ### Finding Format

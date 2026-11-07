@@ -103,6 +103,23 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 
 CI enforces both. Fix all warnings before opening a PR.
 
+### GitHub Actions validation
+
+Run the pinned workflow linter from the repository root after workflow,
+composite-action, or linter-configuration edits:
+
+```bash
+uvx --from jactionlint==2.5.0 jactionlint --profile correctness --no-online --shellcheck= --pyflakes=
+```
+
+If installed with `uv tool install jactionlint==2.5.0`, `jactionlint` accepts
+the same arguments directly. Check `jactionlint --version` before comparing
+results. The `Workflow Lint` workflow runs this bounded static check only for
+relevant pull-request changes or manual dispatch. It requires no GitHub
+API token, does not run ShellCheck or Pyflakes, and is not a new required
+branch-protection status. It does not prove hosted runtime behavior, release
+success, or cold/warm-cache timings. YAML parsing alone is not a substitute.
+
 ### Error handling
 
 Use `anyhow::Result<T>` with `.context("description")?` for error propagation. Add dynamic context with `.with_context(|| format!(...))`. Do not introduce `thiserror` enums or bare `.unwrap()` in production code.
